@@ -40,6 +40,7 @@ extensionAttribute8
 extensionAttribute9
 Fax
 GivenName
+homeMDB
 info
 Initials
 isDeleted
@@ -56,6 +57,7 @@ mailNickname
 Manager
 MemberOf
 msExchHideFromAddressLists
+msExchMailboxGuid
 msExchRecipientDisplayType
 msExchRecipientTypeDetails
 msExchRemoteRecipientType
