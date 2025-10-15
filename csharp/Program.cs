@@ -1,0 +1,113 @@
+using AdQuery.Orchestrator.Security;
+using AdQuery.Orchestrator.Services;
+using Microsoft.AspNetCore.Authentication.Negotiate;
+using Microsoft.AspNetCore.Authorization;
+using Serilog;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Configure Serilog
+Log.Logger = new LoggerConfiguration()
+    .ReadFrom.Configuration(builder.Configuration)
+    .Enrich.FromLogContext()
+    .WriteTo.Console()
+    .WriteTo.File("logs/adquery-orchestrator-.txt", rollingInterval: RollingInterval.Day)
+    .CreateLogger();
+
+builder.Host.UseSerilog();
+
+// Add services to the container
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
+    {
+        Title = "AdQuery Orchestrator API",
+        Version = "v1",
+        Description = "Directory plan-based Active Directory query orchestrator"
+    });
+});
+
+builder.Services.AddMemoryCache();
+
+builder.Services.AddAuthentication(NegotiateDefaults.AuthenticationScheme)
+    .AddNegotiate();
+
+builder.Services.AddAuthorization(options =>
+{
+    options.FallbackPolicy = new AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .RequireRole("ANALOG\\ADEXNLQ_Users")
+        .Build();
+});
+
+// Add HTTP client for Claude API
+builder.Services.AddHttpClient<IClaudeService, ClaudeService>(client =>
+{
+    var baseUrl = builder.Configuration["Claude:BaseUrl"] ?? "https://api.anthropic.com";
+    client.BaseAddress = new Uri(baseUrl);
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+
+// Register application services
+builder.Services.AddScoped<IActiveDirectoryService, ActiveDirectoryService>();
+builder.Services.AddScoped<IDirectoryPlanExecutor, DirectoryPlanExecutor>();
+builder.Services.AddScoped<IPlanValidator, PlanValidator>();
+
+// Add health checks
+builder.Services.AddHealthChecks()
+    .AddCheck<ClaudeHealthCheck>("claude")
+    .AddCheck<OrchestratorHealthCheck>("directory_plan");
+
+// Configure CORS if needed
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyMethod()
+              .AllowAnyHeader();
+    });
+});
+
+var app = builder.Build();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "AdQuery Orchestrator API v1");
+        c.RoutePrefix = string.Empty;
+    });
+}
+
+app.UseHttpsRedirection();
+app.UseDefaultFiles();
+app.UseStaticFiles();
+app.UseRouting();
+app.UseCors();
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapHealthChecks("/health");
+app.MapControllers();
+app.MapFallbackToFile("index.html");
+
+Log.Information("Starting AdQuery Orchestrator API");
+Log.Information("Environment: {Environment}", app.Environment.EnvironmentName);
+Log.Information("Claude API configured: {Configured}", !string.IsNullOrEmpty(builder.Configuration["Claude:ApiKey"]));
+
+try
+{
+    app.Run();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Application terminated unexpectedly");
+}
+finally
+{
+    Log.CloseAndFlush();
+}

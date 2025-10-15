@@ -1,0 +1,7 @@
+CanonicalName
+CN
+Description
+DistinguishedName
+Name
+whenChanged
+whenCreated

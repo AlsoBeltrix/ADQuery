@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Active Directory Query Tool</title>
+    <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body class="theme-dark">
+    <div class="container">
+        <header>
+            <h1>Active Directory Search</h1>
+            <p class="subtitle">
+                Ask questions about users, groups, and computers in everyday language.
+            </p>
+        </header>
+
+        <div class="user-info" id="userInfo">
+            <span id="welcomeMessage">Loading...</span>
+            <button type="button" id="themeToggle" class="theme-toggle" aria-label="Toggle color theme">
+                Light theme
+            </button>
+        </div>
+
+        <main>
+            <div class="search-card">
+                <form id="queryForm">
+                    <div class="input-group">
+                        <label for="queryText">What would you like to find?</label>
+                        <textarea
+                            id="queryText"
+                            placeholder="Examples:
+- Show me the first 10 users in Marketing (limited to 10)
+- Find all disabled user accounts (returns every match)
+- List the first 5 computers that have not logged in for 30 days
+- Who are the members of the IT Security group? (returns every member)
+- Show me all users in Finance (returns every Finance user)"
+                            rows="4"
+                            required
+                        ></textarea>
+                    </div>
+
+                    <button type="submit" class="search-btn" id="searchBtn">
+                        <span class="btn-text">Search Active Directory</span>
+                        <span class="btn-loading" aria-hidden="true">Searching...</span>
+                    </button>
+                </form>
+            </div>
+
+            <div id="results" class="results-section" hidden>
+                <div class="results-header">
+                    <h3>Search Results</h3>
+                    <div class="results-info" id="resultsInfo"></div>
+                </div>
+                <ul class="warning-list" id="warningList" hidden></ul>
+                <div class="results-table-container">
+                    <table id="resultsTable" class="results-table">
+                        <thead id="tableHead"></thead>
+                        <tbody id="tableBody"></tbody>
+                    </table>
+                </div>
+                <div class="download-section" id="downloadSection" hidden>
+                    <p id="downloadStatus">Download full results as:</p>
+                    <div class="download-buttons">
+                        <button type="button" class="download-btn" data-download-format="csv">CSV</button>
+                        <button type="button" class="download-btn" data-download-format="excel">Excel</button>
+                        <button type="button" class="download-btn" data-download-format="html">HTML</button>
+                        <button type="button" class="download-btn" data-download-format="text">Plain Text</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="error" class="error-section" hidden>
+                <h3>Something went wrong</h3>
+                <p id="errorMessage"></p>
+            </div>
+        </main>
+
+        <footer>
+            <div class="help-section">
+                <h4>Tips for better searches</h4>
+                <ul>
+                    <li>Use everyday language - no scripting knowledge required.</li>
+                    <li>Be specific about the information you want to retrieve.</li>
+                    <li>Mention a time period when it matters (for example, "last 30 days").</li>
+                    <li>Ask about users, groups, computers, or organizational units.</li>
+                    <li>
+                        Results are not limited unless you specify (for example, "first 10" or "top 5").
+                    </li>
+                    <li>Without a limit you will get every matching result.</li>
+                </ul>
+            </div>
+        </footer>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>
