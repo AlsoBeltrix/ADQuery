@@ -28,6 +28,35 @@ public class ActiveDirectoryService : IActiveDirectoryService
     public Task<IReadOnlyList<DirectoryRecord>> SearchAsync(DirectorySearchRequest request, CancellationToken cancellationToken = default)
     {
         var attributes = NormalizeAttributes(request.Attributes);
+        var normalizedFilters = new List<DirectoryFilter>();
+
+        if (request.Filters is not null && request.Filters.Count > 0)
+        {
+            foreach (var filter in request.Filters)
+            {
+                if (filter is null)
+                {
+                    continue;
+                }
+
+                var trimmed = filter.Value?.Trim();
+                if (string.IsNullOrWhiteSpace(trimmed))
+                {
+                    _logger.LogWarning("Skipping directory search for {TargetType} because filter {Attribute} is missing a value.", request.TargetType, filter.Attribute);
+                    return Task.FromResult<IReadOnlyList<DirectoryRecord>>(Array.Empty<DirectoryRecord>());
+                }
+
+                normalizedFilters.Add(new DirectoryFilter
+                {
+                    Attribute = filter.Attribute,
+                    Operator = filter.Operator,
+                    Value = trimmed
+                });
+            }
+
+            request.Filters = normalizedFilters;
+        }
+
         var records = new List<DirectoryRecord>();
 
         using var entry = CreateDirectoryEntry(request.SearchBase);
@@ -244,9 +273,13 @@ public class ActiveDirectoryService : IActiveDirectoryService
         return filter.Operator.ToLowerInvariant() switch
         {
             "equals" => $"({attribute}={value})",
+            "not_equals" => $"(!({attribute}={value}))",
             "contains" => $"({attribute}=*{value}*)",
+            "not_contains" => $"(!({attribute}=*{value}*))",
             "starts_with" => $"({attribute}={value}*)",
+            "not_starts_with" => $"(!({attribute}={value}*))",
             "ends_with" => $"({attribute}=*{value})",
+            "not_ends_with" => $"(!({attribute}=*{value}))",
             _ => $"({attribute}={value})"
         };
     }

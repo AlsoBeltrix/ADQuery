@@ -25,9 +25,13 @@ public class PlanValidator : IPlanValidator
     private static readonly HashSet<string> AllowedFilterOperators = new(StringComparer.OrdinalIgnoreCase)
     {
         "equals",
+        "not_equals",
         "contains",
+        "not_contains",
         "starts_with",
-        "ends_with"
+        "not_starts_with",
+        "ends_with",
+        "not_ends_with"
     };
 
     private readonly ILogger<PlanValidator> _logger;
@@ -53,6 +57,7 @@ public class PlanValidator : IPlanValidator
     {
         var result = new PlanSecurityResult();
         var seenSteps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var stepLookup = new Dictionary<string, DirectoryPlanStep>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var step in plan.Steps)
         {
@@ -65,6 +70,10 @@ public class PlanValidator : IPlanValidator
             if (!seenSteps.Add(step.Name))
             {
                 result.SecurityErrors.Add($"Duplicate step name detected: {step.Name}");
+            }
+            else
+            {
+                stepLookup[step.Name] = step;
             }
 
             if (step.Attributes.Count > MaxAttributesPerStep)
@@ -122,6 +131,8 @@ public class PlanValidator : IPlanValidator
         {
             result.SecurityErrors.Add($"Projection defines too many columns ({plan.Projection.Columns.Count}).");
         }
+
+        ValidateProjectionFilter(plan, result, stepLookup);
 
         if (!result.SecurityErrors.Any() && result.OperationsValid)
         {
@@ -188,6 +199,58 @@ public class PlanValidator : IPlanValidator
         }
 
         return true;
+    }
+
+    private void ValidateProjectionFilter(DirectoryQueryPlan plan, PlanSecurityResult result, Dictionary<string, DirectoryPlanStep> stepLookup)
+    {
+        if (plan?.Projection?.Filter is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(plan.Projection.RowStep))
+        {
+            result.SecurityErrors.Add("Projection filter specified but projection.row_step is empty.");
+            return;
+        }
+
+        if (!stepLookup.TryGetValue(plan.Projection.RowStep, out var rowStep))
+        {
+            result.SecurityErrors.Add($"Projection filter references unknown row_step '{plan.Projection.RowStep}'.");
+            return;
+        }
+
+        var filter = plan.Projection.Filter;
+        if (string.IsNullOrWhiteSpace(filter.Attribute))
+        {
+            result.SecurityErrors.Add("Projection filter attribute is required.");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(filter.Value))
+        {
+            result.SecurityErrors.Add("Projection filter value is required.");
+            return;
+        }
+
+        var operatorValue = string.IsNullOrWhiteSpace(filter.Operator) ? "equals" : filter.Operator;
+        filter.Operator = operatorValue;
+
+        if (!AllowedFilterOperators.Contains(operatorValue))
+        {
+            result.SecurityErrors.Add($"Projection filter uses unsupported operator '{operatorValue}'.");
+        }
+
+        if (!_allowedAttributes.TryGetValue(rowStep.TargetType, out var allowedAttributes) || allowedAttributes.Count == 0)
+        {
+            result.SecurityErrors.Add($"No allow-listed attributes configured for projection row step type {rowStep.TargetType}.");
+            return;
+        }
+
+        if (!allowedAttributes.Contains(filter.Attribute))
+        {
+            result.SecurityErrors.Add($"Projection filter references attribute '{filter.Attribute}' which is not allow-listed for {rowStep.TargetType}.");
+        }
     }
 
     private static Dictionary<DirectoryObjectType, HashSet<string>> LoadAllowedAttributes(

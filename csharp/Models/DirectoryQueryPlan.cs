@@ -119,6 +119,12 @@ public class ProjectionDefinition
 
     [JsonPropertyName("columns")]
     public List<ProjectionColumn> Columns { get; set; } = new();
+
+    /// <summary>
+    /// Optional filter applied to the row step records before projection.
+    /// </summary>
+    [JsonPropertyName("filter")]
+    public DirectoryFilter? Filter { get; set; }
 }
 
 /// <summary>

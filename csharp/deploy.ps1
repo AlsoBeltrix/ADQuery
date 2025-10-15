@@ -101,6 +101,29 @@ if (-not (Test-Path $appPath)) {
     Write-Host "Updated IIS application '/$AppName'." -ForegroundColor Green
 }
 
+# Reinforce Windows authentication configuration
+$appcmd = Join-Path $env:SystemRoot "System32\inetsrv\appcmd.exe"
+$configScope = "$SiteName/$AppName"
+if (Test-Path $appcmd) {
+    Write-Host "Ensuring Windows authentication settings..." -ForegroundColor Yellow
+    $commands = @(
+        @("set", "config", $configScope, "/section:windowsAuthentication", "/enabled:true", "/commit:apphost"),
+        @("set", "config", $configScope, "/section:windowsAuthentication", "/useKernelMode:false", "/commit:apphost"),
+        @("set", "config", $configScope, "/section:windowsAuthentication", "/useAppPoolCredentials:true", "/commit:apphost"),
+        @("set", "config", $configScope, "/section:anonymousAuthentication", "/enabled:false", "/commit:apphost")
+    )
+
+    foreach ($args in $commands) {
+        try {
+            & $appcmd @args | Out-Null
+        } catch {
+            Write-Warning "Failed to apply IIS auth setting ($($args -join ' ')): $($_.Exception.Message)"
+        }
+    }
+} else {
+    Write-Warning "Unable to locate appcmd.exe; authentication settings were not refreshed."
+}
+
 # Start app pool
 if (Test-Path "IIS:\AppPools\$AppPoolName") {
     Write-Host "Starting app pool '$AppPoolName'..." -ForegroundColor Yellow

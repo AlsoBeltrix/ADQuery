@@ -77,12 +77,13 @@ This project delivers a pure C# pipeline for answering natural-language question
 - `lookup` – Resolves related objects using distinguished names from an earlier step.
 
 ### Allowed Filter Operators
-`equals`, `contains`, `starts_with`, `ends_with`
+`equals`, `not_equals`, `contains`, `not_contains`, `starts_with`, `not_starts_with`, `ends_with`, `not_ends_with`
 
 ### Projection Options
 - `match_on`: attribute used to join supporting data (`distinguishedName` by default).
 - `match_value_from`: source attribute on the row record used for the join.
-- `default`: fall-back value when a join doesn’t produce data.
+- `filter`: optional `{ attribute, operator, value }` applied to the row step before projection.
+- `default`: fall-back value when a join doesn't produce data.
 
 ## Security Guardrails
 

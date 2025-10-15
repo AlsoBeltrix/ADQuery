@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -185,6 +186,18 @@ internal sealed class DirectoryPlanRuntime
             if (records.Count == 0)
             {
                 _warnings.Add($"Step {step.Step} returned no records.");
+
+                var hasDependents = plan.Steps.Any(s =>
+                    !string.IsNullOrWhiteSpace(s.Source) &&
+                    s.Source.Equals(step.Name, StringComparison.OrdinalIgnoreCase));
+
+                if (step.TargetType == DirectoryObjectType.Group &&
+                    step.Operation.Equals("search", StringComparison.OrdinalIgnoreCase) &&
+                    hasDependents)
+                {
+                    _warnings.Add($"Halting execution because step {step.Step} ('{step.Name}') produced no groups for downstream steps.");
+                    break;
+                }
             }
         }
 
@@ -215,11 +228,26 @@ internal sealed class DirectoryPlanRuntime
 
     private Task<IReadOnlyList<DirectoryRecord>> ExecuteSearchStep(DirectoryPlanStep step, CancellationToken cancellationToken)
     {
+        if (!TryNormalizeFilters(step, out var normalizedFilters))
+        {
+            _warnings.Add($"Step {step.Step} skipped because a filter value was missing.");
+            return Task.FromResult<IReadOnlyList<DirectoryRecord>>(Array.Empty<DirectoryRecord>());
+        }
+
+        var filtersToUse = normalizedFilters.Count > 0
+            ? normalizedFilters
+            : step.Filters ?? new List<DirectoryFilter>();
+
+        if (normalizedFilters.Count > 0)
+        {
+            step.Filters = normalizedFilters;
+        }
+
         var request = new DirectorySearchRequest
         {
             TargetType = step.TargetType,
             Attributes = step.Attributes,
-            Filters = step.Filters,
+            Filters = filtersToUse,
             SizeLimit = step.SizeLimit
         };
 
@@ -282,6 +310,11 @@ internal sealed class DirectoryPlanRuntime
 
         foreach (var record in rowState.Records)
         {
+            if (projection.Filter is not null && !RecordMatchesFilter(record, projection.Filter))
+            {
+                continue;
+            }
+
             var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var column in projection.Columns)
@@ -310,6 +343,92 @@ internal sealed class DirectoryPlanRuntime
         }
 
         return rows;
+    }
+
+    private bool TryNormalizeFilters(DirectoryPlanStep step, out List<DirectoryFilter> normalized)
+    {
+        normalized = new List<DirectoryFilter>();
+
+        if (step.Filters is null || step.Filters.Count == 0)
+        {
+            return true;
+        }
+
+        foreach (var filter in step.Filters)
+        {
+            if (filter is null)
+            {
+                continue;
+            }
+
+            var trimmed = filter.Value?.Trim();
+            var trimmedAttribute = filter.Attribute?.Trim();
+
+            if (string.IsNullOrWhiteSpace(trimmedAttribute))
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(trimmed))
+            {
+                return false;
+            }
+
+            normalized.Add(new DirectoryFilter
+            {
+                Attribute = trimmedAttribute,
+                Operator = filter.Operator,
+                Value = trimmed
+            });
+        }
+
+        return true;
+    }
+
+    private static bool RecordMatchesFilter(DirectoryRecord record, DirectoryFilter filter)
+    {
+        var operatorValue = (filter.Operator ?? "equals").Trim().ToLowerInvariant();
+        var isNegated = operatorValue.StartsWith("not_");
+        var baseOperator = isNegated ? operatorValue[4..] : operatorValue;
+        var expected = filter.Value ?? string.Empty;
+
+        var candidates = record.GetStrings(filter.Attribute)
+            .Where(v => v is not null)
+            .Select(v => v ?? string.Empty)
+            .ToList();
+
+        if (!candidates.Any())
+        {
+            var single = record.GetString(filter.Attribute);
+            if (single is not null)
+            {
+                candidates.Add(single);
+            }
+        }
+
+        if (!candidates.Any())
+        {
+            candidates.Add(string.Empty);
+        }
+
+        var match = candidates.Any(candidate => MatchesBaseOperator(candidate, expected, baseOperator));
+        return isNegated ? !match : match;
+    }
+
+    private static bool MatchesBaseOperator(string candidate, string expected, string operatorValue)
+    {
+        candidate ??= string.Empty;
+        expected ??= string.Empty;
+        var comparison = StringComparison.OrdinalIgnoreCase;
+
+        return operatorValue switch
+        {
+            "equals" => string.Equals(candidate, expected, comparison),
+            "contains" => expected.Length == 0 || candidate.IndexOf(expected, comparison) >= 0,
+            "starts_with" => expected.Length == 0 || candidate.StartsWith(expected, comparison),
+            "ends_with" => expected.Length == 0 || candidate.EndsWith(expected, comparison),
+            _ => false
+        };
     }
 
     private static DirectoryRecord? ResolveProjectionSourceRecord(StepRuntimeState sourceState, DirectoryRecord rowRecord, ProjectionColumn column)

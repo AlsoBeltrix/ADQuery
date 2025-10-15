@@ -3,6 +3,7 @@ using AdQuery.Orchestrator.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
@@ -51,17 +52,22 @@ public class QueryController : ControllerBase
     private readonly IClaudeService _claudeService;
     private readonly IDirectoryPlanExecutor _planExecutor;
     private readonly IMemoryCache _cache;
+    private readonly IConfiguration _configuration;
+    private readonly HashSet<string> _licenseAttributeAliases;
 
     public QueryController(
         ILogger<QueryController> logger,
         IClaudeService claudeService,
         IDirectoryPlanExecutor planExecutor,
-        IMemoryCache cache)
+        IMemoryCache cache,
+        IConfiguration configuration)
     {
         _logger = logger;
         _claudeService = claudeService;
         _planExecutor = planExecutor;
         _cache = cache;
+        _configuration = configuration;
+        _licenseAttributeAliases = BuildLicenseAliasSet(configuration);
     }
 
     /// <summary>
@@ -83,6 +89,9 @@ public class QueryController : ControllerBase
         var baseFileName = BuildFileBaseName(samAccountName, timestampUtc);
         var logPath = Path.Combine(userDirectory, $"{baseFileName}.log");
         var outputPath = Path.Combine(userDirectory, $"{baseFileName}.csv");
+        string? rawModelResponse = null;
+        string? modelPlanJson = null;
+        string? executedPlanJson = null;
 
         _logger.LogInformation("Processing query request {RequestId}: {Query}", requestId, request.Query);
 
@@ -94,13 +103,15 @@ public class QueryController : ControllerBase
                 requestedLimit,
                 HttpContext.RequestAborted);
 
+            rawModelResponse = claudeResponse.RawResponse;
+
             if (!claudeResponse.Success || claudeResponse.Plan == null)
             {
                 var errorMessage = $"Failed to generate directory plan: {claudeResponse.ErrorMessage}";
                 _logger.LogWarning("Claude failed to generate directory plan for request {RequestId}: {Error}",
                     requestId, claudeResponse.ErrorMessage);
 
-                WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: false, recordCount: 0, warnings: null, errorMessage: errorMessage, resultLimit: requestedLimit, outputPath: null);
+                WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: false, recordCount: 0, warnings: null, errorMessage: errorMessage, resultLimit: requestedLimit, outputPath: null, rawModelResponse: rawModelResponse, modelPlanJson: modelPlanJson, executedPlanJson: executedPlanJson);
 
                 return BadRequest(new QueryResponse
                 {
@@ -113,10 +124,16 @@ public class QueryController : ControllerBase
 
             var plan = claudeResponse.Plan;
 
+            modelPlanJson = SerializePlan(plan);
+
+            ApplyCustomMappings(plan);
+
             if (requestedLimit.HasValue && requestedLimit.Value > 0)
             {
                 EnsurePlanLimit(plan, requestedLimit.Value);
             }
+
+            executedPlanJson = SerializePlan(plan);
 
             var executionResult = await _planExecutor.ExecutePlanAsync(plan, HttpContext.RequestAborted);
             var fullRows = executionResult.Data ?? new List<Dictionary<string, object?>>();
@@ -149,7 +166,7 @@ public class QueryController : ControllerBase
                 response.Error = string.Join("; ", executionResult.Errors);
                 response.Warnings = executionResult.Warnings;
 
-                WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: false, recordCount: fullRows.Count, warnings: executionResult.Warnings, errorMessage: response.Error, resultLimit: effectiveLimit, outputPath: null);
+                WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: false, recordCount: fullRows.Count, warnings: executionResult.Warnings, errorMessage: response.Error, resultLimit: effectiveLimit, outputPath: null, rawModelResponse: rawModelResponse, modelPlanJson: modelPlanJson, executedPlanJson: executedPlanJson);
             }
             else
             {
@@ -173,7 +190,7 @@ public class QueryController : ControllerBase
                     timestampUtc,
                     effectiveLimit);
 
-                WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: true, recordCount: fullRows.Count, warnings: executionResult.Warnings, errorMessage: null, resultLimit: effectiveLimit, outputPath: outputPath);
+                WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: true, recordCount: fullRows.Count, warnings: executionResult.Warnings, errorMessage: null, resultLimit: effectiveLimit, outputPath: outputPath, rawModelResponse: rawModelResponse, modelPlanJson: modelPlanJson, executedPlanJson: executedPlanJson);
             }
 
             _logger.LogInformation("Query request {RequestId} completed. Success: {Success}, Steps: {Steps}, Time: {Time}ms",
@@ -184,7 +201,7 @@ public class QueryController : ControllerBase
         catch (OperationCanceledException)
         {
             _logger.LogWarning("Query request {RequestId} was cancelled", requestId);
-            WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: false, recordCount: 0, warnings: null, errorMessage: "Request was cancelled or timed out", resultLimit: requestedLimit, outputPath: null);
+            WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: false, recordCount: 0, warnings: null, errorMessage: "Request was cancelled or timed out", resultLimit: requestedLimit, outputPath: null, rawModelResponse: rawModelResponse, modelPlanJson: modelPlanJson, executedPlanJson: executedPlanJson);
             return StatusCode(408, new QueryResponse
             {
                 Success = false,
@@ -195,7 +212,7 @@ public class QueryController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error processing query request {RequestId}", requestId);
-            WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: false, recordCount: 0, warnings: null, errorMessage: ex.Message, resultLimit: requestedLimit, outputPath: null);
+            WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: false, recordCount: 0, warnings: null, errorMessage: ex.Message, resultLimit: requestedLimit, outputPath: null, rawModelResponse: rawModelResponse, modelPlanJson: modelPlanJson, executedPlanJson: executedPlanJson);
             return StatusCode(500, new QueryResponse
             {
                 Success = false,
@@ -219,9 +236,11 @@ public class QueryController : ControllerBase
         var requestId = Guid.NewGuid().ToString();
         _logger.LogDebug("Validating execution plan {RequestId}: {Description}", requestId, plan.Description);
 
-        try
-        {
-            var validationResult = await _planExecutor.ValidatePlanAsync(plan);
+            try
+            {
+                ApplyCustomMappings(plan);
+
+                var validationResult = await _planExecutor.ValidatePlanAsync(plan);
 
             var response = new ValidationResponse
             {
@@ -655,6 +674,159 @@ public class QueryController : ControllerBase
         }
     }
 
+    private void ApplyCustomMappings(DirectoryQueryPlan plan)
+    {
+        if (plan?.Steps is null || plan.Steps.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var step in plan.Steps)
+        {
+            if (step.Filters is null)
+            {
+                continue;
+            }
+
+            foreach (var filter in step.Filters)
+            {
+                NormalizeFilter(filter);
+            }
+        }
+
+        if (plan.Projection?.Filter is not null)
+        {
+            NormalizeFilter(plan.Projection.Filter);
+        }
+    }
+
+    private void NormalizeFilter(DirectoryFilter filter)
+    {
+        if (filter is null)
+        {
+            return;
+        }
+
+        filter.Operator = NormalizeFilterOperator(filter.Operator);
+        var trimmedAttribute = filter.Attribute?.Trim();
+        filter.Attribute = trimmedAttribute ?? filter.Attribute ?? string.Empty;
+        filter.Value = (filter.Value ?? string.Empty).Trim();
+
+        if (string.IsNullOrWhiteSpace(filter.Attribute))
+        {
+            return;
+        }
+
+        if (_licenseAttributeAliases.Contains(filter.Attribute))
+        {
+            filter.Attribute = "extensionAttribute11";
+        }
+    }
+
+    private static string NormalizeFilterOperator(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "equals";
+        }
+
+        var normalized = value.Trim().ToLowerInvariant();
+        normalized = normalized.Replace("-", "_").Replace(" ", "_");
+
+        if (normalized.StartsWith("!"))
+        {
+            normalized = normalized[1..];
+            return normalized switch
+            {
+                "equals" or "equal" => "not_equals",
+                "contains" or "contain" => "not_contains",
+                "starts_with" or "start_with" or "startswith" => "not_starts_with",
+                "ends_with" or "end_with" or "endswith" => "not_ends_with",
+                _ => "not_equals"
+            };
+        }
+
+        return normalized switch
+        {
+            "=" or "==" or "equal" => "equals",
+            "equals" => "equals",
+            "not_equals" or "not_equal" or "not_equal_to" or "does_not_equal" or "not_equals_to" or "!=" => "not_equals",
+            "contain" or "contains" => "contains",
+            "notcontain" or "not_contains" or "does_not_contain" => "not_contains",
+            "start_with" or "starts_with" or "startswith" => "starts_with",
+            "not_start_with" or "not_starts_with" or "does_not_start_with" => "not_starts_with",
+            "end_with" or "ends_with" or "endswith" => "ends_with",
+            "not_end_with" or "not_ends_with" or "does_not_end_with" => "not_ends_with",
+            _ when normalized.StartsWith("not_contains") => "not_contains",
+            _ when normalized.StartsWith("not_starts_with") => "not_starts_with",
+            _ when normalized.StartsWith("not_ends_with") => "not_ends_with",
+            _ => normalized
+        };
+    }
+
+    private static HashSet<string> BuildLicenseAliasSet(IConfiguration configuration)
+    {
+        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "license",
+            "licenses",
+            "licence",
+            "licences",
+            "extensionattribute11"
+        };
+
+        var extensionAttributesSection = configuration.GetSection("CustomMappings:ExtensionAttributes");
+        foreach (var child in extensionAttributesSection.GetChildren())
+        {
+            if (child.Key.Equals("ExtensionAttribute11", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(child.Value))
+            {
+                aliases.Add(child.Value);
+            }
+        }
+
+        return aliases;
+    }
+
+    private static string? SerializePlan(DirectoryQueryPlan? plan)
+    {
+        if (plan is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var options = new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+            };
+            return JsonSerializer.Serialize(plan, options);
+        }
+        catch (Exception ex)
+        {
+            return $"<serialization_error: {ex.Message}>";
+        }
+    }
+
+    private static void AppendMultilineSection(StringBuilder builder, string heading, string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return;
+        }
+
+        builder.AppendLine($"{heading}:");
+
+        var lines = content.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None);
+        foreach (var line in lines)
+        {
+            builder.Append("  ");
+            builder.AppendLine(line);
+        }
+    }
+
     private static void WriteQueryLog(
         string logPath,
         DateTime timestampUtc,
@@ -667,7 +839,10 @@ public class QueryController : ControllerBase
         IEnumerable<string>? warnings,
         string? errorMessage,
         int? resultLimit,
-        string? outputPath)
+        string? outputPath,
+        string? rawModelResponse = null,
+        string? modelPlanJson = null,
+        string? executedPlanJson = null)
     {
         var builder = new StringBuilder();
         builder.AppendLine($"TimestampUtc: {timestampUtc:o}");
@@ -705,6 +880,10 @@ public class QueryController : ControllerBase
         {
             builder.AppendLine($"Error: {EscapeForLog(errorMessage)}");
         }
+
+        AppendMultilineSection(builder, "ModelResponseRaw", rawModelResponse);
+        AppendMultilineSection(builder, "ModelPlanJson", modelPlanJson);
+        AppendMultilineSection(builder, "ExecutedPlanJson", executedPlanJson);
 
         builder.AppendLine("DownloadHistory:");
         System.IO.File.WriteAllText(logPath, builder.ToString());

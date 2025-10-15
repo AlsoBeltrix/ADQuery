@@ -33,8 +33,10 @@
 
 - **Operation allow-list**: only `search`, `expand_members`, `lookup`.
 - **Attribute allow-list**: tailored for users, groups, computers, and OUs.
-- **Filter operators**: `equals`, `contains`, `starts_with`, `ends_with`.
+- **Filter operators**: `equals`, `not_equals`, `contains`, `not_contains`, `starts_with`, `not_starts_with`, `ends_with`, `not_ends_with`.
+- **Filter normalization**: LDAP predicates are trimmed and empty values are rejected before execution, preventing malformed `(attribute=)` searches from reaching AD.
 - **Plan complexity**: capped at ten steps, five filters per step, twenty-five projection columns.
+- **Projection filters**: optional row-step filters are validated and evaluated after execution so JSON plans can express exclusions without custom joins.
 - **Windows group enforcement**: only members of `ANALOG\ADEXNLQ_Users` can reach the controllers (Negotiate/Windows auth).
 - **Optional HMAC**: retained via `Security:HmacSecretKey`.
 - **Per-user logging**: each request (success, failure, cancellation) writes a dedicated timestamped log file with download history and the saved CSV artifact.

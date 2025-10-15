@@ -219,8 +219,10 @@ public class ClaudeService : IClaudeService
         promptBuilder.AppendLine("- expand_members: expand group membership from a prior step (set source, target_type, attributes, recursive flag).");
         promptBuilder.AppendLine("- lookup: fetch related directory objects using distinguished names from a prior step (set source, source_attribute, target_type, attributes).");
         promptBuilder.AppendLine("- target_type must be one of: User, Group, Computer, OrganizationalUnit.");
-        promptBuilder.AppendLine("- Filters support operators: equals, contains, starts_with, ends_with.");
+        promptBuilder.AppendLine("- Filters support operators: equals, not_equals, contains, not_contains, starts_with, not_starts_with, ends_with, not_ends_with.");
+        promptBuilder.AppendLine("- Use not_equals (or related negations) when the user asks to exclude a value (e.g., `extensionAttribute8` not_equals \"2\").");
         promptBuilder.AppendLine("- Attribute lists must only include directory attributes (displayName, manager, mail, etc.).");
+        promptBuilder.AppendLine("- When the user references licenses or license tiers (E3, E5, etc.), filter on `extensionAttribute11`.");
         promptBuilder.AppendLine("- Projection must describe how to build rows for the caller.");
         promptBuilder.AppendLine("- When the user requests a specific number of rows (\"first 5\", \"top 10\"), set result_limit to that number and apply size_limit to the step that produces those rows.");
         promptBuilder.AppendLine();
