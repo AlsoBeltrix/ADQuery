@@ -54,6 +54,7 @@ public class QueryController : ControllerBase
     private readonly IMemoryCache _cache;
     private readonly IConfiguration _configuration;
     private readonly HashSet<string> _licenseAttributeAliases;
+    private readonly bool _allowUnlimitedResults;
 
     public QueryController(
         ILogger<QueryController> logger,
@@ -68,6 +69,7 @@ public class QueryController : ControllerBase
         _cache = cache;
         _configuration = configuration;
         _licenseAttributeAliases = BuildLicenseAliasSet(configuration);
+        _allowUnlimitedResults = configuration.GetValue("QueryDefaults:AllowUnlimited", false);
     }
 
     /// <summary>
@@ -708,6 +710,17 @@ public class QueryController : ControllerBase
         }
 
         filter.Operator = NormalizeFilterOperator(filter.Operator);
+
+        if (filter.Conditions is { Count: > 0 })
+        {
+            foreach (var child in filter.Conditions)
+            {
+                NormalizeFilter(child);
+            }
+
+            return;
+        }
+
         var trimmedAttribute = filter.Attribute?.Trim();
         filter.Attribute = trimmedAttribute ?? filter.Attribute ?? string.Empty;
         filter.Value = (filter.Value ?? string.Empty).Trim();
@@ -1087,6 +1100,7 @@ public class ClaudeHealthStatus
     /// </summary>
     public string? ErrorMessage { get; set; }
 }
+
 
 
 

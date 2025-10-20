@@ -92,20 +92,20 @@ public enum DirectoryObjectType
 /// </summary>
 public class DirectoryFilter
 {
-    [Required]
     [JsonPropertyName("attribute")]
     public string Attribute { get; set; } = string.Empty;
 
-    /// <summary>
-    /// Supported operators: equals, contains, starts_with, ends_with.
-    /// </summary>
-    [Required]
     [JsonPropertyName("operator")]
     public string Operator { get; set; } = string.Empty;
 
-    [Required]
     [JsonPropertyName("value")]
     public string Value { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional nested conditions for logical grouping (e.g., and/or).
+    /// </summary>
+    [JsonPropertyName("conditions")]
+    public List<DirectoryFilter>? Conditions { get; set; }
 }
 
 /// <summary>
@@ -119,6 +119,22 @@ public class ProjectionDefinition
 
     [JsonPropertyName("columns")]
     public List<ProjectionColumn> Columns { get; set; } = new();
+
+    private List<DirectoryFilter>? _filters;
+
+    [JsonPropertyName("filters")]
+    public List<DirectoryFilter>? Filters
+    {
+        get => _filters;
+        set
+        {
+            _filters = value;
+            if (value is { Count: 1 } && Filter is null)
+            {
+                Filter = value[0];
+            }
+        }
+    }
 
     /// <summary>
     /// Optional filter applied to the row step records before projection.
@@ -167,3 +183,4 @@ public class ProjectionColumn
     [JsonPropertyName("default")]
     public string? DefaultValue { get; set; }
 }
+

@@ -1,6 +1,8 @@
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.DirectoryServices;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -39,19 +41,13 @@ public class ActiveDirectoryService : IActiveDirectoryService
                     continue;
                 }
 
-                var trimmed = filter.Value?.Trim();
-                if (string.IsNullOrWhiteSpace(trimmed))
+                if (!TryNormalizeFilter(filter, out var normalizedFilter))
                 {
-                    _logger.LogWarning("Skipping directory search for {TargetType} because filter {Attribute} is missing a value.", request.TargetType, filter.Attribute);
+                    _logger.LogWarning("Skipping directory search for {TargetType} because a filter was missing required information.", request.TargetType);
                     return Task.FromResult<IReadOnlyList<DirectoryRecord>>(Array.Empty<DirectoryRecord>());
                 }
 
-                normalizedFilters.Add(new DirectoryFilter
-                {
-                    Attribute = filter.Attribute,
-                    Operator = filter.Operator,
-                    Value = trimmed
-                });
+                normalizedFilters.Add(normalizedFilter);
             }
 
             request.Filters = normalizedFilters;
@@ -235,6 +231,72 @@ public class ActiveDirectoryService : IActiveDirectoryService
         return root.Properties["defaultNamingContext"][0]?.ToString() ?? throw new InvalidOperationException("Unable to resolve default naming context.");
     }
 
+    private bool TryNormalizeFilter(DirectoryFilter filter, out DirectoryFilter normalized)
+    {
+        var operatorValue = string.IsNullOrWhiteSpace(filter.Operator)
+            ? (filter.Conditions is { Count: > 0 } ? "and" : "equals")
+            : filter.Operator.Trim();
+
+        if (filter.Conditions is { Count: > 0 })
+        {
+            var normalizedChildren = new List<DirectoryFilter>();
+            foreach (var child in filter.Conditions)
+            {
+                if (child is null)
+                {
+                    continue;
+                }
+
+                if (!TryNormalizeFilter(child, out var normalizedChild))
+                {
+                    normalized = null!;
+                    return false;
+                }
+
+                normalizedChildren.Add(normalizedChild);
+            }
+
+            normalized = new DirectoryFilter
+            {
+                Operator = operatorValue,
+                Conditions = normalizedChildren
+            };
+
+            return true;
+        }
+
+        var attribute = filter.Attribute?.Trim();
+        var value = filter.Value?.Trim();
+
+        if (string.IsNullOrWhiteSpace(attribute) ||
+            (string.IsNullOrWhiteSpace(value) && !AllowsEmptyFilterValue(attribute, operatorValue)))
+        {
+            normalized = null!;
+            return false;
+        }
+
+        normalized = new DirectoryFilter
+        {
+            Attribute = attribute,
+            Operator = operatorValue,
+            Value = value ?? string.Empty
+        };
+
+        return true;
+    }
+
+    private static bool AllowsEmptyFilterValue(string attribute, string operatorValue)
+    {
+        if (attribute.Equals("AccountExpirationDate", StringComparison.OrdinalIgnoreCase) &&
+            (operatorValue.Equals("not_equals", StringComparison.OrdinalIgnoreCase) ||
+             operatorValue.Equals("equals", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
     private string BuildFilter(DirectorySearchRequest request)
     {
         var clauses = new List<string> { BuildObjectClassClause(request.TargetType) };
@@ -267,6 +329,21 @@ public class ActiveDirectoryService : IActiveDirectoryService
 
     private static string BuildFilterClause(DirectoryFilter filter)
     {
+        if (filter.Conditions is { Count: > 0 })
+        {
+            return BuildCompoundFilterClause(filter);
+        }
+
+        if (filter.Attribute.Equals("Enabled", StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildEnabledFilterClause(filter);
+        }
+
+        if (filter.Attribute.Equals("AccountExpirationDate", StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildAccountExpirationDateFilterClause(filter);
+        }
+
         var attribute = filter.Attribute;
         var value = EscapeLdapValue(filter.Value ?? string.Empty);
 
@@ -284,6 +361,128 @@ public class ActiveDirectoryService : IActiveDirectoryService
         };
     }
 
+    private static string BuildCompoundFilterClause(DirectoryFilter filter)
+    {
+        var operatorValue = string.IsNullOrWhiteSpace(filter.Operator)
+            ? "and"
+            : filter.Operator.Trim().ToLowerInvariant();
+
+        var joiner = operatorValue.Equals("or", StringComparison.OrdinalIgnoreCase) ? '|' : '&';
+        var builder = new StringBuilder();
+        builder.Append('(').Append(joiner);
+
+        foreach (var child in filter.Conditions ?? Enumerable.Empty<DirectoryFilter>())
+        {
+            builder.Append(BuildFilterClause(child));
+        }
+
+        builder.Append(')');
+        return builder.ToString();
+    }
+
+    private static string BuildEnabledFilterClause(DirectoryFilter filter)
+    {
+        var operatorValue = string.IsNullOrWhiteSpace(filter.Operator)
+            ? "equals"
+            : filter.Operator.Trim().ToLowerInvariant();
+
+        var normalizedValue = (filter.Value ?? string.Empty).Trim();
+        var disabledClause = "(userAccountControl:1.2.840.113556.1.4.803:=2)";
+        var enabledClause = $"(!{disabledClause})";
+
+        return operatorValue switch
+        {
+            "equals" => IsDisabledComparison(normalizedValue) ? disabledClause : enabledClause,
+            "not_equals" => IsDisabledComparison(normalizedValue) ? enabledClause : disabledClause,
+            _ => disabledClause
+        };
+    }
+
+    private static string BuildAccountExpirationDateFilterClause(DirectoryFilter filter)
+    {
+        const string NeverExpiresClause = "(|(accountExpires=0)(accountExpires=9223372036854775807))";
+        var nowFileTime = DateTime.UtcNow.ToFileTimeUtc();
+        var expiredClause = $"(&(!(accountExpires=0))(!(accountExpires=9223372036854775807))(accountExpires<={nowFileTime}))";
+
+        var operatorValue = string.IsNullOrWhiteSpace(filter.Operator)
+            ? "equals"
+            : filter.Operator.Trim().ToLowerInvariant();
+
+        var rawValue = (filter.Value ?? string.Empty).Trim();
+
+        switch (operatorValue)
+        {
+            case "contains":
+                if (rawValue.Contains("/", StringComparison.Ordinal) || rawValue.Contains("-", StringComparison.Ordinal))
+                {
+                    return expiredClause;
+                }
+                break;
+
+            case "equals":
+                if (string.IsNullOrWhiteSpace(rawValue) || rawValue.Equals("never", StringComparison.OrdinalIgnoreCase))
+                {
+                    return NeverExpiresClause;
+                }
+
+                if (TryParseAccountExpirationDate(rawValue, out var equalsFileTime))
+                {
+                    return $"(accountExpires={equalsFileTime})";
+                }
+                break;
+
+            case "not_equals":
+                if (string.IsNullOrWhiteSpace(rawValue) || rawValue.Equals("never", StringComparison.OrdinalIgnoreCase))
+                {
+                    return expiredClause;
+                }
+
+                if (rawValue.Contains("/", StringComparison.Ordinal) || rawValue.Contains("-", StringComparison.Ordinal))
+                {
+                    return expiredClause;
+                }
+
+                if (TryParseAccountExpirationDate(rawValue, out var notEqualsFileTime))
+                {
+                    return $"(!(accountExpires={notEqualsFileTime}))";
+                }
+                break;
+        }
+
+        return expiredClause;
+    }
+
+    private static bool TryParseAccountExpirationDate(string input, out long fileTime)
+    {
+        fileTime = 0;
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return false;
+        }
+
+        if (DateTime.TryParse(input, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsed) ||
+            DateTime.TryParse(input, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out parsed) ||
+            DateTime.TryParse(input, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out parsed))
+        {
+            fileTime = parsed.ToUniversalTime().ToFileTimeUtc();
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsDisabledComparison(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        return value.Equals("false", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("disabled", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("0", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static SearchScope MapScope(DirectorySearchScope scope) => scope switch
     {
         DirectorySearchScope.Base => SearchScope.Base,
@@ -293,13 +492,15 @@ public class ActiveDirectoryService : IActiveDirectoryService
 
     private static DirectoryRecord MapToRecord(DirectoryObjectType targetType, SearchResult result, IEnumerable<string> attributes)
     {
+        var attributeList = attributes?.ToList() ?? new List<string>();
+
         var record = new DirectoryRecord
         {
             ObjectType = targetType,
             DistinguishedName = result.Properties["distinguishedName"][0]?.ToString() ?? string.Empty
         };
 
-        foreach (var attribute in attributes)
+        foreach (var attribute in attributeList)
         {
             if (!result.Properties.Contains(attribute))
             {
@@ -315,7 +516,98 @@ public class ActiveDirectoryService : IActiveDirectoryService
             };
         }
 
+        if (attributeList.Any(a => a.Equals("Enabled", StringComparison.OrdinalIgnoreCase)) &&
+            TryGetUserAccountControl(result, out var userAccountControl))
+        {
+            var isDisabled = (userAccountControl & 0x2) == 0x2;
+            record.Attributes["Enabled"] = isDisabled ? "false" : "true";
+        }
+
+        if (attributeList.Any(a => a.Equals("AccountExpirationDate", StringComparison.OrdinalIgnoreCase)))
+        {
+            var expiration = TryGetAccountExpiration(result, out var fileTime)
+                ? FormatAccountExpirationDate(fileTime)
+                : "Never";
+
+            record.Attributes["AccountExpirationDate"] = expiration;
+        }
+
         return record;
+    }
+
+    private static bool TryGetUserAccountControl(SearchResult result, out int value)
+    {
+        value = 0;
+
+        if (!result.Properties.Contains("userAccountControl") || result.Properties["userAccountControl"].Count == 0)
+        {
+            return false;
+        }
+
+        value = Convert.ToInt32(result.Properties["userAccountControl"][0], CultureInfo.InvariantCulture);
+        return true;
+    }
+
+    private static bool TryGetAccountExpiration(SearchResult result, out long fileTime)
+    {
+        fileTime = 0;
+
+        if (!result.Properties.Contains("accountExpires") || result.Properties["accountExpires"].Count == 0)
+        {
+            return false;
+        }
+
+        return TryExtractFileTime(result.Properties["accountExpires"][0], out fileTime);
+    }
+
+    private static bool TryExtractFileTime(object value, out long fileTime)
+    {
+        switch (value)
+        {
+            case long longValue:
+                fileTime = longValue;
+                return true;
+            case int intValue:
+                fileTime = intValue;
+                return true;
+        }
+
+        var type = value.GetType();
+        var highPart = type.GetProperty("HighPart");
+        var lowPart = type.GetProperty("LowPart");
+        if (highPart is not null && lowPart is not null)
+        {
+            var high = Convert.ToInt64(highPart.GetValue(value, null), CultureInfo.InvariantCulture);
+            var low = Convert.ToInt64(lowPart.GetValue(value, null), CultureInfo.InvariantCulture);
+            fileTime = (high << 32) + (long)((uint)low);
+            return true;
+        }
+
+        fileTime = 0;
+        return false;
+    }
+
+    private static string FormatAccountExpirationDate(long fileTime)
+    {
+        if (fileTime <= 0 || fileTime == long.MaxValue || fileTime == 9223372036854775807)
+        {
+            return "Never";
+        }
+
+        try
+        {
+            var utc = DateTime.FromFileTimeUtc(fileTime);
+            if (utc <= DateTime.FromFileTimeUtc(0))
+            {
+                return "Never";
+            }
+
+            return utc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return "Never";
+        }
     }
 
     private static string EscapeLdapValue(string value)
@@ -338,7 +630,20 @@ public class ActiveDirectoryService : IActiveDirectoryService
             list.Insert(0, "distinguishedName");
         }
 
+        if (list.Contains("Enabled", StringComparer.OrdinalIgnoreCase) &&
+            !list.Contains("userAccountControl", StringComparer.OrdinalIgnoreCase))
+        {
+            list.Add("userAccountControl");
+        }
+
+        if (list.Contains("AccountExpirationDate", StringComparer.OrdinalIgnoreCase) &&
+            !list.Contains("accountExpires", StringComparer.OrdinalIgnoreCase))
+        {
+            list.Add("accountExpires");
+        }
+
         return list;
     }
 }
+
 

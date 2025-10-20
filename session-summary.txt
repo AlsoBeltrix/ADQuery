@@ -1,0 +1,17 @@
+Current Progress (2025-10-20)
+--------------------------------
+- Extended the planning contract to support nested `and`/`or` filter groups:
+  * `DirectoryFilter` now carries `conditions`.
+  * `PlanValidator`, `QueryController.NormalizeFilter`, `DirectoryPlanExecutor`, and `ActiveDirectoryService` were updated to normalise, validate, and execute recursive filter trees while honouring the attribute allow‑list.
+  * Template evaluation and in-memory filtering now respect nested conditions.
+- Strengthened the Claude prompt with:
+  * explicit guidance for emitting grouped filters (`operator` + `conditions` array),
+  * the correct definition for inactive contractors (EmployeeType = "CWK" plus disabled or expired),
+  * reminders to emit all filter values as strings.
+  * refreshed examples referencing real group/department names.
+- Redeployed the app (`deploy.ps1`) after removing the old `/adquery` application.
+- Latest test query “show all inactive contractors with their manager's email” still needs re-run post-deploy to confirm the new logic, but code/prompt changes are in place.
+
+Outstanding:
+- Re-run the failing query and inspect the new log/output.
+- Verify that the plan now uses grouped filters (or emits two steps) and returns data.

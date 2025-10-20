@@ -237,7 +237,33 @@
             disableForm();
         }
 
-        showError(message || 'An unexpected error occurred.');
+        showError(buildFriendlyError(message));
+    }
+
+    function buildFriendlyError(message) {
+        if (typeof message !== 'string' || message.trim().length === 0) {
+            return 'An unexpected error occurred.';
+        }
+
+        const lower = message.toLowerCase();
+
+        if (lower.includes('not allow-listed')) {
+            return 'This query uses directory attributes that are not exposed yet. Please focus the request on supported fields.';
+        }
+
+        if (lower.includes('fallback search matched') || lower.includes('too complex') || lower.includes('multi-level') || lower.includes('recursive')) {
+            return 'This query is more complex than we currently support (for example, deep rollups or complex aggregations). Try narrowing the scope.';
+        }
+
+        if (lower.includes('filter value was missing')) {
+            return 'The generated filter was incomplete. Try rephrasing with exact names or identifiers.';
+        }
+
+        if (lower.includes('cancelled') || lower.includes('timed out')) {
+            return 'The query timed out or was cancelled. Please apply a smaller scope or limit.';
+        }
+
+        return message;
     }
 
     function buildContextHint(query) {
@@ -420,7 +446,8 @@
             URL.revokeObjectURL(url);
         } catch (error) {
             console.error('Download failed:', error);
-            showError(error instanceof Error ? error.message : 'Unable to download results.');
+            const friendly = error instanceof Error ? buildFriendlyError(error.message) : 'Unable to download results.';
+            showError(friendly);
         } finally {
             button.textContent = originalLabel;
             updateDownloadButtons();

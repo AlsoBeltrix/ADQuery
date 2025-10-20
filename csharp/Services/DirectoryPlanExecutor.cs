@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using AdQuery.Orchestrator.Models;
@@ -226,12 +228,12 @@ internal sealed class DirectoryPlanRuntime
         };
     }
 
-    private Task<IReadOnlyList<DirectoryRecord>> ExecuteSearchStep(DirectoryPlanStep step, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<DirectoryRecord>> ExecuteSearchStep(DirectoryPlanStep step, CancellationToken cancellationToken)
     {
         if (!TryNormalizeFilters(step, out var normalizedFilters))
         {
             _warnings.Add($"Step {step.Step} skipped because a filter value was missing.");
-            return Task.FromResult<IReadOnlyList<DirectoryRecord>>(Array.Empty<DirectoryRecord>());
+            return Array.Empty<DirectoryRecord>();
         }
 
         var filtersToUse = normalizedFilters.Count > 0
@@ -243,6 +245,46 @@ internal sealed class DirectoryPlanRuntime
             step.Filters = normalizedFilters;
         }
 
+        if (TryEvaluateTemplateSearch(step, filtersToUse, out var templateRecords))
+        {
+            return templateRecords;
+        }
+
+        if (TryExpandTemplateFilters(step, filtersToUse, out var expandedFilterSets))
+        {
+            if (expandedFilterSets.Count == 0)
+            {
+                return Array.Empty<DirectoryRecord>();
+            }
+
+            var aggregated = new Dictionary<string, DirectoryRecord>(StringComparer.OrdinalIgnoreCase);
+            foreach (var filterSet in expandedFilterSets)
+            {
+                var expandedRequest = new DirectorySearchRequest
+                {
+                    TargetType = step.TargetType,
+                    Attributes = step.Attributes,
+                    Filters = filterSet,
+                    SizeLimit = step.SizeLimit
+                };
+
+                var expandedResults = await _directoryService.SearchAsync(expandedRequest, cancellationToken);
+                foreach (var record in expandedResults)
+                {
+                    if (!string.IsNullOrWhiteSpace(record.DistinguishedName) &&
+                        !aggregated.ContainsKey(record.DistinguishedName))
+                    {
+                        aggregated[record.DistinguishedName] = record;
+                    }
+                }
+            }
+
+            if (aggregated.Count > 0)
+            {
+                return aggregated.Values.ToList();
+            }
+        }
+
         var request = new DirectorySearchRequest
         {
             TargetType = step.TargetType,
@@ -251,7 +293,20 @@ internal sealed class DirectoryPlanRuntime
             SizeLimit = step.SizeLimit
         };
 
-        return _directoryService.SearchAsync(request, cancellationToken);
+        var records = await _directoryService.SearchAsync(request, cancellationToken);
+
+        if (records.Count == 0)
+        {
+            var fallback = await TryExecutePersonSearchFallbackAsync(step, filtersToUse, cancellationToken);
+            if (fallback is { } result && result.Records.Count > 0)
+            {
+                _warnings.Add($"Step {step.Step} fallback search matched {result.Records.Count} records.");
+                step.Filters = result.Filters;
+                return result.Records;
+            }
+        }
+
+        return records;
     }
 
     private async Task<IReadOnlyList<DirectoryRecord>> ExecuteExpandMembersStep(DirectoryPlanStep step, CancellationToken cancellationToken)
@@ -307,10 +362,23 @@ internal sealed class DirectoryPlanRuntime
         }
 
         var rows = new List<Dictionary<string, object?>>();
+        var projectionFilters = new List<DirectoryFilter>();
+
+        if (projection.Filters is not null && projection.Filters.Count > 0)
+        {
+            projectionFilters.AddRange(projection.Filters);
+        }
+
+        if (projection.Filter is not null &&
+            !projectionFilters.Contains(projection.Filter))
+        {
+            projectionFilters.Add(projection.Filter);
+        }
 
         foreach (var record in rowState.Records)
         {
-            if (projection.Filter is not null && !RecordMatchesFilter(record, projection.Filter))
+            if (projectionFilters.Any() &&
+                projectionFilters.Any(filter => !RecordMatchesFilter(record, filter)))
             {
                 continue;
             }
@@ -345,6 +413,735 @@ internal sealed class DirectoryPlanRuntime
         return rows;
     }
 
+    private bool TryEvaluateTemplateSearch(DirectoryPlanStep step, List<DirectoryFilter> filters, out IReadOnlyList<DirectoryRecord> records)
+    {
+        records = Array.Empty<DirectoryRecord>();
+
+        var templateMatches = filters.SelectMany(EnumerateTemplateMatches).ToList();
+        if (templateMatches.Count == 0)
+        {
+            return false;
+        }
+
+        StepRuntimeState? referencedState = null;
+        foreach (var match in templateMatches)
+        {
+            var referencedStepName = match.Groups["step"].Value;
+            if (!_stepStates.TryGetValue(referencedStepName, out var state))
+            {
+                return false;
+            }
+
+            if (referencedState is null)
+            {
+                referencedState = state;
+            }
+            else if (!ReferenceEquals(referencedState, state))
+            {
+                // Multiple referenced steps not yet supported
+                return false;
+            }
+        }
+
+        if (referencedState is null)
+        {
+            return false;
+        }
+
+        var candidates = referencedState.Records;
+        if (!candidates.Any())
+        {
+            return false;
+        }
+
+        var filtered = new List<DirectoryRecord>();
+        foreach (var candidate in candidates)
+        {
+            var matches = true;
+
+            foreach (var filter in filters)
+            {
+                if (FilterContainsTemplate(filter))
+                {
+                    if (!EvaluateTemplateFilter(filter, candidate, referencedState))
+                    {
+                        matches = false;
+                        break;
+                    }
+                }
+                else
+                {
+                    if (!RecordMatchesFilter(candidate, filter))
+                    {
+                        matches = false;
+                        break;
+                    }
+                }
+            }
+
+            if (matches)
+            {
+                filtered.Add(candidate);
+            }
+        }
+
+        if (filtered.Count == 0)
+        {
+            return false;
+        }
+
+        records = filtered;
+        return true;
+    }
+
+    private async Task<(IReadOnlyList<DirectoryRecord> Records, List<DirectoryFilter> Filters)?> TryExecutePersonSearchFallbackAsync(
+        DirectoryPlanStep step,
+        List<DirectoryFilter> filters,
+        CancellationToken cancellationToken)
+    {
+        if (step.TargetType != DirectoryObjectType.User)
+        {
+            return TryEvaluateTemplateSearch(step, filters, out var inMemoryRecords)
+                ? (inMemoryRecords, filters)
+                : null;
+        }
+
+        var displayNameFilters = filters.Where(f => f.Attribute.Equals("displayName", StringComparison.OrdinalIgnoreCase)).ToList();
+        if (displayNameFilters.Count == 0)
+        {
+            var upnDerivedFilters = new List<DirectoryFilter>();
+            var upnFilters = filters
+                .Where(f => f.Attribute.Equals("userPrincipalName", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (upnFilters.Count > 0)
+            {
+                var augmentedFilters = new List<DirectoryFilter>(filters);
+                var seenDisplayValues = new HashSet<string>(
+                    filters
+                        .Where(f => f.Attribute.Equals("displayName", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(f.Value))
+                        .Select(f => f.Value!),
+                    StringComparer.OrdinalIgnoreCase);
+
+                foreach (var upnFilter in upnFilters)
+                {
+                    if (string.IsNullOrWhiteSpace(upnFilter.Value))
+                    {
+                        continue;
+                    }
+
+                    foreach (var candidate in EnumerateDisplayNameCandidatesFromUpn(upnFilter.Value))
+                    {
+                        if (seenDisplayValues.Add(candidate))
+                        {
+                            var generatedFilter = new DirectoryFilter
+                            {
+                                Attribute = "displayName",
+                                Operator = "equals",
+                                Value = candidate
+                            };
+
+                            upnDerivedFilters.Add(generatedFilter);
+                            augmentedFilters.Add(generatedFilter);
+                        }
+                    }
+                }
+
+                if (upnDerivedFilters.Count > 0)
+                {
+                    filters = augmentedFilters;
+                    displayNameFilters = upnDerivedFilters;
+                }
+            }
+
+            if (displayNameFilters.Count == 0)
+            {
+                return TryEvaluateTemplateSearch(step, filters, out var inMemoryRecords)
+                    ? (inMemoryRecords, filters)
+                    : null;
+            }
+        }
+
+        var candidateValues = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var filter in displayNameFilters)
+        {
+            if (!string.IsNullOrWhiteSpace(filter.Value))
+            {
+                foreach (var candidate in EnumerateDisplayNameCandidates(filter.Value))
+                {
+                    candidateValues.Add(candidate);
+                }
+            }
+        }
+
+        if (candidateValues.Count == 0)
+        {
+            return null;
+        }
+
+        foreach (var candidate in candidateValues)
+        {
+            var alternativeFilters = filters
+                .Select(filter => filter.Attribute.Equals("displayName", StringComparison.OrdinalIgnoreCase)
+                    ? new DirectoryFilter
+                    {
+                        Attribute = filter.Attribute,
+                        Operator = "equals",
+                        Value = candidate
+                    }
+                    : new DirectoryFilter
+                    {
+                        Attribute = filter.Attribute,
+                        Operator = filter.Operator,
+                        Value = filter.Value
+                    })
+                .ToList();
+
+            var request = new DirectorySearchRequest
+            {
+                TargetType = step.TargetType,
+                Attributes = step.Attributes,
+                Filters = alternativeFilters,
+                SizeLimit = step.SizeLimit
+            };
+
+            var result = await _directoryService.SearchAsync(request, cancellationToken);
+            if (result.Count > 0)
+            {
+                return (result.ToList(), alternativeFilters);
+            }
+
+            if (TryParseName(candidate, out var first, out var last))
+            {
+                var containsFilters = new List<DirectoryFilter>
+                {
+                    new() { Attribute = "displayName", Operator = "contains", Value = last },
+                    new() { Attribute = "displayName", Operator = "contains", Value = first }
+                };
+
+                var additionalFilters = filters
+                    .Where(filter => !filter.Attribute.Equals("displayName", StringComparison.OrdinalIgnoreCase))
+                    .Select(filter => new DirectoryFilter
+                    {
+                        Attribute = filter.Attribute,
+                        Operator = filter.Operator,
+                        Value = filter.Value
+                    });
+
+                containsFilters.AddRange(additionalFilters);
+
+                request = new DirectorySearchRequest
+                {
+                    TargetType = step.TargetType,
+                    Attributes = step.Attributes,
+                    Filters = containsFilters,
+                    SizeLimit = step.SizeLimit
+                };
+
+                result = await _directoryService.SearchAsync(request, cancellationToken);
+                if (result.Count > 0)
+                {
+                    return (result.ToList(), containsFilters);
+                }
+            }
+        }
+
+        return TryEvaluateTemplateSearch(step, filters, out var templateRecords)
+            ? (templateRecords, filters)
+            : null;
+    }
+
+    private static IEnumerable<string> EnumerateDisplayNameCandidatesFromUpn(string upn)
+    {
+        if (string.IsNullOrWhiteSpace(upn))
+        {
+            yield break;
+        }
+
+        var atIndex = upn.IndexOf('@');
+        var localPart = atIndex >= 0 ? upn[..atIndex] : upn;
+
+        if (string.IsNullOrWhiteSpace(localPart))
+        {
+            yield break;
+        }
+
+        var nameTokens = localPart
+            .Split(new[] { '.', '_', '-', ' ' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(token => NormalizeNameComponent(token))
+            .ToList();
+
+        if (nameTokens.Count < 2)
+        {
+            yield break;
+        }
+
+        var first = nameTokens.First();
+        var last = nameTokens.Last();
+
+        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            $"{last}, {first}",
+            $"{first} {last}"
+        };
+
+        if (!string.Equals(first, last, StringComparison.OrdinalIgnoreCase))
+        {
+            candidates.Add($"{first}, {last}");
+            candidates.Add($"{last} {first}");
+        }
+
+        foreach (var candidate in candidates)
+        {
+            if (!string.IsNullOrWhiteSpace(candidate))
+            {
+                yield return candidate;
+            }
+        }
+    }
+
+    private IEnumerable<string> EnumerateDisplayNameCandidates(string original)
+    {
+        if (string.IsNullOrWhiteSpace(original))
+        {
+            yield break;
+        }
+
+        var trimmed = original.Trim();
+        yield return trimmed;
+
+        if (trimmed.Contains(',', StringComparison.Ordinal))
+        {
+            var parts = trimmed.Split(',', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 2)
+            {
+                var last = parts[0].Trim();
+                var first = parts[1].Trim();
+
+                var canonical = $"{NormalizeNameComponent(last)}, {NormalizeNameComponent(first)}";
+                if (!string.Equals(trimmed, canonical, StringComparison.OrdinalIgnoreCase))
+                {
+                    yield return canonical;
+                }
+
+                yield return $"{NormalizeNameComponent(first)} {NormalizeNameComponent(last)}";
+            }
+            yield break;
+        }
+
+        var tokens = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length >= 2)
+        {
+            var first = tokens[0];
+            var last = tokens[^1];
+
+            yield return $"{NormalizeNameComponent(last)}, {NormalizeNameComponent(first)}";
+            yield return $"{NormalizeNameComponent(first)} {NormalizeNameComponent(last)}";
+        }
+    }
+
+    private static string NormalizeNameComponent(string value)
+    {
+        return CultureInfo.InvariantCulture.TextInfo.ToTitleCase(value.ToLowerInvariant());
+    }
+
+    private static bool TryParseName(string value, out string first, out string last)
+    {
+        first = string.Empty;
+        last = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        if (trimmed.Contains(',', StringComparison.Ordinal))
+        {
+            var parts = trimmed.Split(',', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 2)
+            {
+                last = NormalizeNameComponent(parts[0].Trim());
+                first = NormalizeNameComponent(parts[1].Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? string.Empty);
+                return true;
+            }
+        }
+        else
+        {
+            var tokens = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length >= 2)
+            {
+                first = NormalizeNameComponent(tokens.First());
+                last = NormalizeNameComponent(tokens.Last());
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool EvaluateTemplateFilter(DirectoryFilter filter, DirectoryRecord record, StepRuntimeState referencedState)
+    {
+        if (filter is null)
+        {
+            return false;
+        }
+
+        var operatorValue = (filter.Operator ?? "equals").Trim().ToLowerInvariant();
+
+        if (filter.Conditions is { Count: > 0 })
+        {
+            return operatorValue switch
+            {
+                "or" => filter.Conditions.Any(child => EvaluateTemplateFilter(child, record, referencedState)),
+                "and" => filter.Conditions.All(child => EvaluateTemplateFilter(child, record, referencedState)),
+                _ => filter.Conditions.All(child => EvaluateTemplateFilter(child, record, referencedState))
+            };
+        }
+
+        var referencedValue = ResolveTemplateValue(filter.Value, referencedState, record);
+        if (referencedValue is null)
+        {
+            return false;
+        }
+
+        var candidateValue = record.GetString(filter.Attribute);
+        if (string.IsNullOrWhiteSpace(candidateValue) && filter.Attribute.Equals("distinguishedName", StringComparison.OrdinalIgnoreCase))
+        {
+            candidateValue = record.DistinguishedName;
+        }
+
+        if (candidateValue is null)
+        {
+            return false;
+        }
+
+        var isNegated = operatorValue.StartsWith("not_");
+        var baseOperator = isNegated ? operatorValue[4..] : operatorValue;
+        var comparison = MatchesBaseOperator(candidateValue, referencedValue, baseOperator);
+        return isNegated ? !comparison : comparison;
+    }
+
+    private bool FilterContainsTemplate(DirectoryFilter filter)
+    {
+        if (filter is null)
+        {
+            return false;
+        }
+
+        if (filter.Conditions is { Count: > 0 })
+        {
+            return filter.Conditions.Any(FilterContainsTemplate);
+        }
+
+        return TemplateRegex.IsMatch(filter.Value ?? string.Empty);
+    }
+
+    private IEnumerable<Match> EnumerateTemplateMatches(DirectoryFilter filter)
+    {
+        if (filter is null)
+        {
+            yield break;
+        }
+
+        if (filter.Conditions is { Count: > 0 })
+        {
+            foreach (var child in filter.Conditions)
+            {
+                foreach (var match in EnumerateTemplateMatches(child))
+                {
+                    yield return match;
+                }
+            }
+
+            yield break;
+        }
+
+        if (string.IsNullOrWhiteSpace(filter.Value))
+        {
+            yield break;
+        }
+
+        foreach (Match match in TemplateRegex.Matches(filter.Value))
+        {
+            if (match.Success)
+            {
+                yield return match;
+            }
+        }
+    }
+
+    private string? ResolveTemplateValue(string? template, StepRuntimeState referencedState, DirectoryRecord record)
+    {
+        if (string.IsNullOrWhiteSpace(template))
+        {
+            return template;
+        }
+
+        var matches = TemplateRegex.Matches(template);
+        if (matches.Count == 0)
+        {
+            return template;
+        }
+
+        var result = new System.Text.StringBuilder();
+        var lastIndex = 0;
+
+        foreach (Match match in matches)
+        {
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            var referencedStepName = match.Groups["step"].Value;
+            if (!string.IsNullOrWhiteSpace(referencedStepName) &&
+                !string.Equals(referencedStepName, referencedState.StepName, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            var attribute = match.Groups["attribute"].Value;
+            var referencedValue = record.GetString(attribute);
+            if (referencedValue is null)
+            {
+                return null;
+            }
+
+            result.Append(template, lastIndex, match.Index - lastIndex);
+            result.Append(referencedValue);
+            lastIndex = match.Index + match.Length;
+        }
+
+        if (lastIndex < template.Length)
+        {
+            result.Append(template, lastIndex, template.Length - lastIndex);
+        }
+
+        return result.ToString();
+    }
+
+    private bool TryExpandTemplateFilters(DirectoryPlanStep step, List<DirectoryFilter> filters, out List<List<DirectoryFilter>> expandedFilterSets)
+    {
+        expandedFilterSets = new List<List<DirectoryFilter>>();
+
+        var references = CollectTemplateReferences(filters);
+        if (references.Count == 0)
+        {
+            return false;
+        }
+
+        if (references.Any(reference => reference.Value.Records.Count == 0))
+        {
+            return true;
+        }
+
+        var combinations = BuildRecordCombinations(references);
+        foreach (var combination in combinations)
+        {
+            var clonedFilters = CloneFilterSetWithTemplates(filters, combination);
+            if (clonedFilters is not null && clonedFilters.Count > 0)
+            {
+                expandedFilterSets.Add(clonedFilters);
+            }
+        }
+
+        return true;
+    }
+
+    private Dictionary<string, StepRuntimeState> CollectTemplateReferences(IEnumerable<DirectoryFilter> filters)
+    {
+        var result = new Dictionary<string, StepRuntimeState>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var filter in filters)
+        {
+            CollectTemplateReferences(filter, result);
+        }
+
+        return result;
+    }
+
+    private void CollectTemplateReferences(DirectoryFilter? filter, IDictionary<string, StepRuntimeState> references)
+    {
+        if (filter is null)
+        {
+            return;
+        }
+
+        if (filter.Conditions is { Count: > 0 })
+        {
+            foreach (var child in filter.Conditions)
+            {
+                CollectTemplateReferences(child, references);
+            }
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(filter.Value))
+        {
+            return;
+        }
+
+        foreach (Match match in TemplateRegex.Matches(filter.Value))
+        {
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            var stepName = match.Groups["step"].Value;
+            if (string.IsNullOrWhiteSpace(stepName))
+            {
+                continue;
+            }
+
+            if (!references.ContainsKey(stepName) && _stepStates.TryGetValue(stepName, out var state))
+            {
+                references[stepName] = state;
+            }
+        }
+    }
+
+    private List<Dictionary<string, DirectoryRecord>> BuildRecordCombinations(Dictionary<string, StepRuntimeState> references)
+    {
+        var referenceList = references.ToList();
+        var combinations = new List<Dictionary<string, DirectoryRecord>>();
+        BuildRecordCombinationsRecursive(referenceList, 0, new Dictionary<string, DirectoryRecord>(StringComparer.OrdinalIgnoreCase), combinations);
+        return combinations;
+    }
+
+    private void BuildRecordCombinationsRecursive(
+        IReadOnlyList<KeyValuePair<string, StepRuntimeState>> references,
+        int index,
+        Dictionary<string, DirectoryRecord> current,
+        List<Dictionary<string, DirectoryRecord>> combinations)
+    {
+        if (index >= references.Count)
+        {
+            combinations.Add(new Dictionary<string, DirectoryRecord>(current, StringComparer.OrdinalIgnoreCase));
+            return;
+        }
+
+        var (stepName, state) = references[index];
+        foreach (var record in state.Records)
+        {
+            current[stepName] = record;
+            BuildRecordCombinationsRecursive(references, index + 1, current, combinations);
+        }
+
+        current.Remove(stepName);
+    }
+
+    private List<DirectoryFilter>? CloneFilterSetWithTemplates(IEnumerable<DirectoryFilter> filters, Dictionary<string, DirectoryRecord> recordMap)
+    {
+        var cloned = new List<DirectoryFilter>();
+        foreach (var filter in filters)
+        {
+            var clone = CloneFilterWithTemplates(filter, recordMap);
+            if (clone is null)
+            {
+                return null;
+            }
+            cloned.Add(clone);
+        }
+
+        return cloned;
+    }
+
+    private DirectoryFilter? CloneFilterWithTemplates(DirectoryFilter? filter, Dictionary<string, DirectoryRecord> recordMap)
+    {
+        if (filter is null)
+        {
+            return null;
+        }
+
+        var clone = new DirectoryFilter
+        {
+            Attribute = filter.Attribute,
+            Operator = filter.Operator,
+            Value = filter.Value,
+            Conditions = filter.Conditions is { Count: > 0 } ? new List<DirectoryFilter>() : null
+        };
+
+        if (filter.Conditions is { Count: > 0 })
+        {
+            foreach (var child in filter.Conditions)
+            {
+                var clonedChild = CloneFilterWithTemplates(child, recordMap);
+                if (clonedChild is null)
+                {
+                    return null;
+                }
+                clone.Conditions!.Add(clonedChild);
+            }
+
+            return clone;
+        }
+
+        var replacedValue = ReplaceTemplatePlaceholders(filter.Value, recordMap);
+        if (replacedValue is null)
+        {
+            return null;
+        }
+
+        clone.Value = replacedValue;
+        return clone;
+    }
+
+    private string? ReplaceTemplatePlaceholders(string? template, Dictionary<string, DirectoryRecord> recordMap)
+    {
+        if (string.IsNullOrWhiteSpace(template))
+        {
+            return template;
+        }
+
+        var matches = TemplateRegex.Matches(template);
+        if (matches.Count == 0)
+        {
+            return template;
+        }
+
+        var builder = new System.Text.StringBuilder();
+        var lastIndex = 0;
+
+        foreach (Match match in matches)
+        {
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            var stepName = match.Groups["step"].Value;
+            if (!recordMap.TryGetValue(stepName, out var record))
+            {
+                return null;
+            }
+
+            var attribute = match.Groups["attribute"].Value;
+            var value = record.GetString(attribute);
+            if (value is null && attribute.Equals("distinguishedName", StringComparison.OrdinalIgnoreCase))
+            {
+                value = record.DistinguishedName;
+            }
+
+            if (value is null)
+            {
+                return null;
+            }
+
+            builder.Append(template, lastIndex, match.Index - lastIndex);
+            builder.Append(value);
+            lastIndex = match.Index + match.Length;
+        }
+
+        if (lastIndex < template.Length)
+        {
+            builder.Append(template, lastIndex, template.Length - lastIndex);
+        }
+
+        return builder.ToString();
+    }
+
     private bool TryNormalizeFilters(DirectoryPlanStep step, out List<DirectoryFilter> normalized)
     {
         normalized = new List<DirectoryFilter>();
@@ -361,33 +1158,101 @@ internal sealed class DirectoryPlanRuntime
                 continue;
             }
 
-            var trimmed = filter.Value?.Trim();
-            var trimmedAttribute = filter.Attribute?.Trim();
-
-            if (string.IsNullOrWhiteSpace(trimmedAttribute))
+            if (!TryNormalizeFilter(filter, out var normalizedFilter))
             {
                 return false;
             }
 
-            if (string.IsNullOrWhiteSpace(trimmed))
-            {
-                return false;
-            }
-
-            normalized.Add(new DirectoryFilter
-            {
-                Attribute = trimmedAttribute,
-                Operator = filter.Operator,
-                Value = trimmed
-            });
+            normalized.Add(normalizedFilter);
         }
 
         return true;
     }
 
+    private bool TryNormalizeFilter(DirectoryFilter filter, out DirectoryFilter normalized)
+    {
+        var operatorValue = string.IsNullOrWhiteSpace(filter.Operator)
+            ? (filter.Conditions is { Count: > 0 } ? "and" : "equals")
+            : filter.Operator.Trim();
+
+        if (filter.Conditions is { Count: > 0 })
+        {
+            var normalizedChildren = new List<DirectoryFilter>();
+            foreach (var child in filter.Conditions)
+            {
+                if (child is null)
+                {
+                    continue;
+                }
+
+                if (!TryNormalizeFilter(child, out var normalizedChild))
+                {
+                    normalized = null!;
+                    return false;
+                }
+
+                normalizedChildren.Add(normalizedChild);
+            }
+
+            normalized = new DirectoryFilter
+            {
+                Operator = operatorValue,
+                Conditions = normalizedChildren
+            };
+            return true;
+        }
+
+        var trimmedAttribute = filter.Attribute?.Trim();
+        var trimmedValue = filter.Value?.Trim();
+
+        if (string.IsNullOrWhiteSpace(trimmedAttribute) ||
+            (string.IsNullOrWhiteSpace(trimmedValue) && !AllowsEmptyFilterValue(trimmedAttribute, operatorValue)))
+        {
+            normalized = null!;
+            return false;
+        }
+
+        normalized = new DirectoryFilter
+        {
+            Attribute = trimmedAttribute,
+            Operator = operatorValue,
+            Value = trimmedValue ?? string.Empty
+        };
+
+        return true;
+    }
+
+    private static bool AllowsEmptyFilterValue(string? attribute, string operatorValue)
+    {
+        if (string.IsNullOrWhiteSpace(attribute))
+        {
+            return false;
+        }
+
+        if (attribute.Equals("AccountExpirationDate", StringComparison.OrdinalIgnoreCase) &&
+            (operatorValue.Equals("not_equals", StringComparison.OrdinalIgnoreCase) ||
+             operatorValue.Equals("equals", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
     private static bool RecordMatchesFilter(DirectoryRecord record, DirectoryFilter filter)
     {
         var operatorValue = (filter.Operator ?? "equals").Trim().ToLowerInvariant();
+
+        if (filter.Conditions is { Count: > 0 })
+        {
+            return operatorValue switch
+            {
+                "or" => filter.Conditions.Any(child => RecordMatchesFilter(record, child)),
+                "and" => filter.Conditions.All(child => RecordMatchesFilter(record, child)),
+                _ => filter.Conditions.All(child => RecordMatchesFilter(record, child))
+            };
+        }
+
         var isNegated = operatorValue.StartsWith("not_");
         var baseOperator = isNegated ? operatorValue[4..] : operatorValue;
         var expected = filter.Value ?? string.Empty;
@@ -441,6 +1306,8 @@ internal sealed class DirectoryPlanRuntime
         return sourceState.FindByAttribute(matchOn, matchValue);
     }
 
+    private static readonly Regex TemplateRegex = new(@"\{\{\s*(?<step>[^.\s]+)\.(?<attribute>[^}\s]+)\s*\}\}", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private sealed class StepRuntimeState
     {
         private readonly Dictionary<string, DirectoryRecord> _indexByDistinguishedName;
@@ -449,11 +1316,14 @@ internal sealed class DirectoryPlanRuntime
         public StepRuntimeState(DirectoryPlanStep step, IReadOnlyList<DirectoryRecord> records)
         {
             _records = records;
+            StepName = step.Name ?? string.Empty;
             _indexByDistinguishedName = records
                 .Where(r => !string.IsNullOrWhiteSpace(r.DistinguishedName))
                 .GroupBy(r => r.DistinguishedName, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         }
+
+        public string StepName { get; }
 
         public IReadOnlyList<DirectoryRecord> Records => _records;
 
@@ -492,3 +1362,7 @@ internal sealed class DirectoryPlanRuntime
         public int StepsSkipped { get; set; }
     }
 }
+
+
+
+

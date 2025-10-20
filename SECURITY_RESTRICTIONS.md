@@ -16,7 +16,9 @@
 - `Controllers/QueryController.cs:118` normalizes plan filters before validation/execution, mapping license aliases to `extensionAttribute11` and translating relaxed operator phrases into the supported allow-list.
 - `Security/PlanValidator.cs:37-123` caps plan complexity to 10 steps, five filters per step, 25 attributes per step, and 25 projection columns; violations are logged and cause validation failure.
 - `Security/PlanValidator.cs:123-175` validates the optional projection-level filter so only allow-listed attributes/operators can be used to trim row results post-execution.
+- `Services/ClaudeService.cs:16-305` injects directory naming/search conventions as a system prompt so Claude emits canonical displayName filters and uses manager distinguished names.
 - `Services/DirectoryPlanExecutor.cs:230-309` evaluates projection filters server-side, ensuring exclusions expressed at projection scope (e.g., `extensionAttribute11 not_equals "F3"`) actually shape the final dataset.
+- `Services/DirectoryPlanExecutor.cs:310-420` resolves `{{step.attribute}}` filters against cached results and retries person searches with canonical displayName variants when LDAP lookups return empty.
 - `Services/ActiveDirectoryService.cs:55-126` trims LDAP filter values and refuses to execute searches when a filter value is blank, avoiding malformed `(attribute=)` queries from hitting Active Directory.
 - `Services/DirectoryPlanExecutor.cs:166-221` normalizes step filters before execution and halts downstream processing when a required group search returns no members, preventing broad fallbacks when a seed object is missing.
 - `Services/ActiveDirectoryService.cs:239` translates allowed operators (including the new negation variants) into LDAP clauses so exclusions such as `extensionAttribute8 not_equals "2"` are enforced server-side.
@@ -48,3 +50,4 @@
 - `Security/PlanValidator.cs:175-187` respects the hard-coded complexity caps, but the `MaxPlanComplexity` setting is currently unused; aligning config-driven limits with the validator would improve flexibility.
 - `Controllers/QueryController.cs:603-615` caps human-readable limits at 500, but other plan shapes could still request fewer rows; monitor execution logs to ensure limits remain appropriate.
 - `Controllers/QueryController.cs:27-51` caches results in memory, so deployments should ensure the 30-minute retention aligns with organizational data-handling policies.
+

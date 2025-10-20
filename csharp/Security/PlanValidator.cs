@@ -31,7 +31,9 @@ public class PlanValidator : IPlanValidator
         "starts_with",
         "not_starts_with",
         "ends_with",
-        "not_ends_with"
+        "not_ends_with",
+        "and",
+        "or"
     };
 
     private readonly ILogger<PlanValidator> _logger;
@@ -95,18 +97,7 @@ public class PlanValidator : IPlanValidator
                 }
             }
 
-            foreach (var filter in step.Filters)
-            {
-                if (!allowedAttributes.Contains(filter.Attribute))
-                {
-                    result.SecurityErrors.Add($"Step {step.Step} filter references attribute '{filter.Attribute}' which is not allow-listed.");
-                }
-
-                if (!AllowedFilterOperators.Contains(filter.Operator))
-                {
-                    result.SecurityErrors.Add($"Step {step.Step} uses unsupported filter operator '{filter.Operator}'.");
-                }
-            }
+            ValidateFilters(step.Filters, step.TargetType, step.Step, allowedAttributes, result);
 
             if (!string.IsNullOrWhiteSpace(step.Source) && !seenSteps.Contains(step.Source))
             {
@@ -200,7 +191,6 @@ public class PlanValidator : IPlanValidator
 
         return true;
     }
-
     private void ValidateProjectionFilter(DirectoryQueryPlan plan, PlanSecurityResult result, Dictionary<string, DirectoryPlanStep> stepLookup)
     {
         if (plan?.Projection?.Filter is null)
@@ -253,6 +243,57 @@ public class PlanValidator : IPlanValidator
         }
     }
 
+    private void ValidateFilters(IEnumerable<DirectoryFilter> filters, DirectoryObjectType targetType, int stepNumber, HashSet<string> allowedAttributes, PlanSecurityResult result)
+    {
+        if (filters is null)
+        {
+            return;
+        }
+
+        foreach (var filter in filters)
+        {
+            if (filter is null)
+            {
+                continue;
+            }
+
+            var operatorValue = string.IsNullOrWhiteSpace(filter.Operator)
+                ? (filter.Conditions is { Count: > 0 } ? "and" : "equals")
+                : filter.Operator.Trim();
+
+            filter.Operator = operatorValue;
+
+            if (filter.Conditions is { Count: > 0 })
+            {
+                if (!AllowedFilterOperators.Contains(operatorValue))
+                {
+                    result.SecurityErrors.Add($"Step {stepNumber} uses unsupported filter operator '{operatorValue}'.");
+                }
+
+                ValidateFilters(filter.Conditions, targetType, stepNumber, allowedAttributes, result);
+                continue;
+            }
+
+            var attribute = filter.Attribute?.Trim();
+            filter.Attribute = attribute ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(attribute))
+            {
+                result.SecurityErrors.Add($"Step {stepNumber} filter attribute is required.");
+                continue;
+            }
+
+            if (!allowedAttributes.Contains(attribute))
+            {
+                result.SecurityErrors.Add($"Step {stepNumber} filter references attribute '{attribute}' which is not allow-listed.");
+            }
+
+            if (!AllowedFilterOperators.Contains(operatorValue))
+            {
+                result.SecurityErrors.Add($"Step {stepNumber} uses unsupported filter operator '{operatorValue}'.");
+            }
+        }
+    }
     private static Dictionary<DirectoryObjectType, HashSet<string>> LoadAllowedAttributes(
         IConfiguration configuration,
         IWebHostEnvironment environment,
@@ -379,3 +420,7 @@ public class PlanValidator : IPlanValidator
         };
     }
 }
+
+
+
+

@@ -356,3 +356,10 @@ footer li {
         text-align: center;
     }
 }
+
+.note {
+    color: var(--color-muted);
+    font-size: 0.95rem;
+    margin-top: 0.5rem;
+}
+

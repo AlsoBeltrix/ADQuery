@@ -35,8 +35,10 @@
 - **Attribute allow-list**: tailored for users, groups, computers, and OUs.
 - **Filter operators**: `equals`, `not_equals`, `contains`, `not_contains`, `starts_with`, `not_starts_with`, `ends_with`, `not_ends_with`.
 - **Filter normalization**: LDAP predicates are trimmed and empty values are rejected before execution, preventing malformed `(attribute=)` searches from reaching AD.
+- **Prompt guidance**: Claude receives configuration-driven schema notes (displayName formats, manager DN rule, reusable search patterns) so generated plans align with the directory model.
 - **Plan complexity**: capped at ten steps, five filters per step, twenty-five projection columns.
 - **Projection filters**: optional row-step filters are validated and evaluated after execution so JSON plans can express exclusions without custom joins.
+- **Template-aware filtering**: when steps reference `{{previous_step.attribute}}`, the executor filters cached results in-memory instead of issuing redundant LDAP searches (e.g., license filtering on expanded group members).
 - **Windows group enforcement**: only members of `ANALOG\ADEXNLQ_Users` can reach the controllers (Negotiate/Windows auth).
 - **Optional HMAC**: retained via `Security:HmacSecretKey`.
 - **Per-user logging**: each request (success, failure, cancellation) writes a dedicated timestamped log file with download history and the saved CSV artifact.
