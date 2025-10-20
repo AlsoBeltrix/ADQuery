@@ -31,7 +31,13 @@ public class DirectoryPlanExecutor : IDirectoryPlanExecutor
         _directoryService = directoryService;
     }
 
-    public async Task<PlanExecutionResult> ExecutePlanAsync(DirectoryQueryPlan plan, CancellationToken cancellationToken = default)
+    public Task<PlanExecutionResult> ExecutePlanAsync(DirectoryQueryPlan plan, CancellationToken cancellationToken = default)
+    {
+        // Use null progress for backward compatibility
+        return ExecutePlanAsync(plan, new NullProgress(), cancellationToken);
+    }
+
+    public async Task<PlanExecutionResult> ExecutePlanAsync(DirectoryQueryPlan plan, IProgress<PlanProgressUpdate> progress, CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
         var result = new PlanExecutionResult();
@@ -47,7 +53,7 @@ public class DirectoryPlanExecutor : IDirectoryPlanExecutor
                 return result;
             }
 
-            var runtime = new DirectoryPlanRuntime(_directoryService, _logger);
+            var runtime = new DirectoryPlanRuntime(_directoryService, _logger, progress);
             var execution = await runtime.ExecuteAsync(plan, cancellationToken);
 
             result.Success = execution.Success;
@@ -76,6 +82,11 @@ public class DirectoryPlanExecutor : IDirectoryPlanExecutor
         }
 
         return result;
+    }
+
+    private class NullProgress : IProgress<PlanProgressUpdate>
+    {
+        public void Report(PlanProgressUpdate value) { }
     }
 
     public async Task<PlanValidationResult> ValidatePlanAsync(DirectoryQueryPlan plan, CancellationToken cancellationToken = default)
@@ -154,15 +165,17 @@ internal sealed class DirectoryPlanRuntime
 {
     private readonly IActiveDirectoryService _directoryService;
     private readonly ILogger _logger;
+    private readonly IProgress<PlanProgressUpdate>? _progress;
 
     private readonly Dictionary<string, StepRuntimeState> _stepStates = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _errors = new();
     private readonly List<string> _warnings = new();
 
-    public DirectoryPlanRuntime(IActiveDirectoryService directoryService, ILogger logger)
+    public DirectoryPlanRuntime(IActiveDirectoryService directoryService, ILogger logger, IProgress<PlanProgressUpdate>? progress = null)
     {
         _directoryService = directoryService;
         _logger = logger;
+        _progress = progress;
     }
 
     public async Task<RuntimeResult> ExecuteAsync(DirectoryQueryPlan plan, CancellationToken cancellationToken)

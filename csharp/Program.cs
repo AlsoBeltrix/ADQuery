@@ -55,6 +55,12 @@ builder.Services.AddScoped<IActiveDirectoryService, ActiveDirectoryService>();
 builder.Services.AddScoped<IDirectoryPlanExecutor, DirectoryPlanExecutor>();
 builder.Services.AddScoped<IPlanValidator, PlanValidator>();
 
+// Register job infrastructure (async query support)
+builder.Services.AddSingleton<IQueryJobStore, InMemoryQueryJobStore>();
+builder.Services.AddSingleton<IQueryJobQueue, InMemoryQueryJobQueue>();
+builder.Services.AddSingleton<IQueryJobManager, QueryJobManager>();
+builder.Services.AddHostedService<QueryJobExecutorHostedService>();
+
 // Add health checks
 builder.Services.AddHealthChecks()
     .AddCheck<ClaudeHealthCheck>("claude")

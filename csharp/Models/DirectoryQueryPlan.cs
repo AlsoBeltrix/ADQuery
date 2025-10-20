@@ -74,6 +74,20 @@ public class DirectoryPlanStep
     /// </summary>
     [JsonPropertyName("recursive")]
     public bool Recursive { get; set; }
+
+    /// <summary>
+    /// Maximum recursion depth for expand_reports operation (1-100).
+    /// Safety valve against infinite cycles. Defaults to 10 if omitted.
+    /// </summary>
+    [JsonPropertyName("max_depth")]
+    public int? MaxDepth { get; set; }
+
+    /// <summary>
+    /// Maximum total nodes to retrieve during recursive expansion.
+    /// Defaults to 10,000 if omitted.
+    /// </summary>
+    [JsonPropertyName("max_nodes")]
+    public int? MaxNodes { get; set; }
 }
 
 /// <summary>
@@ -141,6 +155,12 @@ public class ProjectionDefinition
     /// </summary>
     [JsonPropertyName("filter")]
     public DirectoryFilter? Filter { get; set; }
+
+    /// <summary>
+    /// Optional aggregation rules for summary data (count, group by).
+    /// </summary>
+    [JsonPropertyName("aggregation")]
+    public AggregationDefinition? Aggregation { get; set; }
 }
 
 /// <summary>
@@ -182,5 +202,29 @@ public class ProjectionColumn
     /// </summary>
     [JsonPropertyName("default")]
     public string? DefaultValue { get; set; }
+}
+
+/// <summary>
+/// Defines aggregation rules for summary data (grouping and counting).
+/// </summary>
+public class AggregationDefinition
+{
+    /// <summary>
+    /// Attributes to group by (e.g., ["employeeType", "department"]).
+    /// </summary>
+    [JsonPropertyName("group_by")]
+    public List<string> GroupBy { get; set; } = new();
+
+    /// <summary>
+    /// Whether to include record counts per group.
+    /// </summary>
+    [JsonPropertyName("count")]
+    public bool Count { get; set; }
+
+    /// <summary>
+    /// Include per-level metadata (nodes per depth level).
+    /// </summary>
+    [JsonPropertyName("include_level_metadata")]
+    public bool IncludeLevelMetadata { get; set; }
 }
 
