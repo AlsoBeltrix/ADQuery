@@ -218,6 +218,19 @@ internal sealed class DirectoryPlanRuntime
 
         result.Data = Project(plan.Projection);
 
+        // Compute aggregation if requested
+        if (plan.Projection?.Aggregation != null && result.Data.Any())
+        {
+            _progress?.Report(new PlanProgressUpdate
+            {
+                NodesProcessed = result.Data.Count,
+                CurrentDepth = 0,
+                Phase = "aggregation"
+            });
+
+            result.Aggregation = ComputeAggregation(result.Data, plan.Projection.Aggregation);
+        }
+
         if (plan.ResultLimit.HasValue && plan.ResultLimit.Value > 0 && result.Data.Count > plan.ResultLimit.Value)
         {
             result.Data = result.Data.Take(plan.ResultLimit.Value).ToList();
@@ -237,6 +250,7 @@ internal sealed class DirectoryPlanRuntime
             "search" => await ExecuteSearchStep(step, cancellationToken),
             "expand_members" => await ExecuteExpandMembersStep(step, cancellationToken),
             "lookup" => await ExecuteLookupStep(step, cancellationToken),
+            "expand_reports" => await ExecuteExpandReportsStep(step, cancellationToken),
             _ => throw new InvalidOperationException($"Unsupported operation '{step.Operation}'.")
         };
     }
@@ -350,6 +364,155 @@ internal sealed class DirectoryPlanRuntime
         }
 
         return await _directoryService.LookupAsync(lookupValues, step.TargetType, step.Attributes, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<DirectoryRecord>> ExecuteExpandReportsStep(DirectoryPlanStep step, CancellationToken cancellationToken)
+    {
+        var maxDepth = step.MaxDepth ?? 10;
+        var maxNodes = step.MaxNodes ?? 10000;
+        var visitedDNs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var levelResults = new Dictionary<int, List<DirectoryRecord>>();
+        var source = GetSourceState(step);
+
+        // Get seed DNs from source step
+        var seedDNs = source.Records
+            .Select(r => r.DistinguishedName)
+            .Where(dn => !string.IsNullOrWhiteSpace(dn))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (!seedDNs.Any())
+        {
+            _warnings.Add($"Step {step.Step}: No seed records for org expansion");
+            return Array.Empty<DirectoryRecord>();
+        }
+
+        levelResults[0] = source.Records.ToList();
+
+        // Breadth-first traversal
+        var currentLevelDNs = seedDNs;
+        for (int depth = 1; depth <= maxDepth; depth++)
+        {
+            if (!currentLevelDNs.Any()) break;
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Report progress
+            var totalProcessed = levelResults.Values.Sum(list => list.Count);
+            _progress?.Report(new PlanProgressUpdate
+            {
+                NodesProcessed = totalProcessed,
+                CurrentDepth = depth,
+                EstimatedRemainingNodes = EstimateRemainingNodes(totalProcessed, depth),
+                Phase = $"enumerating-level-{depth}"
+            });
+
+            // Mark current level as visited
+            foreach (var dn in currentLevelDNs)
+            {
+                visitedDNs.Add(dn);
+            }
+
+            // Batch query: find all direct reports for this level
+            var directReports = await _directoryService.GetDirectReportsBatch(
+                currentLevelDNs,
+                step.Attributes,
+                cancellationToken);
+
+            if (!directReports.Any())
+            {
+                _logger.LogDebug("Org expansion ended naturally at depth {Depth}", depth);
+                break;
+            }
+
+            // Check node limit
+            var newTotal = totalProcessed + directReports.Count;
+            if (newTotal > maxNodes)
+            {
+                var remaining = maxNodes - totalProcessed;
+                _warnings.Add($"Stopped at {maxNodes} nodes (limit reached, {directReports.Count - remaining} nodes truncated)");
+                directReports = directReports.Take(remaining).ToList();
+                levelResults[depth] = directReports.ToList();
+                break;
+            }
+
+            levelResults[depth] = directReports.ToList();
+
+            // Prepare next level DNs (excluding cycles)
+            currentLevelDNs = directReports
+                .Select(r => r.DistinguishedName)
+                .Where(dn => !string.IsNullOrWhiteSpace(dn) && !visitedDNs.Contains(dn))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            // Hit max depth with more nodes remaining
+            if (depth == maxDepth && currentLevelDNs.Any())
+            {
+                _warnings.Add($"Stopped at depth {maxDepth} (safety limit, {currentLevelDNs.Count} unexplored nodes)");
+            }
+        }
+
+        // Final progress update
+        var finalTotal = levelResults.Values.Sum(list => list.Count);
+        _progress?.Report(new PlanProgressUpdate
+        {
+            NodesProcessed = finalTotal,
+            CurrentDepth = levelResults.Keys.Any() ? levelResults.Keys.Max() : 0,
+            EstimatedRemainingNodes = 0,
+            Phase = "finalizing"
+        });
+
+        // Flatten all levels (exclude level 0 which is seed)
+        var allRecords = levelResults
+            .Where(kvp => kvp.Key > 0)
+            .SelectMany(kvp => kvp.Value)
+            .ToList();
+
+        _logger.LogInformation(
+            "Org expansion complete: {Levels} levels, {Nodes} total nodes, {Cycles} cycles detected",
+            levelResults.Keys.Any() ? levelResults.Keys.Max() : 0,
+            allRecords.Count,
+            visitedDNs.Count - levelResults.Values.Sum(list => list.Count));
+
+        return allRecords;
+    }
+
+    private int? EstimateRemainingNodes(int processed, int currentDepth)
+    {
+        if (currentDepth <= 1 || processed == 0) return null;
+
+        var avgPerLevel = processed / currentDepth;
+        var estimatedRemaining = avgPerLevel * 2;
+        return processed + estimatedRemaining;
+    }
+
+    private Dictionary<string, object> ComputeAggregation(List<Dictionary<string, object?>> rows, AggregationDefinition aggregation)
+    {
+        var result = new Dictionary<string, object>();
+
+        if (aggregation.Count && aggregation.GroupBy.Any())
+        {
+            var grouped = rows
+                .GroupBy(row =>
+                {
+                    var keys = aggregation.GroupBy
+                        .Select(field =>
+                        {
+                            row.TryGetValue(field, out var value);
+                            return value?.ToString() ?? "(empty)";
+                        })
+                        .ToList();
+                    return string.Join("|", keys);
+                })
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            result["grouped_counts"] = grouped;
+        }
+
+        // Note: level_metadata will be added when expand_reports stores it in step state
+        // For now, aggregation only includes grouped_counts from the final projected data
+
+        return result;
     }
 
     private StepRuntimeState GetSourceState(DirectoryPlanStep step)
@@ -1373,6 +1536,8 @@ internal sealed class DirectoryPlanRuntime
         public int StepsExecuted { get; set; }
 
         public int StepsSkipped { get; set; }
+
+        public Dictionary<string, object>? Aggregation { get; set; }
     }
 }
 

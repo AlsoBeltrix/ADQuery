@@ -206,6 +206,48 @@ public class ActiveDirectoryService : IActiveDirectoryService
         return Task.FromResult<IReadOnlyList<DirectoryRecord>>(results.ToList());
     }
 
+    public Task<IReadOnlyList<DirectoryRecord>> GetDirectReportsBatch(IEnumerable<string> managerDistinguishedNames, IEnumerable<string> attributes, CancellationToken cancellationToken = default)
+    {
+        var managerDNs = managerDistinguishedNames
+            .Where(dn => !string.IsNullOrWhiteSpace(dn))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (!managerDNs.Any())
+        {
+            return Task.FromResult<IReadOnlyList<DirectoryRecord>>(Array.Empty<DirectoryRecord>());
+        }
+
+        var normalizedAttributes = NormalizeAttributes(attributes);
+
+        // Build OR filter for all managers: (|(manager=DN1)(manager=DN2)...)
+        var managerFilters = managerDNs
+            .Select(dn => new DirectoryFilter
+            {
+                Attribute = "manager",
+                Operator = "equals",
+                Value = dn
+            })
+            .ToList();
+
+        var batchFilter = new DirectoryFilter
+        {
+            Operator = "or",
+            Conditions = managerFilters
+        };
+
+        var request = new DirectorySearchRequest
+        {
+            TargetType = DirectoryObjectType.User,
+            Filters = new List<DirectoryFilter> { batchFilter },
+            Attributes = normalizedAttributes
+        };
+
+        _logger.LogDebug("Batch direct reports query for {Count} managers", managerDNs.Count);
+
+        return SearchAsync(request, cancellationToken);
+    }
+
     private DirectoryEntry CreateDirectoryEntry(string? searchBase)
     {
         var path = searchBase ?? ResolveDefaultNamingContext();

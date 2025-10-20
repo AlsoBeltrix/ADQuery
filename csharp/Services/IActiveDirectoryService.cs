@@ -15,4 +15,6 @@ public interface IActiveDirectoryService
     Task<IReadOnlyList<DirectoryRecord>> ExpandGroupMembersAsync(IEnumerable<string> groupDistinguishedNames, bool recursive, IEnumerable<string> attributes, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<DirectoryRecord>> LookupAsync(IEnumerable<string> distinguishedNames, DirectoryObjectType targetType, IEnumerable<string> attributes, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<DirectoryRecord>> GetDirectReportsBatch(IEnumerable<string> managerDistinguishedNames, IEnumerable<string> attributes, CancellationToken cancellationToken = default);
 }
