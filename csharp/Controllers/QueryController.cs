@@ -53,6 +53,7 @@ public class QueryController : ControllerBase
     private readonly IDirectoryPlanExecutor _planExecutor;
     private readonly IMemoryCache _cache;
     private readonly IConfiguration _configuration;
+    private readonly IQueryJobManager _jobManager;
     private readonly HashSet<string> _licenseAttributeAliases;
     private readonly bool _allowUnlimitedResults;
 
@@ -61,13 +62,15 @@ public class QueryController : ControllerBase
         IClaudeService claudeService,
         IDirectoryPlanExecutor planExecutor,
         IMemoryCache cache,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IQueryJobManager jobManager)
     {
         _logger = logger;
         _claudeService = claudeService;
         _planExecutor = planExecutor;
         _cache = cache;
         _configuration = configuration;
+        _jobManager = jobManager;
         _licenseAttributeAliases = BuildLicenseAliasSet(configuration);
         _allowUnlimitedResults = configuration.GetValue("QueryDefaults:AllowUnlimited", false);
     }
@@ -922,6 +925,173 @@ public class QueryController : ControllerBase
 
         var sanitized = InvalidPathChars.Replace(value, "_");
         return string.IsNullOrWhiteSpace(sanitized) ? "unknown" : sanitized;
+    }
+
+    /// <summary>
+    /// Creates an async query job (returns immediately with jobId for polling)
+    /// </summary>
+    [HttpPost("execute-async")]
+    public IActionResult ExecuteQueryAsync([FromBody] QueryRequest request)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var userName = GetSamAccountName(HttpContext.User);
+        var jobId = _jobManager.CreateJob(userName, request.Query);
+
+        _logger.LogInformation("Async query job {JobId} created for user {UserName}", jobId, userName);
+
+        return Accepted(new
+        {
+            jobId,
+            statusUrl = $"/api/query/jobs/{jobId}",
+            message = "Query job created. Poll status endpoint for progress."
+        });
+    }
+
+    /// <summary>
+    /// Gets status and results for an async query job
+    /// </summary>
+    [HttpGet("jobs/{jobId}")]
+    public IActionResult GetJobStatus(string jobId)
+    {
+        var job = _jobManager.GetJob(jobId);
+        if (job == null)
+        {
+            return NotFound(new { error = "Job not found" });
+        }
+
+        var userName = GetSamAccountName(HttpContext.User);
+        if (!job.UserName.Equals(userName, StringComparison.OrdinalIgnoreCase))
+        {
+            return Forbid();
+        }
+
+        var response = new
+        {
+            jobId = job.JobId,
+            status = job.Status.ToString().ToLower(),
+            createdAt = job.CreatedAt,
+            startedAt = job.StartedAt,
+            completedAt = job.CompletedAt,
+            progress = job.Status == JobStatus.Running ? new
+            {
+                nodesProcessed = job.NodesProcessed,
+                currentDepth = job.CurrentDepth,
+                estimatedTotal = job.EstimatedTotal,
+                percentComplete = job.EstimatedTotal > 0
+                    ? (int)((job.NodesProcessed / (double)job.EstimatedTotal) * 100)
+                    : 0
+            } : null,
+            result = job.Status == JobStatus.Completed ? new
+            {
+                totalRows = job.TotalRows,
+                aggregation = BuildAggregationSummary(job),
+                warnings = job.Warnings.Any() ? job.Warnings : null,
+                downloadUrl = $"/api/query/download-async/{job.JobId}"
+            } : null,
+            error = job.Status == JobStatus.Failed ? job.ErrorMessage : null
+        };
+
+        return Ok(response);
+    }
+
+    /// <summary>
+    /// Cancels a running async query job
+    /// </summary>
+    [HttpPost("jobs/{jobId}/cancel")]
+    public IActionResult CancelJob(string jobId)
+    {
+        var job = _jobManager.GetJob(jobId);
+        if (job == null)
+        {
+            return NotFound(new { error = "Job not found" });
+        }
+
+        var userName = GetSamAccountName(HttpContext.User);
+        if (!job.UserName.Equals(userName, StringComparison.OrdinalIgnoreCase))
+        {
+            return Forbid();
+        }
+
+        if (job.Status != JobStatus.Running && job.Status != JobStatus.Queued)
+        {
+            return BadRequest(new { error = $"Job is {job.Status.ToString().ToLower()}, cannot cancel" });
+        }
+
+        _jobManager.CancelJob(jobId);
+        return Ok(new { message = "Cancellation requested" });
+    }
+
+    /// <summary>
+    /// Downloads results from a completed async job
+    /// </summary>
+    [HttpGet("download-async/{jobId}")]
+    public IActionResult DownloadAsync(string jobId, [FromQuery] string? format = null)
+    {
+        if (string.IsNullOrWhiteSpace(jobId))
+        {
+            return BadRequest("Job ID is required.");
+        }
+
+        var job = _jobManager.GetJob(jobId);
+        if (job == null)
+        {
+            return NotFound(new { error = "Job not found" });
+        }
+
+        var userName = GetSamAccountName(HttpContext.User);
+        if (!job.UserName.Equals(userName, StringComparison.OrdinalIgnoreCase))
+        {
+            return Forbid();
+        }
+
+        if (job.Status != JobStatus.Completed)
+        {
+            return BadRequest(new { error = $"Job status is {job.Status.ToString().ToLower()}, not completed" });
+        }
+
+        if (string.IsNullOrWhiteSpace(job.ResultsCacheKey) ||
+            !_cache.TryGetValue(job.ResultsCacheKey, out PlanExecutionResult? result) ||
+            result == null)
+        {
+            return NotFound(new { error = "Results expired or not available" });
+        }
+
+        var normalizedFormat = string.IsNullOrWhiteSpace(format) ? "csv" : format.Trim().ToLowerInvariant();
+        if (!SupportedFormats.Contains(normalizedFormat))
+        {
+            return BadRequest("Unsupported download format.");
+        }
+
+        var headers = DetermineHeaders(result.Data);
+        var metadata = GetFormatMetadata(normalizedFormat);
+        var fileName = $"adquery_{userName}_{DateTime.UtcNow:yyyyMMddHHmmss}.{metadata.Extension}";
+
+        var fileContent = GenerateFileContent(result.Data, headers, normalizedFormat);
+
+        return File(fileContent, metadata.ContentType, fileName);
+    }
+
+    private object? BuildAggregationSummary(QueryJob job)
+    {
+        if (job.Aggregation == null || !job.Aggregation.Any())
+        {
+            return null;
+        }
+
+        return new
+        {
+            grouped_counts = job.Aggregation.ContainsKey("grouped_counts")
+                ? job.Aggregation["grouped_counts"]
+                : null,
+            level_metadata = job.Aggregation.ContainsKey("level_metadata")
+                ? job.Aggregation["level_metadata"]
+                : null,
+            group_by_fields = job.Plan?.Projection?.Aggregation?.GroupBy
+        };
     }
 
     private sealed class CachedQueryResult
