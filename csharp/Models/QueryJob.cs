@@ -12,6 +12,8 @@ public class QueryJob
     public string JobId { get; set; } = string.Empty;
     public string UserName { get; set; } = string.Empty;
     public string Query { get; set; } = string.Empty;
+    public string? Context { get; set; }
+    public int? RequestedResultLimit { get; set; }
     public DirectoryQueryPlan? Plan { get; set; }
 
     public JobStatus Status { get; set; }
@@ -23,6 +25,7 @@ public class QueryJob
     public int NodesProcessed { get; set; }
     public int CurrentDepth { get; set; }
     public int EstimatedTotal { get; set; }
+    public string? Phase { get; set; }
 
     // Results
     public string? ResultsCacheKey { get; set; }

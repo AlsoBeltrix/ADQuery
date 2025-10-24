@@ -257,6 +257,56 @@ textarea:focus-visible {
     background: var(--table-cell-bg);
 }
 
+.aggregation-section {
+    margin: 1.5rem 0;
+    padding: 1rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.aggregation-section h4 {
+    margin: 0 0 0.75rem;
+    color: var(--text-primary);
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.aggregation-message {
+    margin: 0 0 0.75rem;
+    padding: 0.5rem;
+    background: var(--warning);
+    color: var(--bg-primary);
+    border-radius: 4px;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.aggregation-table {
+    width: 100%;
+    max-width: 400px;
+    border-collapse: collapse;
+}
+
+.aggregation-table th,
+.aggregation-table td {
+    border: 1px solid var(--border-color);
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+}
+
+.aggregation-table th {
+    background: var(--table-header-bg);
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.aggregation-table td {
+    color: var(--text-primary);
+    background: var(--table-cell-bg);
+}
+
 .download-section {
     margin-top: 1.5rem;
     text-align: left;
@@ -363,3 +413,212 @@ footer li {
     margin-top: 0.5rem;
 }
 
+
+/* ==================== FEEDBACK SYSTEM STYLES ==================== */
+
+.feedback-section {
+    margin-top: 2rem;
+    padding: 1.5rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.feedback-section h3 {
+    margin: 0 0 1rem;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.feedback-section h4 {
+    margin: 0 0 1rem;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.feedback-buttons {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.btn-feedback {
+    flex: 1;
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: 6px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-positive {
+    background: #28a745;
+    color: white;
+}
+
+.btn-positive:hover {
+    background: #218838;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3);
+}
+
+.btn-negative {
+    background: #dc3545;
+    color: white;
+}
+
+.btn-negative:hover {
+    background: #c82333;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);
+}
+
+.negative-options {
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.btn-retry {
+    display: block;
+    width: 100%;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+}
+
+.btn-retry small {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.875rem;
+    font-weight: 400;
+    opacity: 0.9;
+}
+
+.btn-retry:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+}
+
+.comment-section {
+    margin-bottom: 1rem;
+}
+
+.comment-section label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+#feedbackComment {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 0.95rem;
+    resize: vertical;
+    background: var(--input-bg, white);
+    color: var(--text-primary);
+}
+
+.theme-dark #feedbackComment {
+    background: var(--input-bg, #2a2a2a);
+}
+
+#feedbackComment:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(var(--accent-rgb, 59, 130, 246), 0.1);
+}
+
+.btn-submit-comment {
+    margin-top: 0.75rem;
+    padding: 0.6rem 1.5rem;
+    background: var(--accent);
+    color: var(--accent-contrast);
+    border: none;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-submit-comment:hover {
+    opacity: 0.9;
+    transform: translateY(-1px);
+}
+
+.btn-cancel {
+    padding: 0.6rem 1.5rem;
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-cancel:hover {
+    background: var(--hover-bg, #f5f5f5);
+}
+
+.theme-dark .btn-cancel:hover {
+    background: var(--hover-bg, #3a3a3a);
+}
+
+.retry-status {
+    margin-top: 1.5rem;
+    padding: 1.5rem;
+    text-align: center;
+    background: var(--card-bg);
+    border-radius: 8px;
+}
+
+.retry-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid var(--border-color);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (max-width: 640px) {
+    .feedback-buttons {
+        flex-direction: column;
+    }
+
+    .btn-feedback {
+        width: 100%;
+    }
+}
+
+/* ==================== END FEEDBACK SYSTEM STYLES ==================== */

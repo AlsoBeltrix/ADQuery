@@ -13,7 +13,8 @@ namespace AdQuery.Orchestrator.Services;
 /// </summary>
 public interface IQueryJobManager
 {
-    string CreateJob(string userName, string query);
+    string CreateJob(string userName, string query, string? context = null, int? requestedResultLimit = null);
+    Task EnqueueJobAsync(QueryJob job, string? forceModel = null);
     QueryJob? GetJob(string jobId);
     void CancelJob(string jobId);
     List<QueryJob> GetUserJobs(string userName);

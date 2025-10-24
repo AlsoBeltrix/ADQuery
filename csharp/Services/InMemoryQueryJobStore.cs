@@ -30,6 +30,7 @@ public class InMemoryQueryJobStore : IQueryJobStore
             job.NodesProcessed = progress.NodesProcessed;
             job.CurrentDepth = progress.CurrentDepth;
             job.EstimatedTotal = progress.EstimatedRemainingNodes ?? job.EstimatedTotal;
+            job.Phase = progress.Phase;
         }
     }
 

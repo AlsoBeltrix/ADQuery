@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using AdQuery.Orchestrator.Security;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -17,14 +18,19 @@ public class QueryJobExecutorHostedService : BackgroundService
     private readonly IServiceScopeFactory _serviceScopeFactory;
     private readonly ILogger<QueryJobExecutorHostedService> _logger;
     private readonly SemaphoreSlim _concurrencySemaphore;
+    private readonly TimeSpan _jobRetention;
 
     public QueryJobExecutorHostedService(
         IServiceScopeFactory serviceScopeFactory,
-        ILogger<QueryJobExecutorHostedService> logger)
+        ILogger<QueryJobExecutorHostedService> logger,
+        IConfiguration configuration)
     {
         _serviceScopeFactory = serviceScopeFactory;
         _logger = logger;
-        _concurrencySemaphore = new SemaphoreSlim(3); // Max 3 concurrent large queries
+        var maxConcurrent = Math.Max(1, configuration.GetValue<int>("Jobs:MaxConcurrentJobs", 3));
+        var retentionHours = Math.Max(1, configuration.GetValue<int>("Jobs:CompletedJobRetentionHours", 24));
+        _jobRetention = TimeSpan.FromHours(retentionHours);
+        _concurrencySemaphore = new SemaphoreSlim(maxConcurrent);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -87,8 +93,8 @@ public class QueryJobExecutorHostedService : BackgroundService
                     }
                 }
 
-                // Cleanup old jobs (older than 24 hours)
-                jobManager.CleanupCompletedJobs(TimeSpan.FromHours(24));
+                // Cleanup old jobs based on retention setting
+                jobManager.CleanupCompletedJobs(_jobRetention);
 
                 // Poll interval - check for new jobs every second
                 await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);

@@ -51,6 +51,7 @@ builder.Services.AddHttpClient<IClaudeService, ClaudeService>(client =>
 });
 
 // Register application services
+builder.Services.AddSingleton<IPlanPreprocessor, PlanPreprocessor>();
 builder.Services.AddScoped<IActiveDirectoryService, ActiveDirectoryService>();
 builder.Services.AddScoped<IDirectoryPlanExecutor, DirectoryPlanExecutor>();
 builder.Services.AddScoped<IPlanValidator, PlanValidator>();
@@ -60,6 +61,9 @@ builder.Services.AddSingleton<IQueryJobStore, InMemoryQueryJobStore>();
 builder.Services.AddSingleton<IQueryJobQueue, InMemoryQueryJobQueue>();
 builder.Services.AddSingleton<IQueryJobManager, QueryJobManager>();
 builder.Services.AddHostedService<QueryJobExecutorHostedService>();
+
+// Register feedback storage
+builder.Services.AddSingleton<IFeedbackStore, JsonLinesFeedbackStore>();
 
 // Add health checks
 builder.Services.AddHealthChecks()

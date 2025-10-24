@@ -29,7 +29,10 @@
         isLoading: false,
         formLocked: false,
         currentRequestId: null,
-        recordCount: 0
+        currentJobId: null,
+        pollInterval: null,
+        recordCount: 0,
+        summaryRowCount: 20  // Default, will be loaded from config API
     };
 
     initTheme();
@@ -41,7 +44,7 @@
 
     downloadButtons.forEach(button => {
         button.addEventListener('click', () => {
-            if (!state.currentRequestId || state.isLoading) {
+            if (!state.currentJobId || state.isLoading) {
                 return;
             }
             downloadResults(button);
@@ -51,7 +54,22 @@
     themeToggle?.addEventListener('click', handleThemeToggle);
 
     loadUserInfo();
+    loadConfig();
     setLoading(false);
+
+    async function loadConfig() {
+        try {
+            const response = await fetch('./api/query/config');
+            if (response.ok) {
+                const config = await response.json();
+                if (config.summaryRowCount > 0) {
+                    state.summaryRowCount = config.summaryRowCount;
+                }
+            }
+        } catch (error) {
+            console.warn('Failed to load config, using defaults:', error);
+        }
+    }
 
     async function loadUserInfo() {
         if (!welcomeMessage) {
@@ -188,6 +206,7 @@
         hideError();
         hideResults();
         setLoading(true);
+        stopPolling();
 
         try {
             const payload = {
@@ -195,36 +214,278 @@
                 context: buildContextHint(query)
             };
 
-            const response = await fetch('./api/query/execute', {
+            const response = await fetch('./api/query/execute-async', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
                 body: JSON.stringify(payload)
             });
 
-            const result = await response.json().catch(() => null);
-
             if (!response.ok) {
+                const result = await response.json().catch(() => null);
                 const message = result?.error || result?.errorMessage || `Request failed with status ${response.status}.`;
                 handleCriticalError(message);
+                setLoading(false);
                 return;
             }
 
-            if (!result?.success) {
-                const message = result?.error || 'The query did not return any data.';
-                handleCriticalError(message);
-                return;
-            }
+            const result = await response.json();
+            state.currentJobId = result.jobId;
 
-            state.currentRequestId = result.requestId;
-            state.recordCount = typeof result.recordCount === 'number' ? result.recordCount : 0;
-            renderResults(result);
-            showDownloadOptions();
+            showProgress('Query submitted. Processing...');
+            startPolling(result.jobId);
         } catch (error) {
             handleCriticalError(error instanceof Error ? error.message : 'Network error - please try again.');
-        } finally {
             setLoading(false);
         }
+    }
+
+    function stopPolling() {
+        if (state.pollInterval) {
+            clearInterval(state.pollInterval);
+            state.pollInterval = null;
+        }
+    }
+
+    function startPolling(jobId) {
+        stopPolling();
+
+        state.pollInterval = setInterval(async () => {
+            try {
+                const response = await fetch(`./api/query/jobs/${encodeURIComponent(jobId)}`, {
+                    method: 'GET',
+                    credentials: 'include'
+                });
+
+                if (!response.ok) {
+                    stopPolling();
+                    setLoading(false);
+                    showError(`Failed to check job status: ${response.status}`);
+                    return;
+                }
+
+                const job = await response.json();
+
+                switch (job.status) {
+                    case 'queued':
+                        showProgress('Query queued, waiting to start...');
+                        break;
+
+                    case 'running':
+                        if (job.progress) {
+                            const phase = job.progress.phase || '';
+                            const pct = job.progress.percentComplete || 0;
+                            const nodes = (job.progress.nodesProcessed || 0).toLocaleString();
+                            const est = job.progress.estimatedTotal ? job.progress.estimatedTotal.toLocaleString() : '?';
+                            const depth = job.progress.currentDepth || 0;
+
+                            if (phase === 'generating-plan') {
+                                showProgress('Generating query plan with AI...');
+                            } else if (phase === 'validating') {
+                                showProgress('Validating query plan...');
+                            } else if (phase === 'executing' || phase === 'starting') {
+                                showProgress('Starting query execution...');
+                            } else if (phase && phase.startsWith('enumerating-level')) {
+                                showProgress(`Processing level ${depth}... ${nodes} of ~${est} nodes (${pct}%)`);
+                            } else if (phase === 'aggregation') {
+                                showProgress(`Computing aggregation summaries...`);
+                            } else if (phase === 'finalizing') {
+                                showProgress(`Finalizing results...`);
+                            } else if (depth > 0) {
+                                showProgress(`Processing level ${depth}... ${nodes} of ~${est} nodes (${pct}%)`);
+                            } else {
+                                showProgress('Processing query...');
+                            }
+                        } else {
+                            showProgress('Processing query...');
+                        }
+                        break;
+
+                    case 'completed':
+                        stopPolling();
+                        setLoading(false);
+                        hideProgress();
+                        displayJobResults(job);
+                        break;
+
+                    case 'failed':
+                        stopPolling();
+                        setLoading(false);
+                        hideProgress();
+                        showError(job.error || 'Query failed');
+                        break;
+
+                    case 'cancelled':
+                        stopPolling();
+                        setLoading(false);
+                        hideProgress();
+                        showError('Query was cancelled');
+                        break;
+                }
+            } catch (error) {
+                stopPolling();
+                setLoading(false);
+                hideProgress();
+                showError('Failed to check job status: ' + (error instanceof Error ? error.message : 'Unknown error'));
+            }
+        }, 2000);
+    }
+
+    function showProgress(message) {
+        if (resultInfo) {
+            resultInfo.textContent = message;
+            resultInfo.style.fontWeight = 'bold';
+        }
+        if (resultsSection) {
+            resultsSection.hidden = false;
+        }
+    }
+
+    function hideProgress() {
+        if (resultInfo) {
+            resultInfo.style.fontWeight = 'normal';
+        }
+    }
+
+    async function displayJobResults(job) {
+        if (!job.result) {
+            showError('No results available');
+            return;
+        }
+
+        state.currentJobId = job.jobId;
+        state.recordCount = job.result.totalRows || 0;
+
+        renderWarnings(job.result.warnings);
+        renderAggregation(job.result.aggregation);
+
+        // Fetch preview rows
+        try {
+            const previewResponse = await fetch(`./api/query/jobs/${encodeURIComponent(job.jobId)}/preview`, {
+                method: 'GET',
+                credentials: 'include'
+            });
+
+            if (previewResponse.ok) {
+                const preview = await previewResponse.json();
+                const rows = normaliseRows(preview.rows);
+                renderTable(rows);
+
+                const mockResult = {
+                    success: true,
+                    data: preview.rows,
+                    recordCount: job.result.totalRows || 0,
+                    warnings: job.result.warnings || []
+                };
+                renderSummary(mockResult, rows.length);
+            } else {
+                renderSummary({ recordCount: job.result.totalRows || 0 }, 0);
+            }
+        } catch (error) {
+            console.warn('Failed to fetch preview:', error);
+            renderSummary({ recordCount: job.result.totalRows || 0 }, 0);
+        }
+
+        showDownloadOptions();
+
+        resultsSection.hidden = false;
+        resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        // Show feedback UI after results are displayed
+        showFeedback(
+            job.jobId,
+            job.query || '',
+            job.modelUsed || 'claude-sonnet-4',
+            job.result.totalRows || 0,
+            job.responseTimeMs || 0
+        );
+    }
+
+    function renderAggregation(aggregation) {
+        if (!aggregation || !aggregation.grouped_counts) {
+            return;
+        }
+
+        const aggregationSection = document.getElementById('aggregationSection');
+        const aggregationHead = document.getElementById('aggregationHead');
+        const aggregationBody = document.getElementById('aggregationBody');
+        const aggregationMessage = document.getElementById('aggregationMessage');
+
+        if (!aggregationSection || !aggregationHead || !aggregationBody) {
+            return;
+        }
+
+        aggregationHead.innerHTML = '';
+        aggregationBody.innerHTML = '';
+
+        const counts = aggregation.grouped_counts;
+        const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+        const groupByFields = aggregation.group_by_fields || [];
+        const totalEntries = entries.length;
+        const displayLimit = state.summaryRowCount || 20;
+        const entriesToShow = entries.slice(0, displayLimit);
+
+        // Build dynamic table headers based on group_by fields
+        const headerRow = document.createElement('tr');
+        if (groupByFields.length > 1) {
+            groupByFields.forEach(field => {
+                const th = document.createElement('th');
+                th.textContent = formatColumnName(field);
+                headerRow.appendChild(th);
+            });
+        } else if (groupByFields.length === 1) {
+            const th = document.createElement('th');
+            th.textContent = formatColumnName(groupByFields[0]);
+            headerRow.appendChild(th);
+        } else {
+            const th = document.createElement('th');
+            th.textContent = 'Category';
+            headerRow.appendChild(th);
+        }
+        const countHeader = document.createElement('th');
+        countHeader.textContent = 'Count';
+        headerRow.appendChild(countHeader);
+        aggregationHead.appendChild(headerRow);
+
+        // Determine if we have multi-field grouping
+        const isMultiField = groupByFields.length > 1;
+
+        entriesToShow.forEach(([key, count]) => {
+            const row = document.createElement('tr');
+
+            if (isMultiField) {
+                // Split the composite key
+                const keyParts = key.split('|');
+                keyParts.forEach(part => {
+                    const cell = document.createElement('td');
+                    cell.textContent = part || '(empty)';
+                    row.appendChild(cell);
+                });
+            } else {
+                const keyCell = document.createElement('td');
+                keyCell.textContent = key || '(empty)';
+                row.appendChild(keyCell);
+            }
+
+            const countCell = document.createElement('td');
+            countCell.textContent = count.toLocaleString();
+            countCell.style.textAlign = 'right';
+            row.appendChild(countCell);
+
+            aggregationBody.appendChild(row);
+        });
+
+        // Update message about limited display
+        if (aggregationMessage) {
+            if (totalEntries > displayLimit) {
+                aggregationMessage.textContent = `Showing top ${displayLimit} of ${totalEntries} categories. Download for full summary.`;
+                aggregationMessage.hidden = false;
+            } else {
+                aggregationMessage.hidden = true;
+            }
+        }
+
+        aggregationSection.hidden = false;
     }
 
     function handleCriticalError(message) {
@@ -301,8 +562,12 @@
 
         const total = typeof result?.recordCount === 'number' ? result.recordCount : undefined;
         if (typeof total === 'number') {
-            const label = total === 1 ? 'record' : 'records';
-            parts.push(`${total} ${label} returned`);
+            if (total === 0) {
+                parts.push('Aggregation summary only (no individual records)');
+            } else {
+                const label = total === 1 ? 'record' : 'records';
+                parts.push(`${total} ${label} returned`);
+            }
         } else if (previewCount > 0) {
             const label = previewCount === 1 ? 'record' : 'records';
             parts.push(`${previewCount} ${label} returned`);
@@ -310,7 +575,7 @@
             parts.push('No records returned');
         }
 
-        if (total !== undefined && previewCount < total) {
+        if (total !== undefined && previewCount < total && total > 0) {
             parts.push(`Previewing ${previewCount}`);
         }
 
@@ -351,6 +616,17 @@
         tableBody.innerHTML = '';
 
         if (!rows.length) {
+            // Check if there's an aggregation section visible
+            const aggregationSection = document.getElementById('aggregationSection');
+            if (aggregationSection && !aggregationSection.hidden) {
+                // Hide the data table section entirely for aggregation-only queries
+                const tableContainer = document.querySelector('.results-table-container');
+                if (tableContainer) {
+                    tableContainer.style.display = 'none';
+                }
+                return;
+            }
+
             const row = document.createElement('tr');
             const cell = document.createElement('td');
             cell.colSpan = 100;
@@ -359,6 +635,12 @@
             row.appendChild(cell);
             tableBody.appendChild(row);
             return;
+        }
+
+        // Show table container if it was hidden
+        const tableContainer = document.querySelector('.results-table-container');
+        if (tableContainer) {
+            tableContainer.style.display = 'block';
         }
 
         const headers = Array.from(
@@ -413,7 +695,7 @@
 
     async function downloadResults(button) {
         const format = button.dataset.downloadFormat;
-        if (!format || !state.currentRequestId) {
+        if (!format || !state.currentJobId) {
             return;
         }
 
@@ -422,7 +704,7 @@
         button.textContent = 'Downloading...';
 
         try {
-            const response = await fetch(`./api/query/download/${encodeURIComponent(state.currentRequestId)}?format=${encodeURIComponent(format)}`, {
+            const response = await fetch(`./api/query/download-async/${encodeURIComponent(state.currentJobId)}?format=${encodeURIComponent(format)}`, {
                 method: 'GET',
                 credentials: 'include'
             });
@@ -465,7 +747,7 @@
     }
 
     function updateDownloadButtons() {
-        const disable = state.isLoading || !state.currentRequestId;
+        const disable = state.isLoading || !state.currentJobId;
         downloadButtons.forEach(button => {
             button.disabled = disable;
         });
@@ -551,14 +833,225 @@
     }
 
     function hideResults() {
+        stopPolling();
         resultsSection.hidden = true;
         warningList.hidden = true;
         warningList.innerHTML = '';
         downloadSection.hidden = true;
         tableHead.innerHTML = '';
         tableBody.innerHTML = '';
+
+        const aggregationSection = document.getElementById('aggregationSection');
+        if (aggregationSection) {
+            aggregationSection.hidden = true;
+        }
+
         state.currentRequestId = null;
+        state.currentJobId = null;
         state.recordCount = 0;
         updateDownloadButtons();
+        hideFeedback();
     }
+
+    // ==================== FEEDBACK SYSTEM ====================
+
+    // Feedback state
+    const feedbackState = {
+        currentJobId: null,
+        currentQuery: null,
+        currentModel: null,
+        originalJobId: null,
+        resultCount: 0,
+        responseTimeMs: 0
+    };
+
+    // Make feedback functions global for onclick handlers
+    window.submitFeedback = async function(sentiment) {
+        const feedbackSection = document.getElementById('feedbackSection');
+        const negativeOptions = document.getElementById('negativeOptions');
+
+        try {
+            if (sentiment === 'positive') {
+                await saveFeedback({
+                    jobId: feedbackState.currentJobId || state.currentJobId,
+                    query: feedbackState.currentQuery,
+                    modelUsed: feedbackState.currentModel || 'claude-sonnet-4',
+                    sentiment: sentiment,
+                    resultCount: feedbackState.resultCount,
+                    responseTimeMs: feedbackState.responseTimeMs
+                });
+
+                showMessage('✅ Thanks for your feedback!', 'success');
+                hideFeedback();
+            } else {
+                // Show negative feedback options
+                negativeOptions.hidden = false;
+            }
+        } catch (error) {
+            console.error('Failed to submit feedback:', error);
+            showMessage('Failed to save feedback. Please try again.', 'error');
+        }
+    };
+
+    window.retryWithAlternateModel = async function() {
+        const negativeOptions = document.getElementById('negativeOptions');
+        const retryStatus = document.getElementById('retryStatus');
+
+        try {
+            // Log negative feedback first
+            await saveFeedback({
+                jobId: feedbackState.currentJobId || state.currentJobId,
+                query: feedbackState.currentQuery,
+                modelUsed: feedbackState.currentModel || 'claude-sonnet-4',
+                sentiment: 'negative',
+                userRequestedRetry: true,
+                resultCount: feedbackState.resultCount,
+                responseTimeMs: feedbackState.responseTimeMs
+            });
+
+            // Hide options, show retry status
+            negativeOptions.hidden = true;
+            retryStatus.hidden = false;
+
+            // Call retry endpoint
+            const response = await fetch('/api/query/retry-with-alternate-model', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    originalJobId: feedbackState.currentJobId || state.currentJobId
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error ${response.status}`);
+            }
+
+            const result = await response.json();
+
+            if (result.success && result.job_id) {
+                // Store original job ID for tracking
+                feedbackState.originalJobId = feedbackState.currentJobId || state.currentJobId;
+                feedbackState.currentJobId = result.job_id;
+                feedbackState.currentModel = 'claude-opus-4-1';
+
+                // Hide feedback section and start polling for new results
+                hideFeedback();
+                hideResults();
+                hideError();
+
+                // Update state to new job
+                state.currentJobId = result.job_id;
+
+                // Start polling
+                showMessage('Query resubmitted with more powerful model...', 'info');
+                startPolling();
+            } else {
+                throw new Error(result.error || 'Failed to retry query');
+            }
+        } catch (error) {
+            console.error('Failed to retry with alternate model:', error);
+            retryStatus.hidden = true;
+            negativeOptions.hidden = false;
+            showMessage('Failed to retry query. Please try again.', 'error');
+        }
+    };
+
+    window.submitComment = async function() {
+        const commentField = document.getElementById('feedbackComment');
+        const comment = commentField.value.trim();
+
+        try {
+            await saveFeedback({
+                jobId: feedbackState.currentJobId || state.currentJobId,
+                query: feedbackState.currentQuery,
+                modelUsed: feedbackState.currentModel || 'claude-sonnet-4',
+                sentiment: 'negative',
+                comment: comment || null,
+                originalJobId: feedbackState.originalJobId,
+                resultCount: feedbackState.resultCount,
+                responseTimeMs: feedbackState.responseTimeMs
+            });
+
+            showMessage('✅ Thanks for your feedback!', 'success');
+            hideFeedback();
+            commentField.value = '';
+        } catch (error) {
+            console.error('Failed to submit comment:', error);
+            showMessage('Failed to save feedback. Please try again.', 'error');
+        }
+    };
+
+    window.closeFeedback = function() {
+        const negativeOptions = document.getElementById('negativeOptions');
+        const commentField = document.getElementById('feedbackComment');
+
+        negativeOptions.hidden = true;
+        commentField.value = '';
+    };
+
+    async function saveFeedback(feedbackData) {
+        const response = await fetch('/api/query/feedback', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(feedbackData)
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error ${response.status}`);
+        }
+
+        return await response.json();
+    }
+
+    function showFeedback(jobId, query, model, resultCount, responseTimeMs) {
+        const feedbackSection = document.getElementById('feedbackSection');
+        const negativeOptions = document.getElementById('negativeOptions');
+        const retryStatus = document.getElementById('retryStatus');
+
+        // Update feedback state
+        feedbackState.currentJobId = jobId;
+        feedbackState.currentQuery = query;
+        feedbackState.currentModel = model || 'claude-sonnet-4';
+        feedbackState.resultCount = resultCount || 0;
+        feedbackState.responseTimeMs = responseTimeMs || 0;
+
+        // Reset UI state
+        negativeOptions.hidden = true;
+        retryStatus.hidden = true;
+
+        // Show feedback section
+        feedbackSection.hidden = false;
+    }
+
+    function hideFeedback() {
+        const feedbackSection = document.getElementById('feedbackSection');
+        const negativeOptions = document.getElementById('negativeOptions');
+        const retryStatus = document.getElementById('retryStatus');
+        const commentField = document.getElementById('feedbackComment');
+
+        feedbackSection.hidden = true;
+        negativeOptions.hidden = true;
+        retryStatus.hidden = true;
+        if (commentField) {
+            commentField.value = '';
+        }
+    }
+
+    function showMessage(message, type = 'info') {
+        // Simple message display - you can enhance this with a toast notification
+        if (type === 'error') {
+            console.error(message);
+            showError(message);
+        } else {
+            console.log(message);
+            // Could add a toast notification here
+        }
+    }
+
+    // ==================== END FEEDBACK SYSTEM ====================
+
 })();

@@ -53,12 +53,7 @@
                     <div class="results-info" id="resultsInfo"></div>
                 </div>
                 <ul class="warning-list" id="warningList" hidden></ul>
-                <div class="results-table-container">
-                    <table id="resultsTable" class="results-table">
-                        <thead id="tableHead"></thead>
-                        <tbody id="tableBody"></tbody>
-                    </table>
-                </div>
+
                 <div class="download-section" id="downloadSection" hidden>
                     <p id="downloadStatus">Download full results as:</p>
                     <div class="download-buttons">
@@ -66,6 +61,67 @@
                         <button type="button" class="download-btn" data-download-format="excel">Excel</button>
                         <button type="button" class="download-btn" data-download-format="html">HTML</button>
                         <button type="button" class="download-btn" data-download-format="text">Plain Text</button>
+                    </div>
+                </div>
+
+                <div class="aggregation-section" id="aggregationSection" hidden>
+                    <h4>Summary</h4>
+                    <p class="aggregation-message" id="aggregationMessage" hidden></p>
+                    <table class="aggregation-table">
+                        <thead id="aggregationHead">
+                        </thead>
+                        <tbody id="aggregationBody"></tbody>
+                    </table>
+                </div>
+
+                <div class="results-table-container">
+                    <table id="resultsTable" class="results-table">
+                        <thead id="tableHead"></thead>
+                        <tbody id="tableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="feedbackSection" class="feedback-section" hidden>
+                <h3>Were these results helpful?</h3>
+                <div class="feedback-buttons">
+                    <button type="button" class="btn-feedback btn-positive" onclick="submitFeedback('positive')">
+                        👍 Yes, this is helpful
+                    </button>
+                    <button type="button" class="btn-feedback btn-negative" onclick="submitFeedback('negative')">
+                        👎 No, not helpful
+                    </button>
+                </div>
+
+                <div id="negativeOptions" class="negative-options" hidden>
+                    <h4>What would you like to do?</h4>
+
+                    <button type="button" class="btn-retry" onclick="retryWithAlternateModel()">
+                        ♦️ Try again with another model
+                        <small>Uses a more powerful model for higher accuracy</small>
+                    </button>
+
+                    <div class="comment-section">
+                        <label for="feedbackComment">Tell us what was wrong (optional):</label>
+                        <textarea
+                            id="feedbackComment"
+                            placeholder="e.g., Returned too many people, Missing key information, Wrong interpretation..."
+                            rows="3"
+                        ></textarea>
+                        <button type="button" class="btn-submit-comment" onclick="submitComment()">
+                            Submit Feedback
+                        </button>
+                    </div>
+
+                    <button type="button" class="btn-cancel" onclick="closeFeedback()">
+                        Cancel
+                    </button>
+                </div>
+
+                <div id="retryStatus" class="retry-status" hidden>
+                    <div class="retry-loading">
+                        ♦️ Regenerating with more powerful model...
+                        <div class="spinner"></div>
                     </div>
                 </div>
             </div>
@@ -89,7 +145,8 @@
                     </li>
                     <li>Without a limit you will get every matching result.</li>
                     <li>If the results are incomplete or unexpected, refine the wording (for example, restate counts or filters) and submit again.</li>
-                    <li>Keep queries focused on a single task (filter, lookup, or short summary). Very large org-chart rollups and complex aggregations aren&#39;t supported yet.</li>
+                    <li>Large recursive queries (entire org structures) run in the background. You'll see live progress updates.</li>
+                    <li>Use "summarize by" or "group by" to get aggregated summaries (e.g., "summarize by employee type").</li>
                 </ul>
             </div>
         </footer>

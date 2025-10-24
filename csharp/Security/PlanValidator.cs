@@ -19,7 +19,8 @@ public class PlanValidator : IPlanValidator
     {
         "search",
         "expand_members",
-        "lookup"
+        "lookup",
+        "expand_reports"
     };
 
     private static readonly HashSet<string> AllowedFilterOperators = new(StringComparer.OrdinalIgnoreCase)
@@ -116,6 +117,17 @@ public class PlanValidator : IPlanValidator
                     result.SecurityErrors.Add($"Step {step.Step} lookup operation requires 'source_attribute'.");
                 }
             }
+
+            // Validate expand_reports operation
+            if (step.Operation.Equals("expand_reports", StringComparison.OrdinalIgnoreCase))
+            {
+                var expandReportsResult = ValidateExpandReports(step);
+                result.SecurityErrors.AddRange(expandReportsResult.SecurityErrors);
+                if (!expandReportsResult.OperationsValid)
+                {
+                    result.OperationsValid = false;
+                }
+            }
         }
 
         if (plan.Projection.Columns.Count > MaxProjectionColumns)
@@ -124,6 +136,17 @@ public class PlanValidator : IPlanValidator
         }
 
         ValidateProjectionFilter(plan, result, stepLookup);
+
+        // Validate aggregation if present
+        if (plan.Projection?.Aggregation != null)
+        {
+            var aggregationResult = ValidateAggregation(plan.Projection);
+            result.SecurityErrors.AddRange(aggregationResult.SecurityErrors);
+            if (!aggregationResult.OperationsValid)
+            {
+                result.OperationsValid = false;
+            }
+        }
 
         if (!result.SecurityErrors.Any() && result.OperationsValid)
         {
@@ -417,6 +440,130 @@ public class PlanValidator : IPlanValidator
                 "whenCreated",
                 "whenChanged"
             }
+        };
+    }
+
+    private PlanSecurityResult ValidateExpandReports(DirectoryPlanStep step)
+    {
+        var errors = new List<string>();
+
+        // Feature disabled check
+        if (!_configuration.GetValue<bool>("Security:EnableRecursiveQueries"))
+        {
+            errors.Add($"Step '{step.Name}': recursive queries are disabled");
+            return new PlanSecurityResult { OperationsValid = false, SecurityErrors = errors };
+        }
+
+        // max_depth validation
+        if (step.MaxDepth.HasValue)
+        {
+            if (step.MaxDepth.Value < 1)
+            {
+                errors.Add($"Step '{step.Name}': max_depth must be >= 1 (got {step.MaxDepth.Value})");
+            }
+
+            var maxDepthLimit = _configuration.GetValue<int>("Security:MaxRecursionDepth");
+            if (step.MaxDepth.Value > maxDepthLimit)
+            {
+                errors.Add($"Step '{step.Name}': max_depth {step.MaxDepth.Value} exceeds limit of {maxDepthLimit}");
+            }
+        }
+
+        // max_nodes validation
+        if (step.MaxNodes.HasValue)
+        {
+            var maxNodesLimit = _configuration.GetValue<int>("Security:MaxNodesPerRecursion");
+            if (step.MaxNodes.Value < 1)
+            {
+                errors.Add($"Step '{step.Name}': max_nodes must be >= 1 (got {step.MaxNodes.Value})");
+            }
+            if (step.MaxNodes.Value > maxNodesLimit)
+            {
+                errors.Add($"Step '{step.Name}': max_nodes {step.MaxNodes.Value} exceeds limit of {maxNodesLimit}");
+            }
+        }
+
+        // Missing source check
+        if (string.IsNullOrEmpty(step.Source))
+        {
+            errors.Add($"Step '{step.Name}': expand_reports requires 'source' field");
+        }
+
+        // Wrong target_type check
+        if (step.TargetType != DirectoryObjectType.User)
+        {
+            errors.Add($"Step '{step.Name}': expand_reports only supports target_type 'User' (got '{step.TargetType}')");
+        }
+
+        // Empty attributes check
+        if (step.Attributes == null || !step.Attributes.Any())
+        {
+            errors.Add($"Step '{step.Name}': expand_reports requires at least one attribute");
+        }
+
+        return new PlanSecurityResult
+        {
+            OperationsValid = !errors.Any(),
+            SecurityErrors = errors
+        };
+    }
+
+    private PlanSecurityResult ValidateAggregation(ProjectionDefinition projection)
+    {
+        if (projection?.Aggregation == null)
+        {
+            return new PlanSecurityResult { OperationsValid = true };
+        }
+
+        var errors = new List<string>();
+        var agg = projection.Aggregation;
+
+        // No grouping and no count
+        if (!agg.GroupBy.Any() && !agg.Count)
+        {
+            errors.Add("Aggregation requires 'group_by' fields or 'count: true'");
+        }
+
+        // Empty group_by fields
+        if (agg.GroupBy.Any(string.IsNullOrWhiteSpace))
+        {
+            errors.Add("Aggregation group_by contains empty field names");
+        }
+
+        // Validate fields in allow-list (assume User type for aggregation fields)
+        if (_allowedAttributes.TryGetValue(DirectoryObjectType.User, out var allowedAttributes))
+        {
+            foreach (var field in agg.GroupBy.Where(f => !string.IsNullOrWhiteSpace(f)))
+            {
+                if (!allowedAttributes.Contains(field))
+                {
+                    errors.Add($"Aggregation field '{field}' is not in attribute allow-list");
+                }
+            }
+        }
+
+        // Too many fields
+        if (agg.GroupBy.Count > 5)
+        {
+            errors.Add($"Aggregation group_by has {agg.GroupBy.Count} fields; maximum is 5");
+        }
+
+        // Duplicates
+        var duplicates = agg.GroupBy
+            .GroupBy(f => f, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToList();
+
+        if (duplicates.Any())
+        {
+            errors.Add($"Aggregation contains duplicate fields: {string.Join(", ", duplicates)}");
+        }
+
+        return new PlanSecurityResult
+        {
+            OperationsValid = !errors.Any(),
+            SecurityErrors = errors
         };
     }
 }

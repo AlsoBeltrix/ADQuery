@@ -1,0 +1,11 @@
+{
+  "_comment": "Copy this file to config.json and add your API credentials",
+  "anthropic": {
+    "base_url": "https://api.portkey.ai",
+    "api_key": "YOUR_PORTKEY_API_KEY_HERE",
+    "analysis_model": "@vertexai-global/anthropic.claude-opus-4-1@20250805"
+  },
+  "feedback": {
+    "default_directory": "../csharp/wwwroot/metrics"
+  }
+}

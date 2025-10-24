@@ -176,7 +176,7 @@ public class ActiveDirectoryService : IActiveDirectoryService
 
                 var record = new DirectoryRecord
                 {
-                    ObjectType = targetType,
+                    ObjectType = InferDirectoryObjectType(entry, targetType),
                     DistinguishedName = dn
                 };
 
@@ -204,6 +204,68 @@ public class ActiveDirectoryService : IActiveDirectoryService
         });
 
         return Task.FromResult<IReadOnlyList<DirectoryRecord>>(results.ToList());
+    }
+
+    private static DirectoryObjectType InferDirectoryObjectType(DirectoryEntry entry, DirectoryObjectType fallback)
+    {
+        var schema = entry.SchemaClassName;
+        if (!string.IsNullOrWhiteSpace(schema))
+        {
+            if (schema.Equals("group", StringComparison.OrdinalIgnoreCase))
+            {
+                return DirectoryObjectType.Group;
+            }
+
+            if (schema.Equals("user", StringComparison.OrdinalIgnoreCase))
+            {
+                return DirectoryObjectType.User;
+            }
+
+            if (schema.Equals("computer", StringComparison.OrdinalIgnoreCase))
+            {
+                return DirectoryObjectType.Computer;
+            }
+
+            if (schema.Equals("organizationalUnit", StringComparison.OrdinalIgnoreCase))
+            {
+                return DirectoryObjectType.OrganizationalUnit;
+            }
+        }
+
+        if (entry.Properties["objectClass"] is { Count: > 0 } objectClasses)
+        {
+            foreach (var value in objectClasses.Cast<object?>().Reverse())
+            {
+                var className = value?.ToString();
+                if (string.IsNullOrWhiteSpace(className))
+                {
+                    continue;
+                }
+
+                if (className.Equals("group", StringComparison.OrdinalIgnoreCase))
+                {
+                    return DirectoryObjectType.Group;
+                }
+
+                if (className.Equals("computer", StringComparison.OrdinalIgnoreCase))
+                {
+                    return DirectoryObjectType.Computer;
+                }
+
+                if (className.Equals("organizationalUnit", StringComparison.OrdinalIgnoreCase))
+                {
+                    return DirectoryObjectType.OrganizationalUnit;
+                }
+
+                if (className.Equals("user", StringComparison.OrdinalIgnoreCase) ||
+                    className.Equals("person", StringComparison.OrdinalIgnoreCase))
+                {
+                    return DirectoryObjectType.User;
+                }
+            }
+        }
+
+        return fallback;
     }
 
     public Task<IReadOnlyList<DirectoryRecord>> GetDirectReportsBatch(IEnumerable<string> managerDistinguishedNames, IEnumerable<string> attributes, CancellationToken cancellationToken = default)

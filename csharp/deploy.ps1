@@ -139,6 +139,7 @@ if (Test-Path "IIS:\AppPools\$AppPoolName") {
 Write-Host "Testing HTTP endpoint..." -ForegroundColor Yellow
 Start-Sleep -Seconds 5
 $httpUrl = "http://localhost/$AppName"
+$healthUrl = "http://localhost/$AppName/health"
 $httpStatus = $null
 $httpError = $null
 try {
@@ -146,6 +147,17 @@ try {
     $httpStatus = $response.StatusCode
 } catch {
     $httpError = $_.Exception.Message
+}
+
+# Test health endpoint
+try {
+    Write-Host "Checking health endpoint..." -ForegroundColor Yellow
+    $healthResponse = Invoke-WebRequest -Uri $healthUrl -UseDefaultCredentials -UseBasicParsing -TimeoutSec 10
+    if ($healthResponse.StatusCode -eq 200) {
+        Write-Host "- Health check passed." -ForegroundColor Green
+    }
+} catch {
+    Write-Warning "Health check failed: $($_.Exception.Message)"
 }
 
 switch ($httpStatus) {
@@ -163,4 +175,12 @@ Write-Host "Site     : $SiteName"
 Write-Host "App      : /$AppName"
 Write-Host "Physical : $TargetPath"
 Write-Host "URL      : $httpUrl"
-Write-Host ""; Write-Host "Deployment complete." -ForegroundColor Green
+Write-Host ""
+Write-Host "IMPORTANT NOTES:" -ForegroundColor Yellow
+Write-Host "- Async query jobs are stored in-memory only"
+Write-Host "- App pool recycle will lose all running/queued jobs"
+Write-Host "- Users should be notified before planned maintenance"
+Write-Host "- Check logs in: $TargetPath\logs\"
+Write-Host "- User output files: E:\WWWOutput\{username}\"
+Write-Host ""
+Write-Host "Deployment complete." -ForegroundColor Green

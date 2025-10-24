@@ -340,7 +340,14 @@ internal sealed class DirectoryPlanRuntime
     {
         var source = GetSourceState(step);
         var distinguishedNames = source.Records.Select(r => r.DistinguishedName);
-        return await _directoryService.ExpandGroupMembersAsync(distinguishedNames, step.Recursive, step.Attributes, cancellationToken);
+        var results = await _directoryService.ExpandGroupMembersAsync(distinguishedNames, step.Recursive, step.Attributes, cancellationToken);
+
+        if (step.TargetType != DirectoryObjectType.Group)
+        {
+            return results.Where(r => r.ObjectType != DirectoryObjectType.Group).ToList();
+        }
+
+        return results;
     }
 
     private async Task<IReadOnlyList<DirectoryRecord>> ExecuteLookupStep(DirectoryPlanStep step, CancellationToken cancellationToken)
@@ -387,6 +394,11 @@ internal sealed class DirectoryPlanRuntime
             return Array.Empty<DirectoryRecord>();
         }
 
+        _logger.LogInformation(
+            "Starting org expansion from {SeedCount} seed record(s): {Seeds}",
+            seedDNs.Count,
+            string.Join("; ", seedDNs.Take(3).Select(dn => dn.Split(',').FirstOrDefault())));
+
         levelResults[0] = source.Records.ToList();
 
         // Breadth-first traversal
@@ -418,6 +430,12 @@ internal sealed class DirectoryPlanRuntime
                 currentLevelDNs,
                 step.Attributes,
                 cancellationToken);
+
+            _logger.LogInformation(
+                "Level {Depth}: Queried {ManagerCount} managers, found {ReportCount} direct reports",
+                depth,
+                currentLevelDNs.Count,
+                directReports.Count);
 
             if (!directReports.Any())
             {
