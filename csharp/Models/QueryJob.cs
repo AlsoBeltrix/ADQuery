@@ -30,6 +30,7 @@ public class QueryJob
     // Results
     public string? ResultsCacheKey { get; set; }
     public int? TotalRows { get; set; }
+    public string? ModelUsed { get; set; }
     public Dictionary<string, object>? Aggregation { get; set; }
     public List<string> Warnings { get; set; } = new();
 

@@ -24,7 +24,20 @@
 
         <main>
             <div class="search-card">
-                <form id="queryForm">
+                <!-- Mode Toggle -->
+                <div class="mode-toggle">
+                    <label class="mode-option">
+                        <input type="radio" name="queryMode" value="natural" checked />
+                        <span>Natural Language Query</span>
+                    </label>
+                    <label class="mode-option">
+                        <input type="radio" name="queryMode" value="csv" />
+                        <span>File Upload</span>
+                    </label>
+                </div>
+
+                <!-- Natural Language Query Form -->
+                <form id="queryForm" class="query-mode-section" data-mode="natural">
                     <div class="input-group">
                         <label for="queryText">What would you like to find?</label>
                         <textarea
@@ -45,12 +58,44 @@
                         <span class="btn-loading" aria-hidden="true">Searching...</span>
                     </button>
                 </form>
+
+                <!-- CSV Enrichment Form -->
+                <form id="csvForm" class="query-mode-section" data-mode="csv" hidden>
+                    <div class="input-group">
+                        <label for="csvFile">Upload CSV file</label>
+                        <div class="file-upload-wrapper">
+                            <input type="file" id="csvFile" accept=".csv" />
+                            <span class="file-status" id="fileStatus">No file selected</span>
+                        </div>
+                        <small class="input-hint">Maximum upload size: 10 MB.</small>
+                        <small class="input-hint" id="csvHeadersHint" hidden>Columns found: <span id="csvHeadersList"></span></small>
+                    </div>
+
+                    <div class="input-group" id="csvQueryGroup" hidden>
+                        <label for="csvQueryText">What do you want to know about these users?</label>
+                        <textarea
+                            id="csvQueryText"
+                            placeholder="Examples:
+- Show me which users are active and have logged in within the last 90 days
+- Filter to only contractors who are members of the VPN Users group
+- Return their department, manager, and last logon date
+- Which of these users have disabled accounts?"
+                            rows="4"
+                        ></textarea>
+                    </div>
+
+                    <button type="submit" class="search-btn" id="csvSearchBtn" disabled>
+                        <span class="btn-text">Analyze CSV Users</span>
+                        <span class="btn-loading" aria-hidden="true">Processing...</span>
+                    </button>
+                </form>
             </div>
 
             <div id="results" class="results-section" hidden>
                 <div class="results-header">
                     <h3>Search Results</h3>
                     <div class="results-info" id="resultsInfo"></div>
+                    <div class="csv-stats" id="csvStats" hidden style="font-size: 0.9em; color: #666; margin-top: 4px;"></div>
                 </div>
                 <ul class="warning-list" id="warningList" hidden></ul>
 
@@ -85,10 +130,10 @@
             <div id="feedbackSection" class="feedback-section" hidden>
                 <h3>Were these results helpful?</h3>
                 <div class="feedback-buttons">
-                    <button type="button" class="btn-feedback btn-positive" onclick="submitFeedback('positive')">
+                    <button type="button" class="btn-feedback btn-positive" onclick="submitFeedback('Positive')">
                         👍 Yes, this is helpful
                     </button>
-                    <button type="button" class="btn-feedback btn-negative" onclick="submitFeedback('negative')">
+                    <button type="button" class="btn-feedback btn-negative" onclick="submitFeedback('Negative')">
                         👎 No, not helpful
                     </button>
                 </div>
@@ -155,3 +200,4 @@
     <script src="js/app.js"></script>
 </body>
 </html>
+

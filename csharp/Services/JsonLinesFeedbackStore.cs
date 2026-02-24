@@ -25,15 +25,13 @@ public class JsonLinesFeedbackStore : IFeedbackStore
         WriteIndented = false
     };
 
-    public JsonLinesFeedbackStore(
-        IConfiguration configuration,
-        ILogger<JsonLinesFeedbackStore> logger)
+    public JsonLinesFeedbackStore(ILogger<JsonLinesFeedbackStore> logger)
     {
         _logger = logger;
 
-        // Store feedback in wwwroot/metrics directory
-        var webRoot = configuration["WebRootPath"] ?? "wwwroot";
-        _metricsDirectory = Path.Combine(webRoot, "metrics");
+        // Store feedback outside static web root.
+        // Uses a system-scoped folder under E:\WWWOutput for centralized operational logging.
+        _metricsDirectory = Path.Combine(QueryLogHelper.OutputRoot, "_system", "feedback");
 
         // Ensure directory exists
         Directory.CreateDirectory(_metricsDirectory);

@@ -17,7 +17,11 @@ Log.Logger = new LoggerConfiguration()
 builder.Host.UseSerilog();
 
 // Add services to the container
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+    });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -55,6 +59,7 @@ builder.Services.AddSingleton<IPlanPreprocessor, PlanPreprocessor>();
 builder.Services.AddScoped<IActiveDirectoryService, ActiveDirectoryService>();
 builder.Services.AddScoped<IDirectoryPlanExecutor, DirectoryPlanExecutor>();
 builder.Services.AddScoped<IPlanValidator, PlanValidator>();
+builder.Services.AddScoped<ICsvEnrichmentService, CsvEnrichmentService>();
 
 // Register job infrastructure (async query support)
 builder.Services.AddSingleton<IQueryJobStore, InMemoryQueryJobStore>();

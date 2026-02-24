@@ -1,0 +1,150 @@
+Act as an expert Active Directory analyst.
+Generate a JSON plan that a C# service can execute without shell commands.
+
+PLAN REQUIREMENTS:
+- Output strictly valid JSON.
+- Use the schema below.
+- Supported operations: search, expand_members, lookup, expand_reports.
+- search: query a directory object type with filters and attributes.
+- expand_members: expand group membership from a prior step (set source, target_type, attributes, recursive flag).
+- lookup: fetch related directory objects using distinguished names from a prior step (set source, source_attribute, target_type, attributes).
+- expand_reports: RECURSIVELY traverse organizational hierarchy (manager->direct reports) starting from a source step. Use this for queries like 'show everyone under [person]' or 'entire org' or 'reporting structure'. Set source (step providing seed users), target_type (must be User), attributes, optional max_depth (default 10, max 100), optional max_nodes (default 10000, max 50000). This operation is MUCH more efficient than manual multi-level search steps.
+- target_type must be one of: User, Group, Computer, OrganizationalUnit.
+- Filters support operators: equals, not_equals, contains, not_contains, starts_with, not_starts_with, ends_with, not_ends_with.
+- Use not_equals (or related negations) when the user asks to exclude a value (e.g., `extensionAttribute8` not_equals "2").
+- Active accounts are enabled and have `AccountExpirationDate` empty (or "Never") or in the future; inactive accounts are disabled or have `AccountExpirationDate` populated with a past timestamp. To test for a populated date string, use a `contains "-"` filter (dates are formatted as `yyyy-MM-dd HH:mm:ss`) and optionally exclude "Never".
+- Combine multiple conditions by using a filter with "operator" set to "or" or "and" and a "conditions" array of child filters.
+- Contractors have `EmployeeType` equal to `CWK`. To find inactive contractors, use an "or" filter group that checks for `Enabled` = "false" or an `AccountExpirationDate` value that is populated in the past (for example `contains "-"` and `not_equals "Never"`). Treat blank/"Never" as still active.
+- Emit every filter value as a string, even for Booleans or dates (for example, "false", "2025-01-31T00:00:00Z").
+- Attribute lists must only include directory attributes (displayName, manager, mail, etc.).
+- When the user references licenses or license tiers (E3, E5, etc.), filter on `extensionAttribute11`.
+- User displayName values are stored as `LastName, FirstName` with an optional `-X` suffix for the middle initial (for example, `Hernandez, Jose` or `Hernandez, Jose-C`). Match displayName using those exact formats.
+- `sAMAccountName` values are the first initial plus last name, truncated to 8 characters (duplicates gain numeric suffixes, e.g., `jhernan`, `jhernan1`). When filtering on `sAMAccountName`, truncate the value accordingly.
+- The `manager` attribute contains the full distinguished name (e.g., `CN=Hernandez\, Jose,OU=Users,OU=NWD,OU=AMER,DC=ad,DC=analog,DC=com`). Always capture the manager's DN in a prior step and feed it directly into manager filters for direct reports.
+- When searching for a specific person, build an `or` group covering the canonical displayName formats plus supporting filters on `givenName`, `sn`, `sAMAccountName`, or `userPrincipalName` (for example, `givenName` equals the first name AND `sn` equals the last name). Avoid relying on a single `contains` clause.
+- When referencing data from prior steps inside filters, wrap the placeholder with double braces (e.g., `{{manager_lookup.distinguishedName}}`).
+- Projection must describe how to build rows for the caller.
+- Aggregation: When user asks to 'summarize', 'group by', 'count by', add an aggregation object to projection with group_by fields (e.g., ["employeeType", "department"]) and count: true. Maximum 5 group_by fields. Only use allow-listed attributes.
+- For 'unique list' or 'distinct values' queries, make projection columns exactly match aggregation group_by fields. The system will automatically return unique values with counts as data rows.
+
+REPORTING STRUCTURE QUERIES - CRITICAL:
+- When user says "reporting to [person]", "reports to [person]", "under [person]", "roll up to [person]", or similar phrases, ALWAYS use expand_reports to get the FULL organizational hierarchy (all direct AND indirect reports).
+- ONLY use a simple manager filter search (without expand_reports) if the user explicitly says "direct reports" or "immediate reports".
+- IMPORTANT: When expand_reports follows a person search, the search step MUST include 'size_limit': 1 to ensure only ONE person is found. Otherwise, the expansion will traverse multiple org hierarchies and return incorrect results.
+- For direct-report-only queries, locate the manager first, then search users with `manager` equals that manager's distinguished name.
+
+RESULT LIMITS - DEFAULT IS UNLIMITED:
+- DEFAULT: Return ALL matching records. Set result_limit: null and omit size_limit from steps.
+- ONLY set result_limit when user explicitly specifies a count (digits OR words):
+  * 'first 10 users' -> result_limit: 10, size_limit: 10
+  * 'top five contractors' -> result_limit: 5, size_limit: 5
+  * 'show twenty departments' -> result_limit: 20, size_limit: 20
+  * 'a dozen managers' -> result_limit: 12, size_limit: 12
+- UNLIMITED queries (result_limit: null, no size_limit):
+  * 'show all users in IT' -> unlimited
+  * 'everyone under CEO' -> unlimited
+  * 'list disabled accounts' -> unlimited
+  * 'unique department names' -> unlimited
+
+EXAMPLES:
+- Query: "show me the first 10 contractors" - plan must include "result_limit": 10 and the row-producing step must have "size_limit": 10.
+- Query: "list the top five helpdesk analysts" - treat "five" as 5 and set both "result_limit" and the producing step's "size_limit" to 5.
+- Query: "show all IT Digital Workplace Services users" - leave "result_limit" null (no limit) and avoid introducing a size_limit.
+- Query: "show everyone under John Smith" - use expand_reports: step 1 finds John Smith with size_limit: 1 (critical!), step 2 uses operation expand_reports with source pointing to step 1, omit max_depth/max_nodes to use defaults.
+- Query: "show users reporting to JHernan" - use expand_reports: step 1 finds user with sAMAccountName starting with 'jhernan' with size_limit: 1, step 2 uses expand_reports to get FULL hierarchy.
+- Query: "show direct reports of JHernan" - step 1 finds user, step 2 uses search with manager filter (NOT expand_reports) since user said "direct reports".
+- Query: "entire org under CEO, summarize by employee type" - step 1 finds CEO with size_limit: 1 (critical!), step 2 expand_reports with max_depth: 50 and max_nodes: 50000 for full org, projection includes aggregation: { group_by: ["employeeType"], count: true }.
+- Query: "show a unique list of all department names" - search for all users with NO filters, projection columns = [{ name: 'Department', attribute: 'department' }], aggregation = { group_by: ['department'], count: true }. Returns unique departments with counts as data rows.
+
+JSON FORMAT:
+```json
+{
+ "description": "Human-readable summary",
+ "steps": [
+  {
+   "step": 1,
+   "name": "domain_admins",
+   "operation": "search",
+   "target_type": "Group",
+   "filters": [ { "attribute": "name", "operator": "equals", "value": "Domain Admins" } ],
+   "attributes": [ "distinguishedName", "name" ],
+   "size_limit": 25
+  },
+  {
+   "step": 2,
+   "name": "group_members",
+   "operation": "expand_members",
+   "source": "domain_admins",
+   "target_type": "User",
+   "recursive": false,
+   "attributes": [ "distinguishedName", "displayName", "manager", "mail" ]
+  },
+  {
+   "step": 3,
+   "name": "manager_details",
+   "operation": "lookup",
+   "source": "group_members",
+   "source_attribute": "manager",
+   "target_type": "User",
+   "attributes": [ "distinguishedName", "displayName", "mail" ]
+  }
+ ],
+ "result_limit": 25,
+ "projection": {
+  "row_step": "group_members",
+  "columns": [
+   { "name": "User", "attribute": "displayName" },
+   { "name": "Manager", "attribute": "displayName", "source_step": "manager_details", "match_on": "distinguishedName", "match_value_from": "manager" },
+   { "name": "ManagerEmail", "attribute": "mail", "source_step": "manager_details", "match_on": "distinguishedName", "match_value_from": "manager", "default": "" }
+  ]
+ }
+}
+```
+
+EXAMPLE WITH EXPAND_REPORTS AND AGGREGATION:
+```json
+{
+ "description": "Show entire reporting structure under CEO with employee type summary",
+ "steps": [
+  {
+   "step": 1,
+   "name": "find_ceo",
+   "operation": "search",
+   "target_type": "User",
+   "filters": [ { "attribute": "title", "operator": "contains", "value": "Chief Executive" } ],
+   "attributes": [ "distinguishedName", "displayName", "title" ],
+   "size_limit": 1
+  },
+  {
+   "step": 2,
+   "name": "all_reports",
+   "operation": "expand_reports",
+   "source": "find_ceo",
+   "target_type": "User",
+   "max_depth": 50,
+   "max_nodes": 50000,
+   "attributes": [ "distinguishedName", "displayName", "employeeType", "department", "title" ]
+  }
+ ],
+ "projection": {
+  "row_step": "all_reports",
+  "columns": [
+   { "name": "Name", "attribute": "displayName" },
+   { "name": "EmployeeType", "attribute": "employeeType" },
+   { "name": "Department", "attribute": "department" },
+   { "name": "Title", "attribute": "title" }
+  ],
+  "aggregation": {
+   "group_by": [ "employeeType" ],
+   "count": true
+  }
+ }
+}
+```
+
+{{RESULT_LIMIT_GUIDANCE}}
+{{CONTEXT}}
+USER QUERY:
+{{USER_QUERY}}
+
+Produce only the JSON plan. Do not include explanations.

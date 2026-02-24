@@ -32,8 +32,17 @@
         currentJobId: null,
         pollInterval: null,
         recordCount: 0,
-        summaryRowCount: 20  // Default, will be loaded from config API
+        summaryRowCount: 20,  // Default, will be loaded from config API
+        defaultModelId: 'claude-sonnet-4',
+        defaultModelDisplayName: 'claude-sonnet-4',
+        alternateModelId: 'claude-opus-4',
+        alternateModelDisplayName: 'claude-opus-4',
+        // CSV Enrichment state
+        currentMode: 'natural',
+        csvHeaders: [],
+        csvData: []
     };
+    const MAX_CSV_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 
     initTheme();
 
@@ -53,9 +62,400 @@
 
     themeToggle?.addEventListener('click', handleThemeToggle);
 
+    // CSV Enrichment elements
+    const csvForm = document.getElementById('csvForm');
+    const csvFileInput = document.getElementById('csvFile');
+    const fileStatus = document.getElementById('fileStatus');
+    const csvQueryGroup = document.getElementById('csvQueryGroup');
+    const csvQueryText = document.getElementById('csvQueryText');
+    const csvSearchBtn = document.getElementById('csvSearchBtn');
+    const csvHeadersHint = document.getElementById('csvHeadersHint');
+    const csvHeadersList = document.getElementById('csvHeadersList');
+    const modeRadios = document.querySelectorAll('input[name="queryMode"]');
+
+    // Mode toggle handling
+    modeRadios.forEach(radio => {
+        radio.addEventListener('change', handleModeChange);
+    });
+
+    // CSV file input handling
+    if (csvFileInput) {
+        csvFileInput.addEventListener('change', handleCsvFileSelect);
+    }
+
+    // CSV query text handling
+    if (csvQueryText) {
+        csvQueryText.addEventListener('input', updateCsvSubmitButton);
+    }
+
+    // CSV form submission
+    if (csvForm) {
+        csvForm.addEventListener('submit', event => {
+            event.preventDefault();
+            runCsvEnrichment();
+        });
+    }
+
     loadUserInfo();
     loadConfig();
     setLoading(false);
+
+    // ==================== CSV ENRICHMENT MODE ====================
+
+    function handleModeChange(event) {
+        const selectedMode = event.target.value;
+        state.currentMode = selectedMode;
+
+        const naturalSection = document.querySelector('[data-mode="natural"]');
+        const csvSection = document.querySelector('[data-mode="csv"]');
+
+        if (selectedMode === 'natural') {
+            if (naturalSection) naturalSection.hidden = false;
+            if (csvSection) csvSection.hidden = true;
+        } else if (selectedMode === 'csv') {
+            if (naturalSection) naturalSection.hidden = true;
+            if (csvSection) csvSection.hidden = false;
+        }
+
+        // Reset results when switching modes
+        hideResults();
+        hideError();
+    }
+
+    function handleCsvFileSelect(event) {
+        const file = event.target.files[0];
+
+        if (!file) {
+            resetCsvForm();
+            return;
+        }
+
+        if (!file.name.toLowerCase().endsWith('.csv')) {
+            fileStatus.textContent = 'Please select a CSV file';
+            fileStatus.classList.add('error');
+            resetCsvForm();
+            return;
+        }
+
+        if (file.size > MAX_CSV_UPLOAD_BYTES) {
+            fileStatus.textContent = 'File is too large. Maximum upload size is 10 MB.';
+            fileStatus.classList.add('error');
+            event.target.value = '';
+            resetCsvForm();
+            return;
+        }
+
+        fileStatus.textContent = `Selected: ${file.name}`;
+        fileStatus.classList.remove('error');
+
+        // Parse CSV to extract headers
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const content = e.target.result;
+            parseCsvHeaders(content);
+        };
+        reader.onerror = function() {
+            fileStatus.textContent = 'Error reading file';
+            fileStatus.classList.add('error');
+            resetCsvForm();
+        };
+        reader.readAsText(file);
+    }
+
+    function parseCsvHeaders(csvContent) {
+        const lines = csvContent.split(/\r?\n/).filter(line => line.trim());
+
+        if (lines.length === 0) {
+            fileStatus.textContent = 'CSV file is empty';
+            fileStatus.classList.add('error');
+            resetCsvForm();
+            return;
+        }
+
+        // Parse first line as headers
+        const headers = parseCSVLine(lines[0]);
+
+        if (headers.length === 0) {
+            fileStatus.textContent = 'No columns found in CSV';
+            fileStatus.classList.add('error');
+            resetCsvForm();
+            return;
+        }
+
+        state.csvHeaders = headers;
+
+        // Store all data rows for later submission
+        state.csvData = [];
+        for (let i = 1; i < lines.length; i++) {
+            const row = parseCSVLine(lines[i]);
+            if (row.length > 0) {
+                state.csvData.push(row);
+            }
+        }
+
+        // Show headers hint
+        if (csvHeadersList) {
+            csvHeadersList.textContent = headers.join(', ');
+        }
+        if (csvHeadersHint) {
+            csvHeadersHint.hidden = false;
+        }
+
+        // Show query input
+        if (csvQueryGroup) {
+            csvQueryGroup.hidden = false;
+        }
+
+        updateCsvSubmitButton();
+    }
+
+    function parseCSVLine(line) {
+        const result = [];
+        let current = '';
+        let inQuotes = false;
+
+        for (let i = 0; i < line.length; i++) {
+            const char = line[i];
+            const nextChar = line[i + 1];
+
+            if (inQuotes) {
+                if (char === '"' && nextChar === '"') {
+                    current += '"';
+                    i++; // Skip next quote
+                } else if (char === '"') {
+                    inQuotes = false;
+                } else {
+                    current += char;
+                }
+            } else {
+                if (char === '"') {
+                    inQuotes = true;
+                } else if (char === ',') {
+                    result.push(current.trim());
+                    current = '';
+                } else {
+                    current += char;
+                }
+            }
+        }
+
+        result.push(current.trim());
+        return result;
+    }
+
+    function resetCsvForm() {
+        state.csvHeaders = [];
+        state.csvData = [];
+
+        if (csvHeadersHint) {
+            csvHeadersHint.hidden = true;
+        }
+        if (csvQueryGroup) {
+            csvQueryGroup.hidden = true;
+        }
+        if (csvQueryText) {
+            csvQueryText.value = '';
+        }
+        if (csvSearchBtn) {
+            csvSearchBtn.disabled = true;
+        }
+    }
+
+    function updateCsvSubmitButton() {
+        if (!csvSearchBtn) return;
+
+        const hasFile = state.csvHeaders.length > 0 && state.csvData.length > 0;
+        const hasQuery = csvQueryText && csvQueryText.value.trim().length > 0;
+
+        csvSearchBtn.disabled = !(hasFile && hasQuery);
+    }
+
+    async function runCsvEnrichment() {
+        if (state.csvHeaders.length === 0 || state.csvData.length === 0) {
+            showError('Please select a CSV file first.');
+            return;
+        }
+
+        const query = csvQueryText ? csvQueryText.value.trim() : '';
+        if (!query) {
+            showError('Please enter a query describing what you want to know.');
+            return;
+        }
+
+        hideError();
+        hideResults();
+
+        // Show progress with row count
+        const rowCount = state.csvData.length;
+        setCsvLoading(true, rowCount);
+
+        try {
+            const payload = {
+                query: query,
+                csvHeaders: state.csvHeaders,
+                csvData: state.csvData
+            };
+
+            const response = await fetch('./api/query/csv-enrich', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const result = await response.json().catch(() => null);
+                const message = result?.error || result?.errorMessage || `Request failed with status ${response.status}.`;
+                showError(buildFriendlyError(message));
+                setCsvLoading(false);
+                return;
+            }
+
+            const result = await response.json();
+
+            if (result.success) {
+                state.currentJobId = result.jobId || null;
+                state.recordCount = result.recordCount || result.data?.length || 0;
+
+                displayCsvResults(result);
+            } else {
+                showError(result.error || 'CSV query failed');
+            }
+        } catch (error) {
+            showError(error instanceof Error ? error.message : 'Network error - please try again.');
+        } finally {
+            setCsvLoading(false);
+        }
+    }
+
+    function setCsvLoading(isLoading, rowCount = 0) {
+        state.isLoading = isLoading;
+
+        const btnText = csvSearchBtn?.querySelector('.btn-text');
+        const btnLoading = csvSearchBtn?.querySelector('.btn-loading');
+
+        if (btnText) btnText.hidden = isLoading;
+        if (btnLoading) {
+            btnLoading.hidden = !isLoading;
+            if (isLoading && rowCount > 0) {
+                // Show progress info with row count and time estimate
+                const estimatedSeconds = Math.ceil(rowCount / 100); // ~100 rows/sec estimate
+                const timeStr = estimatedSeconds > 60
+                    ? `~${Math.ceil(estimatedSeconds / 60)} min`
+                    : `~${estimatedSeconds} sec`;
+                btnLoading.textContent = `Processing ${rowCount.toLocaleString()} users (${timeStr})...`;
+
+                // Start elapsed timer
+                startCsvProgressTimer(rowCount);
+            } else {
+                btnLoading.textContent = 'Processing...';
+            }
+        }
+
+        if (csvSearchBtn) csvSearchBtn.disabled = isLoading;
+        if (csvFileInput) csvFileInput.disabled = isLoading;
+        if (csvQueryText) csvQueryText.disabled = isLoading;
+
+        // Clear timer when done
+        if (!isLoading) {
+            stopCsvProgressTimer();
+        }
+    }
+
+    let csvProgressInterval = null;
+    let csvProgressStartTime = null;
+
+    function startCsvProgressTimer(rowCount) {
+        stopCsvProgressTimer();
+        csvProgressStartTime = Date.now();
+
+        const btnLoading = csvSearchBtn?.querySelector('.btn-loading');
+        if (!btnLoading) return;
+
+        csvProgressInterval = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - csvProgressStartTime) / 1000);
+            const elapsedStr = elapsed >= 60
+                ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
+                : `${elapsed}s`;
+            btnLoading.textContent = `Processing ${rowCount.toLocaleString()} users... (${elapsedStr} elapsed)`;
+        }, 1000);
+    }
+
+    function stopCsvProgressTimer() {
+        if (csvProgressInterval) {
+            clearInterval(csvProgressInterval);
+            csvProgressInterval = null;
+        }
+        csvProgressStartTime = null;
+    }
+
+    function displayCsvResults(result) {
+        hideError();
+
+        const rows = result.data || [];
+        const totalCount = result.recordCount || rows.length;
+        state.recordCount = totalCount;
+
+        renderTable(rows);
+        renderSummary({ recordCount: totalCount }, rows.length);
+        renderWarnings(result.warnings);
+
+        // Show CSV-specific stats if available
+        if (result.totalRows && result.matchedRows !== undefined) {
+            const statsDiv = document.getElementById('csvStats');
+            if (statsDiv) {
+                statsDiv.innerHTML = `
+                    <strong>File Upload:</strong>
+                    ${result.totalRows.toLocaleString()} total rows,
+                    ${result.matchedRows.toLocaleString()} matched in AD,
+                    ${result.filteredRows?.toLocaleString() || 0} passed filter
+                `;
+                statsDiv.hidden = false;
+            }
+        }
+
+        if (rows.length > 0) {
+            showDownloadOptions();
+        }
+
+        resultsSection.hidden = false;
+        resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    // ==================== END CSV ENRICHMENT MODE ====================
+
+    /**
+     * Derives a friendly display name from a model ID.
+     * E.g., '@bedrock-global/us.anthropic.claude-sonnet-4-5-20250929-v1:0' -> 'claude-sonnet-4-5'
+     */
+    function deriveModelDisplayName(modelId) {
+        if (!modelId || typeof modelId !== 'string') {
+            return state.defaultModelDisplayName || 'claude-sonnet-4';
+        }
+
+        let trimmed = modelId.trim().replace(/^@/, '');
+
+        // Remove version suffix (e.g., @20250805 or -v1:0)
+        let withoutVersion = trimmed.replace(/@\d+$/, '').replace(/-v\d+:\d+$/, '');
+
+        // Get the last path segment
+        const lastSlash = withoutVersion.lastIndexOf('/');
+        let baseName = lastSlash >= 0 ? withoutVersion.substring(lastSlash + 1) : withoutVersion;
+
+        // Remove common prefixes
+        const prefixes = ['anthropic.', 'us.anthropic.', 'eu.anthropic.'];
+        for (const prefix of prefixes) {
+            if (baseName.toLowerCase().startsWith(prefix)) {
+                baseName = baseName.substring(prefix.length);
+                break;
+            }
+        }
+
+        // Remove date suffix (e.g., -20250929)
+        baseName = baseName.replace(/-\d{8}$/, '');
+
+        return baseName || state.defaultModelDisplayName || 'claude-sonnet-4';
+    }
 
     async function loadConfig() {
         try {
@@ -64,6 +464,18 @@
                 const config = await response.json();
                 if (config.summaryRowCount > 0) {
                     state.summaryRowCount = config.summaryRowCount;
+                }
+                if (config.defaultModelDisplayName) {
+                    state.defaultModelDisplayName = config.defaultModelDisplayName;
+                }
+                if (config.defaultModelId) {
+                    state.defaultModelId = config.defaultModelId;
+                }
+                if (config.alternateModelDisplayName) {
+                    state.alternateModelDisplayName = config.alternateModelDisplayName;
+                }
+                if (config.alternateModelId) {
+                    state.alternateModelId = config.alternateModelId;
                 }
             }
         } catch (error) {
@@ -392,10 +804,14 @@
         resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
         // Show feedback UI after results are displayed
+        const modelDisplayName = job.modelUsed
+            ? deriveModelDisplayName(job.modelUsed)
+            : state.defaultModelDisplayName;
+
         showFeedback(
             job.jobId,
             job.query || '',
-            job.modelUsed || 'claude-sonnet-4',
+            modelDisplayName,
             job.result.totalRows || 0,
             job.responseTimeMs || 0
         );
@@ -806,7 +1222,7 @@
             case 'csv':
                 return 'csv';
             case 'excel':
-                return 'xls';
+                return 'xlsx';
             case 'html':
                 return 'html';
             case 'text':
@@ -846,6 +1262,12 @@
             aggregationSection.hidden = true;
         }
 
+        const csvStats = document.getElementById('csvStats');
+        if (csvStats) {
+            csvStats.hidden = true;
+            csvStats.innerHTML = '';
+        }
+
         state.currentRequestId = null;
         state.currentJobId = null;
         state.recordCount = 0;
@@ -862,7 +1284,8 @@
         currentModel: null,
         originalJobId: null,
         resultCount: 0,
-        responseTimeMs: 0
+        responseTimeMs: 0,
+        alternateModelDisplayName: null  // Will be loaded from config
     };
 
     // Make feedback functions global for onclick handlers
@@ -871,7 +1294,7 @@
         const negativeOptions = document.getElementById('negativeOptions');
 
         try {
-            if (sentiment === 'positive') {
+            if (sentiment === 'Positive') {
                 await saveFeedback({
                     jobId: feedbackState.currentJobId || state.currentJobId,
                     query: feedbackState.currentQuery,
@@ -896,6 +1319,12 @@
     window.retryWithAlternateModel = async function() {
         const negativeOptions = document.getElementById('negativeOptions');
         const retryStatus = document.getElementById('retryStatus');
+        const alternateModelLabel = state.alternateModelDisplayName || feedbackState.alternateModelDisplayName || 'alternate model';
+        const progressMessage = `Regenerating results with ${alternateModelLabel}...`;
+
+        setLoading(true);
+        showProgress(progressMessage);
+        hideError();
 
         try {
             // Log negative feedback first
@@ -903,28 +1332,34 @@
                 jobId: feedbackState.currentJobId || state.currentJobId,
                 query: feedbackState.currentQuery,
                 modelUsed: feedbackState.currentModel || 'claude-sonnet-4',
-                sentiment: 'negative',
+                sentiment: 'Negative',
                 userRequestedRetry: true,
                 resultCount: feedbackState.resultCount,
                 responseTimeMs: feedbackState.responseTimeMs
             });
 
-            // Hide options, show retry status
-            negativeOptions.hidden = true;
-            retryStatus.hidden = false;
+            if (negativeOptions) {
+                negativeOptions.hidden = true;
+            }
+            if (retryStatus) {
+                retryStatus.hidden = false;
+            }
 
-            // Call retry endpoint
-            const response = await fetch('/api/query/retry-with-alternate-model', {
+            const response = await fetch('./api/query/retry-with-alternate-model', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
+                credentials: 'include',
+                cache: 'no-store',
                 body: JSON.stringify({
                     originalJobId: feedbackState.currentJobId || state.currentJobId
                 })
             });
 
             if (!response.ok) {
+                const errorText = await response.text().catch(() => '<no body>');
+                console.error('Retry endpoint returned non-OK status', response.status, errorText);
                 throw new Error(`HTTP error ${response.status}`);
             }
 
@@ -934,26 +1369,31 @@
                 // Store original job ID for tracking
                 feedbackState.originalJobId = feedbackState.currentJobId || state.currentJobId;
                 feedbackState.currentJobId = result.job_id;
-                feedbackState.currentModel = 'claude-opus-4-1';
+                feedbackState.alternateModelDisplayName = alternateModelLabel;
+                feedbackState.currentModel = alternateModelLabel;
 
-                // Hide feedback section and start polling for new results
                 hideFeedback();
                 hideResults();
-                hideError();
+                showProgress(progressMessage);
 
                 // Update state to new job
                 state.currentJobId = result.job_id;
 
-                // Start polling
-                showMessage('Query resubmitted with more powerful model...', 'info');
-                startPolling();
+                // Start polling the new job ID returned by the server
+                startPolling(result.job_id);
             } else {
+                console.error('Retry endpoint response did not indicate success', result);
                 throw new Error(result.error || 'Failed to retry query');
             }
         } catch (error) {
             console.error('Failed to retry with alternate model:', error);
-            retryStatus.hidden = true;
-            negativeOptions.hidden = false;
+            setLoading(false);
+            if (retryStatus) {
+                retryStatus.hidden = true;
+            }
+            if (negativeOptions) {
+                negativeOptions.hidden = false;
+            }
             showMessage('Failed to retry query. Please try again.', 'error');
         }
     };
@@ -967,7 +1407,7 @@
                 jobId: feedbackState.currentJobId || state.currentJobId,
                 query: feedbackState.currentQuery,
                 modelUsed: feedbackState.currentModel || 'claude-sonnet-4',
-                sentiment: 'negative',
+                sentiment: 'Negative',
                 comment: comment || null,
                 originalJobId: feedbackState.originalJobId,
                 resultCount: feedbackState.resultCount,
@@ -992,15 +1432,19 @@
     };
 
     async function saveFeedback(feedbackData) {
-        const response = await fetch('/api/query/feedback', {
+        const response = await fetch('./api/query/feedback', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
+            credentials: 'include',
+            cache: 'no-store',
             body: JSON.stringify(feedbackData)
         });
 
         if (!response.ok) {
+            const errorText = await response.text().catch(() => '<no body>');
+            console.error('Feedback API returned non-OK status', response.status, errorText);
             throw new Error(`HTTP error ${response.status}`);
         }
 
@@ -1018,6 +1462,7 @@
         feedbackState.currentModel = model || 'claude-sonnet-4';
         feedbackState.resultCount = resultCount || 0;
         feedbackState.responseTimeMs = responseTimeMs || 0;
+        feedbackState.alternateModelDisplayName = state.alternateModelDisplayName || feedbackState.alternateModelDisplayName;
 
         // Reset UI state
         negativeOptions.hidden = true;
@@ -1055,3 +1500,4 @@
     // ==================== END FEEDBACK SYSTEM ====================
 
 })();
+

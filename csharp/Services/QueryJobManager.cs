@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -37,7 +38,12 @@ public class QueryJobManager : IQueryJobManager
         _maxJobsPerUser = Math.Max(0, configuration.GetValue<int>("Jobs:MaxJobsPerUser", 0));
     }
 
-    public string CreateJob(string userName, string query, string? context = null, int? requestedResultLimit = null)
+    public async Task<string> CreateJobAsync(
+        string userName,
+        string query,
+        string? context = null,
+        int? requestedResultLimit = null,
+        CancellationToken cancellationToken = default)
     {
         if (_maxJobsPerUser > 0)
         {
@@ -63,7 +69,7 @@ public class QueryJobManager : IQueryJobManager
         };
 
         _store.StoreJob(job);
-        _queue.EnqueueAsync(jobId).AsTask().Wait();
+        await _queue.EnqueueAsync(jobId, cancellationToken);
 
         _logger.LogInformation("Job {JobId} created for user {UserName}", jobId, userName);
 
@@ -123,10 +129,70 @@ public class QueryJobManager : IQueryJobManager
             return;
         }
 
+        // Queue entries can outlive status transitions (for example, queued -> cancelled).
+        // Only queued jobs should transition to running execution.
+        if (job.Status == JobStatus.Cancelled)
+        {
+            _logger.LogInformation("Skipping execution for cancelled job {JobId}", jobId);
+            return;
+        }
+
+        if (job.Status != JobStatus.Queued)
+        {
+            _logger.LogDebug("Skipping job {JobId} because status is {Status}", jobId, job.Status);
+            return;
+        }
+
+        var jobCreatedAt = job.CreatedAt == default ? DateTime.UtcNow : job.CreatedAt;
+        var userDirectory = QueryLogHelper.GetUserDirectory(job.UserName);
+        var baseFileName = QueryLogHelper.BuildFileBaseName(job.UserName, jobCreatedAt);
+        var logPath = Path.Combine(userDirectory, $"{baseFileName}.log");
+        var outputPath = Path.Combine(userDirectory, $"{baseFileName}.csv");
+
+        string? rawModelResponse = null;
+        string? modelPlanJson = null;
+        string? executedPlanJson = null;
+
+        void WriteJobLog(
+            bool success,
+            int recordCount,
+            IEnumerable<string>? warnings,
+            string? errorMessage,
+            string? overrideRaw = null,
+            string? overrideModelPlan = null,
+            string? overrideExecutedPlan = null)
+        {
+            try
+            {
+                QueryLogHelper.WriteQueryLog(
+                    logPath,
+                    DateTime.UtcNow,
+                    job.JobId,
+                    job.UserName,
+                    job.Query,
+                    job.Context,
+                    success,
+                    recordCount,
+                    warnings,
+                    errorMessage,
+                    job.RequestedResultLimit,
+                    success ? outputPath : null,
+                    overrideRaw ?? rawModelResponse,
+                    overrideModelPlan ?? modelPlanJson,
+                    overrideExecutedPlan ?? executedPlanJson,
+                    job.ModelUsed);
+            }
+            catch (Exception logEx)
+            {
+                _logger.LogWarning(logEx, "Failed to write log for job {JobId}", jobId);
+            }
+        }
+
         try
         {
             _store.UpdateStatus(jobId, JobStatus.Running);
             job.CancellationSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var jobToken = job.CancellationSource.Token;
 
             // Progress: Plan generation
             _store.UpdateProgress(jobId, new PlanProgressUpdate
@@ -137,22 +203,50 @@ public class QueryJobManager : IQueryJobManager
                 Phase = "generating-plan"
             });
 
+            // Check for model override directive in context
+            string? modelOverride = null;
+            var contextToUse = job.Context;
+            if (!string.IsNullOrWhiteSpace(contextToUse))
+            {
+                var forceModelMatch = System.Text.RegularExpressions.Regex.Match(
+                    contextToUse,
+                    @"\[FORCE_MODEL:\s*([^\]]+)\]");
+                if (forceModelMatch.Success)
+                {
+                    modelOverride = forceModelMatch.Groups[1].Value.Trim();
+                    // Remove the directive from context so it doesn't confuse the model
+                    contextToUse = contextToUse.Replace(forceModelMatch.Value, "").Trim();
+                    _logger.LogInformation("Job {JobId} using model override: {Model}", jobId, modelOverride);
+                }
+            }
+
+            jobToken.ThrowIfCancellationRequested();
+
             // Generate plan with context and limit (same as sync endpoint)
             var planResponse = await claude.GenerateExecutionPlanAsync(
                 job.Query,
-                job.Context,
+                contextToUse,
                 job.RequestedResultLimit,
-                cancellationToken);
+                jobToken,
+                modelOverride);
+
+            // Track which model was actually used
+            job.ModelUsed = planResponse.ModelUsed;
+
+            rawModelResponse = planResponse.RawResponse;
+            modelPlanJson = QueryLogHelper.SerializePlan(planResponse.Plan);
 
             if (!planResponse.Success || planResponse.Plan == null)
             {
                 _store.UpdateStatus(jobId, JobStatus.Failed, planResponse.ErrorMessage ?? "Failed to generate plan");
                 _logger.LogWarning("Job {JobId} plan generation failed: {Error}", jobId, planResponse.ErrorMessage);
+                WriteJobLog(success: false, recordCount: 0, warnings: null, errorMessage: planResponse.ErrorMessage ?? "Failed to generate plan");
                 return;
             }
 
             job.Plan = planResponse.Plan;
             _planPreprocessor.PrepareForExecution(job.Plan, job.RequestedResultLimit);
+            executedPlanJson = QueryLogHelper.SerializePlan(job.Plan);
 
             // Progress: Validating
             _store.UpdateProgress(jobId, new PlanProgressUpdate
@@ -170,6 +264,7 @@ public class QueryJobManager : IQueryJobManager
                 var errorMessage = string.Join("; ", validation.SecurityErrors);
                 _store.UpdateStatus(jobId, JobStatus.Failed, errorMessage);
                 _logger.LogWarning("Job {JobId} validation failed: {Errors}", jobId, errorMessage);
+                WriteJobLog(success: false, recordCount: 0, warnings: null, errorMessage: errorMessage);
                 return;
             }
 
@@ -202,6 +297,7 @@ public class QueryJobManager : IQueryJobManager
                 var errorMessage = string.Join("; ", result.Errors);
                 _store.UpdateStatus(jobId, JobStatus.Failed, errorMessage);
                 _logger.LogWarning("Job {JobId} execution failed: {Errors}", jobId, errorMessage);
+                WriteJobLog(success: false, recordCount: 0, warnings: result.Warnings, errorMessage: errorMessage);
                 return;
             }
 
@@ -271,6 +367,8 @@ public class QueryJobManager : IQueryJobManager
                 result.Warnings,
                 resultsCacheKey);
 
+            WriteJobLog(success: true, recordCount: result.Data.Count, warnings: result.Warnings, errorMessage: null);
+
             _logger.LogInformation(
                 "Job {JobId} completed: {Rows} rows in {Duration}s",
                 jobId,
@@ -281,11 +379,13 @@ public class QueryJobManager : IQueryJobManager
         {
             _store.UpdateStatus(jobId, JobStatus.Cancelled);
             _logger.LogInformation("Job {JobId} cancelled", jobId);
+            WriteJobLog(success: false, recordCount: 0, warnings: null, errorMessage: "Job cancelled");
         }
         catch (Exception ex)
         {
             _store.UpdateStatus(jobId, JobStatus.Failed, ex.Message);
             _logger.LogError(ex, "Job {JobId} failed with exception", jobId);
+            WriteJobLog(success: false, recordCount: 0, warnings: null, errorMessage: ex.Message);
         }
     }
 
@@ -294,6 +394,13 @@ public class QueryJobManager : IQueryJobManager
         var job = _store.GetJob(jobId);
         if (job != null)
         {
+            if (job.Status == JobStatus.Queued)
+            {
+                _store.UpdateStatus(jobId, JobStatus.Cancelled, "Job cancelled before execution");
+                _logger.LogInformation("Queued job {JobId} cancelled before execution", jobId);
+                return;
+            }
+
             job.CancellationSource?.Cancel();
             _logger.LogInformation("Job {JobId} cancellation requested", jobId);
         }

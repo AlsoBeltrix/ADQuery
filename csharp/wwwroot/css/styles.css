@@ -622,3 +622,160 @@ footer li {
 }
 
 /* ==================== END FEEDBACK SYSTEM STYLES ==================== */
+
+/* ==================== CSV ENRICHMENT STYLES ==================== */
+
+.mode-toggle {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1.2rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.mode-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    padding: 0.6rem 1rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    transition: all 0.2s ease;
+    font-weight: 500;
+}
+
+.mode-option:has(input:checked) {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.mode-option:hover {
+    border-color: var(--accent);
+}
+
+.mode-option input[type="radio"] {
+    accent-color: var(--accent);
+    width: 1.1rem;
+    height: 1.1rem;
+}
+
+.query-mode-section[hidden] {
+    display: none;
+}
+
+.file-upload-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.file-upload-wrapper input[type="file"] {
+    padding: 0.8rem;
+    border: 2px dashed var(--border-color);
+    border-radius: 12px;
+    background: var(--card-bg);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: border-color 0.2s ease;
+}
+
+.file-upload-wrapper input[type="file"]:hover {
+    border-color: var(--accent);
+}
+
+.file-upload-wrapper input[type="file"]::file-selector-button {
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    border: none;
+    background: var(--accent);
+    color: var(--text-primary);
+    font-weight: 600;
+    cursor: pointer;
+    margin-right: 1rem;
+}
+
+.file-status {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.file-status.has-file {
+    color: var(--success);
+    font-weight: 500;
+}
+
+.input-hint {
+    display: block;
+    margin-top: 0.4rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+#matchColumn {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: var(--text-primary);
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+#matchColumn:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.attribute-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 0.6rem;
+    margin-top: 0.5rem;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-size: 0.95rem;
+}
+
+.checkbox-label:hover {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.checkbox-label:has(input:checked) {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.checkbox-label input[type="checkbox"] {
+    accent-color: var(--accent);
+    width: 1rem;
+    height: 1rem;
+}
+
+.input-group + .input-group {
+    margin-top: 1.2rem;
+}
+
+@media (max-width: 640px) {
+    .mode-toggle {
+        flex-direction: column;
+    }
+
+    .attribute-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+/* ==================== END CSV ENRICHMENT STYLES ==================== */

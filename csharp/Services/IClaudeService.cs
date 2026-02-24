@@ -11,7 +11,15 @@ public interface IClaudeService
         string userQuery,
         string? context = null,
         int? requestedResultLimit = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? modelOverride = null);
+
+    Task<CsvEnrichmentPlanResponse> GenerateCsvEnrichmentPlanAsync(
+        string userQuery,
+        List<string> csvHeaders,
+        int rowCount,
+        CancellationToken cancellationToken = default,
+        Dictionary<string, string>? columnPatterns = null);
 
     Task<ClaudeHealthResult> CheckHealthAsync(CancellationToken cancellationToken = default);
 }
@@ -32,6 +40,11 @@ public class ClaudeResponse
     public TokenUsage TokenUsage { get; set; } = new();
 
     public long ResponseTimeMs { get; set; }
+
+    /// <summary>
+    /// The model ID that was actually used to generate this response.
+    /// </summary>
+    public string? ModelUsed { get; set; }
 }
 
 /// <summary>
@@ -60,4 +73,22 @@ public class TokenUsage
     public int OutputTokens { get; set; }
 
     public int TotalTokens => InputTokens + OutputTokens;
+}
+
+/// <summary>
+/// Response from Claude API containing a CSV enrichment plan.
+/// </summary>
+public class CsvEnrichmentPlanResponse
+{
+    public bool Success { get; set; }
+
+    public CsvEnrichmentPlan? Plan { get; set; }
+
+    public string RawResponse { get; set; } = string.Empty;
+
+    public string? ErrorMessage { get; set; }
+
+    public TokenUsage TokenUsage { get; set; } = new();
+
+    public long ResponseTimeMs { get; set; }
 }

@@ -3,6 +3,7 @@ using AdQuery.Orchestrator.Services;
 using ClosedXML.Excel;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Memory;
 using System.Collections;
 using System.Collections.Generic;
@@ -12,7 +13,6 @@ using System.Linq;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 
 namespace AdQuery.Orchestrator.Controllers;
 
@@ -24,9 +24,8 @@ namespace AdQuery.Orchestrator.Controllers;
 [Route("api/[controller]")]
 public class QueryController : ControllerBase
 {
-    private const string OutputRoot = @"E:\WWWOutput";
+    private const string DefaultAlternateModel = "@vertexai-global/anthropic.claude-opus-4-1@20250805";
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(30);
-    private static readonly Regex InvalidPathChars = new Regex(@"[^\w\.-]", RegexOptions.Compiled);
     private static readonly HashSet<string> SupportedFormats = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "csv",
@@ -42,6 +41,11 @@ public class QueryController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly IQueryJobManager _jobManager;
     private readonly IPlanPreprocessor _planPreprocessor;
+    private readonly ICsvEnrichmentService _csvEnrichmentService;
+    private readonly string _defaultModelId;
+    private readonly string _defaultModelDisplayName;
+    private readonly string _alternateModelId;
+    private readonly string _alternateModelDisplayName;
 
     public QueryController(
         ILogger<QueryController> logger,
@@ -50,7 +54,8 @@ public class QueryController : ControllerBase
         IMemoryCache cache,
         IConfiguration configuration,
         IQueryJobManager jobManager,
-        IPlanPreprocessor planPreprocessor)
+        IPlanPreprocessor planPreprocessor,
+        ICsvEnrichmentService csvEnrichmentService)
     {
         _logger = logger;
         _claudeService = claudeService;
@@ -59,6 +64,14 @@ public class QueryController : ControllerBase
         _configuration = configuration;
         _jobManager = jobManager;
         _planPreprocessor = planPreprocessor;
+        _csvEnrichmentService = csvEnrichmentService;
+
+        _defaultModelId = configuration.GetValue<string>("Claude:Model", "claude-3-sonnet-20240229")!;
+        _defaultModelDisplayName = DeriveModelDisplayName(_defaultModelId);
+
+        _alternateModelId = configuration.GetValue<string>("Claude:AlternateModel", DefaultAlternateModel)!;
+        var derivedAltDisplayName = DeriveModelDisplayName(_alternateModelId);
+        _alternateModelDisplayName = configuration.GetValue<string>("Claude:AlternateModelDisplayName", derivedAltDisplayName)!;
     }
 
     /// <summary>
@@ -77,13 +90,14 @@ public class QueryController : ControllerBase
         var samAccountName = GetSamAccountName(HttpContext.User);
         var maxResults = _configuration.GetValue<int>("QueryDefaults:MaxResults", 0);
         var requestedLimit = maxResults > 0 ? (int?)maxResults : null;
-        var userDirectory = GetUserDirectory(OutputRoot, samAccountName);
-        var baseFileName = BuildFileBaseName(samAccountName, timestampUtc);
+        var userDirectory = QueryLogHelper.GetUserDirectory(samAccountName);
+        var baseFileName = QueryLogHelper.BuildFileBaseName(samAccountName, timestampUtc);
         var logPath = Path.Combine(userDirectory, $"{baseFileName}.log");
         var outputPath = Path.Combine(userDirectory, $"{baseFileName}.csv");
         string? rawModelResponse = null;
         string? modelPlanJson = null;
         string? executedPlanJson = null;
+        string? modelUsed = null;
 
         _logger.LogInformation("Processing query request {RequestId}: {Query}", requestId, request.Query);
 
@@ -96,6 +110,7 @@ public class QueryController : ControllerBase
                 HttpContext.RequestAborted);
 
             rawModelResponse = claudeResponse.RawResponse;
+            modelUsed = claudeResponse.ModelUsed;
 
             if (!claudeResponse.Success || claudeResponse.Plan == null)
             {
@@ -103,7 +118,7 @@ public class QueryController : ControllerBase
                 _logger.LogWarning("Claude failed to generate directory plan for request {RequestId}: {Error}",
                     requestId, claudeResponse.ErrorMessage);
 
-                WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: false, recordCount: 0, warnings: null, errorMessage: errorMessage, resultLimit: requestedLimit, outputPath: null, rawModelResponse: rawModelResponse, modelPlanJson: modelPlanJson, executedPlanJson: executedPlanJson);
+                QueryLogHelper.WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: false, recordCount: 0, warnings: null, errorMessage: errorMessage, resultLimit: requestedLimit, outputPath: null, rawModelResponse: rawModelResponse, modelPlanJson: modelPlanJson, executedPlanJson: executedPlanJson, modelUsed: modelUsed);
 
                 return BadRequest(new QueryResponse
                 {
@@ -116,11 +131,11 @@ public class QueryController : ControllerBase
 
             var plan = claudeResponse.Plan;
 
-            modelPlanJson = SerializePlan(plan);
+            modelPlanJson = QueryLogHelper.SerializePlan(plan);
 
             _planPreprocessor.PrepareForExecution(plan, requestedLimit);
 
-            executedPlanJson = SerializePlan(plan);
+            executedPlanJson = QueryLogHelper.SerializePlan(plan);
 
             var executionResult = await _planExecutor.ExecutePlanAsync(plan, HttpContext.RequestAborted);
             var fullRows = executionResult.Data ?? new List<Dictionary<string, object?>>();
@@ -154,7 +169,7 @@ public class QueryController : ControllerBase
                 response.Error = string.Join("; ", executionResult.Errors);
                 response.Warnings = executionResult.Warnings;
 
-                WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: false, recordCount: fullRows.Count, warnings: executionResult.Warnings, errorMessage: response.Error, resultLimit: effectiveLimit, outputPath: null, rawModelResponse: rawModelResponse, modelPlanJson: modelPlanJson, executedPlanJson: executedPlanJson);
+                QueryLogHelper.WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: false, recordCount: fullRows.Count, warnings: executionResult.Warnings, errorMessage: response.Error, resultLimit: effectiveLimit, outputPath: null, rawModelResponse: rawModelResponse, modelPlanJson: modelPlanJson, executedPlanJson: executedPlanJson, modelUsed: modelUsed);
             }
             else
             {
@@ -178,7 +193,7 @@ public class QueryController : ControllerBase
                     timestampUtc,
                     effectiveLimit);
 
-                WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: true, recordCount: fullRows.Count, warnings: executionResult.Warnings, errorMessage: null, resultLimit: effectiveLimit, outputPath: outputPath, rawModelResponse: rawModelResponse, modelPlanJson: modelPlanJson, executedPlanJson: executedPlanJson);
+                QueryLogHelper.WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: true, recordCount: fullRows.Count, warnings: executionResult.Warnings, errorMessage: null, resultLimit: effectiveLimit, outputPath: outputPath, rawModelResponse: rawModelResponse, modelPlanJson: modelPlanJson, executedPlanJson: executedPlanJson, modelUsed: modelUsed);
             }
 
             _logger.LogInformation("Query request {RequestId} completed. Success: {Success}, Steps: {Steps}, Time: {Time}ms",
@@ -189,7 +204,7 @@ public class QueryController : ControllerBase
         catch (OperationCanceledException)
         {
             _logger.LogWarning("Query request {RequestId} was cancelled", requestId);
-            WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: false, recordCount: 0, warnings: null, errorMessage: "Request was cancelled or timed out", resultLimit: requestedLimit, outputPath: null, rawModelResponse: rawModelResponse, modelPlanJson: modelPlanJson, executedPlanJson: executedPlanJson);
+            QueryLogHelper.WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: false, recordCount: 0, warnings: null, errorMessage: "Request was cancelled or timed out", resultLimit: requestedLimit, outputPath: null, rawModelResponse: rawModelResponse, modelPlanJson: modelPlanJson, executedPlanJson: executedPlanJson, modelUsed: modelUsed);
             return StatusCode(408, new QueryResponse
             {
                 Success = false,
@@ -200,7 +215,7 @@ public class QueryController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error processing query request {RequestId}", requestId);
-            WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: false, recordCount: 0, warnings: null, errorMessage: ex.Message, resultLimit: requestedLimit, outputPath: null, rawModelResponse: rawModelResponse, modelPlanJson: modelPlanJson, executedPlanJson: executedPlanJson);
+            QueryLogHelper.WriteQueryLog(logPath, timestampUtc, requestId, samAccountName, request.Query, request.Context, success: false, recordCount: 0, warnings: null, errorMessage: ex.Message, resultLimit: requestedLimit, outputPath: null, rawModelResponse: rawModelResponse, modelPlanJson: modelPlanJson, executedPlanJson: executedPlanJson, modelUsed: modelUsed);
             return StatusCode(500, new QueryResponse
             {
                 Success = false,
@@ -287,7 +302,7 @@ public class QueryController : ControllerBase
         var metadata = GetFormatMetadata(normalizedFormat);
         var baseFileName = !string.IsNullOrWhiteSpace(cached.BaseFileName)
             ? cached.BaseFileName
-            : BuildFileBaseName(cached.SamAccountName, cached.TimestampUtc);
+            : QueryLogHelper.BuildFileBaseName(cached.SamAccountName, cached.TimestampUtc);
         var fileName = $"{baseFileName}.{metadata.Extension}";
 
         byte[] fileContent;
@@ -304,7 +319,7 @@ public class QueryController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(cached.LogPath))
         {
-            AppendDownloadEvent(cached.LogPath, normalizedFormat);
+            QueryLogHelper.AppendDownloadEvent(cached.LogPath, normalizedFormat);
         }
 
         return File(fileContent, metadata.ContentType, fileName);
@@ -357,7 +372,11 @@ public class QueryController : ControllerBase
         return Ok(new
         {
             previewRowCount = _configuration.GetValue<int>("QueryDefaults:PreviewRowCount", 10),
-            summaryRowCount = _configuration.GetValue<int>("QueryDefaults:SummaryRowCount", 20)
+            summaryRowCount = _configuration.GetValue<int>("QueryDefaults:SummaryRowCount", 20),
+            defaultModelId = _defaultModelId,
+            defaultModelDisplayName = _defaultModelDisplayName,
+            alternateModelId = _alternateModelId,
+            alternateModelDisplayName = _alternateModelDisplayName
         });
     }
 
@@ -467,6 +486,7 @@ public class QueryController : ControllerBase
         {
             builder.AppendLine($"# Query: {EscapeCsv(metadata.Query)}");
             builder.AppendLine($"# User: {metadata.User}");
+            builder.AppendLine($"# Model: {metadata.Model ?? "unknown"}");
             builder.AppendLine($"# Timestamp: {metadata.Timestamp:yyyy-MM-dd HH:mm:ss} UTC");
             builder.AppendLine($"# Records: {metadata.RecordCount:N0}");
             builder.AppendLine("#");
@@ -578,6 +598,7 @@ public class QueryController : ControllerBase
                 builder.AppendLine("<div class=\"metadata\">");
                 builder.AppendLine($"<div class=\"metadata-row\"><span class=\"label\">Query:</span> {System.Net.WebUtility.HtmlEncode(metadata.Query)}</div>");
                 builder.AppendLine($"<div class=\"metadata-row\"><span class=\"label\">User:</span> {System.Net.WebUtility.HtmlEncode(metadata.User)}</div>");
+                builder.AppendLine($"<div class=\"metadata-row\"><span class=\"label\">Model:</span> {System.Net.WebUtility.HtmlEncode(metadata.Model ?? "unknown")}</div>");
                 builder.AppendLine($"<div class=\"metadata-row\"><span class=\"label\">Generated:</span> {metadata.Timestamp:yyyy-MM-dd HH:mm:ss} UTC</div>");
                 builder.AppendLine($"<div class=\"metadata-row\"><span class=\"label\">Total Records:</span> {metadata.RecordCount:N0}</div>");
                 builder.AppendLine("</div>");
@@ -680,6 +701,7 @@ public class QueryController : ControllerBase
             builder.AppendLine();
             builder.AppendLine($"Query:     {metadata.Query}");
             builder.AppendLine($"User:      {metadata.User}");
+            builder.AppendLine($"Model:     {metadata.Model ?? "unknown"}");
             builder.AppendLine($"Generated: {metadata.Timestamp:yyyy-MM-dd HH:mm:ss} UTC");
             builder.AppendLine($"Records:   {metadata.RecordCount:N0}");
             builder.AppendLine();
@@ -771,6 +793,11 @@ public class QueryController : ControllerBase
             infoSheet.Cell(row, 1).Value = "User:";
             infoSheet.Cell(row, 1).Style.Font.Bold = true;
             infoSheet.Cell(row, 2).Value = metadata.User;
+            row++;
+
+            infoSheet.Cell(row, 1).Value = "Model:";
+            infoSheet.Cell(row, 1).Style.Font.Bold = true;
+            infoSheet.Cell(row, 2).Value = metadata.Model ?? "unknown";
             row++;
 
             infoSheet.Cell(row, 1).Value = "Generated:";
@@ -916,16 +943,6 @@ public class QueryController : ControllerBase
         return input;
     }
 
-    private static string EscapeForLog(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return string.Empty;
-        }
-
-        return value.Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
-    }
-
     private static string GetSamAccountName(ClaimsPrincipal? user)
     {
         var raw = user?.Identity?.Name;
@@ -943,149 +960,11 @@ public class QueryController : ControllerBase
         return raw;
     }
 
-    private static string GetUserDirectory(string root, string? samAccountName)
-    {
-        var accountSegment = SanitizePathSegment(string.IsNullOrWhiteSpace(samAccountName) ? "unknown" : samAccountName!);
-        var directory = Path.Combine(root, accountSegment);
-        Directory.CreateDirectory(directory);
-        return directory;
-    }
-
-    private static string BuildFileBaseName(string? samAccountName, DateTime timestampUtc)
-    {
-        var accountSegment = SanitizePathSegment(string.IsNullOrWhiteSpace(samAccountName) ? "unknown" : samAccountName).ToUpperInvariant();
-        return $"adquery_{accountSegment}_{timestampUtc:yyyyMMdd_HHmmssfff}";
-    }
-
-
-    private static string? SerializePlan(DirectoryQueryPlan? plan)
-    {
-        if (plan is null)
-        {
-            return null;
-        }
-
-        try
-        {
-            var options = new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
-            };
-            return JsonSerializer.Serialize(plan, options);
-        }
-        catch (Exception ex)
-        {
-            return $"<serialization_error: {ex.Message}>";
-        }
-    }
-
-    private static void AppendMultilineSection(StringBuilder builder, string heading, string? content)
-    {
-        if (string.IsNullOrWhiteSpace(content))
-        {
-            return;
-        }
-
-        builder.AppendLine($"{heading}:");
-
-        var lines = content.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None);
-        foreach (var line in lines)
-        {
-            builder.Append("  ");
-            builder.AppendLine(line);
-        }
-    }
-
-    private static void WriteQueryLog(
-        string logPath,
-        DateTime timestampUtc,
-        string requestId,
-        string? samAccountName,
-        string query,
-        string? context,
-        bool success,
-        int recordCount,
-        IEnumerable<string>? warnings,
-        string? errorMessage,
-        int? resultLimit,
-        string? outputPath,
-        string? rawModelResponse = null,
-        string? modelPlanJson = null,
-        string? executedPlanJson = null)
-    {
-        var builder = new StringBuilder();
-        builder.AppendLine($"TimestampUtc: {timestampUtc:o}");
-        builder.AppendLine($"RequestId: {requestId}");
-        builder.AppendLine($"User: {samAccountName ?? "unknown"}");
-        builder.AppendLine($"Success: {success}");
-        builder.AppendLine($"Records: {recordCount}");
-
-        if (resultLimit.HasValue && resultLimit.Value > 0)
-        {
-            builder.AppendLine($"ResultLimit: {resultLimit.Value}");
-        }
-
-        if (!string.IsNullOrWhiteSpace(outputPath))
-        {
-            builder.AppendLine($"OutputFile: {outputPath}");
-        }
-
-        if (!string.IsNullOrWhiteSpace(query))
-        {
-            builder.AppendLine($"Query: {EscapeForLog(query)}");
-        }
-
-        if (!string.IsNullOrWhiteSpace(context))
-        {
-            builder.AppendLine($"Context: {EscapeForLog(context)}");
-        }
-
-        if (warnings != null && warnings.Any())
-        {
-            builder.AppendLine($"Warnings: {EscapeForLog(string.Join(" | ", warnings))}");
-        }
-
-        if (!string.IsNullOrWhiteSpace(errorMessage))
-        {
-            builder.AppendLine($"Error: {EscapeForLog(errorMessage)}");
-        }
-
-        AppendMultilineSection(builder, "ModelResponseRaw", rawModelResponse);
-        AppendMultilineSection(builder, "ModelPlanJson", modelPlanJson);
-        AppendMultilineSection(builder, "ExecutedPlanJson", executedPlanJson);
-
-        builder.AppendLine("DownloadHistory:");
-        System.IO.File.WriteAllText(logPath, builder.ToString());
-    }
-
-    private static void AppendDownloadEvent(string logPath, string format)
-    {
-        if (string.IsNullOrWhiteSpace(logPath))
-        {
-            return;
-        }
-
-        var entry = $"  - {DateTime.UtcNow:o} format={format.ToUpperInvariant()}{Environment.NewLine}";
-        System.IO.File.AppendAllText(logPath, entry);
-    }
-
-    private static string SanitizePathSegment(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return "unknown";
-        }
-
-        var sanitized = InvalidPathChars.Replace(value, "_");
-        return string.IsNullOrWhiteSpace(sanitized) ? "unknown" : sanitized;
-    }
-
     /// <summary>
     /// Creates an async query job (returns immediately with jobId for polling)
     /// </summary>
     [HttpPost("execute-async")]
-    public IActionResult ExecuteQueryAsync([FromBody] QueryRequest request)
+    public async Task<IActionResult> ExecuteQueryAsync([FromBody] QueryRequest request)
     {
         if (!ModelState.IsValid)
         {
@@ -1099,7 +978,12 @@ public class QueryController : ControllerBase
 
         try
         {
-            var jobId = _jobManager.CreateJob(userName, request.Query, context, requestedLimit);
+            var jobId = await _jobManager.CreateJobAsync(
+                userName,
+                request.Query,
+                context,
+                requestedLimit,
+                HttpContext.RequestAborted);
 
             _logger.LogInformation("Async query job {JobId} created for user {UserName}", jobId, userName);
 
@@ -1139,9 +1023,14 @@ public class QueryController : ControllerBase
         {
             jobId = job.JobId,
             status = job.Status.ToString().ToLower(),
+            query = job.Query,
+            modelUsed = job.ModelUsed,
             createdAt = job.CreatedAt,
             startedAt = job.StartedAt,
             completedAt = job.CompletedAt,
+            responseTimeMs = job.CompletedAt.HasValue && job.StartedAt.HasValue
+                ? (long)(job.CompletedAt.Value - job.StartedAt.Value).TotalMilliseconds
+                : 0,
             progress = job.Status == JobStatus.Running || job.Status == JobStatus.Queued ? new
             {
                 nodesProcessed = job.NodesProcessed,
@@ -1277,8 +1166,8 @@ public class QueryController : ControllerBase
         var headers = DetermineHeaders(result.Data);
         var metadata = GetFormatMetadata(normalizedFormat);
         var timestampUtc = DateTime.UtcNow;
-        var userDirectory = GetUserDirectory(OutputRoot, userName);
-        var baseFileName = $"adquery_{userName.ToUpperInvariant()}_{timestampUtc:yyyyMMdd_HHmmssfff}";
+        var userDirectory = QueryLogHelper.GetUserDirectory(userName);
+        var baseFileName = QueryLogHelper.BuildFileBaseName(userName, timestampUtc);
         var fileName = $"{baseFileName}.{metadata.Extension}";
         var outputPath = Path.Combine(userDirectory, fileName);
 
@@ -1287,7 +1176,8 @@ public class QueryController : ControllerBase
             Query = job.Query,
             User = userName,
             Timestamp = timestampUtc,
-            RecordCount = result.Data.Count
+            RecordCount = result.Data.Count,
+            Model = job.ModelUsed
         };
 
         var fileContent = GenerateFileContent(result.Data, headers, normalizedFormat, job.Aggregation, result.Warnings, queryMetadata);
@@ -1312,7 +1202,7 @@ public class QueryController : ControllerBase
             System.IO.File.WriteAllText(logPath, logBuilder.ToString());
         }
 
-        AppendDownloadEvent(logPath, normalizedFormat);
+        QueryLogHelper.AppendDownloadEvent(logPath, normalizedFormat);
 
         return File(fileContent, metadata.ContentType, fileName);
     }
@@ -1367,19 +1257,30 @@ public class QueryController : ControllerBase
             return BadRequest(ModelState);
         }
 
+        var userName = GetSamAccountName(HttpContext.User);
+
         // Get original job
         var originalJob = _jobManager.GetJob(request.OriginalJobId);
         if (originalJob == null)
         {
+            _logger.LogWarning(
+                "Retry-with-alternate-model requested for missing job {OriginalJobId} by {User}",
+                request.OriginalJobId,
+                userName);
+
             return NotFound(new { error = "Original job not found" });
         }
-
-        var userName = GetSamAccountName(HttpContext.User);
 
         // Verify ownership
         if (!originalJob.UserName.Equals(userName, StringComparison.OrdinalIgnoreCase))
         {
-            return Forbid();
+            _logger.LogWarning(
+                "Retry-with-alternate-model denied for job {OriginalJobId}. Owner {Owner}, requester {User}",
+                request.OriginalJobId,
+                originalJob.UserName,
+                userName);
+
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "You can only retry your own queries" });
         }
 
         // Create new job with Opus model
@@ -1398,7 +1299,16 @@ public class QueryController : ControllerBase
         try
         {
             // Save job and queue with Opus override
-            await _jobManager.EnqueueJobAsync(job, forceModel: "@vertexai-global/anthropic.claude-opus-4-1@20250805");
+            var alternateModelToUse = string.IsNullOrWhiteSpace(_alternateModelId) ? null : _alternateModelId;
+            if (string.IsNullOrWhiteSpace(alternateModelToUse))
+            {
+                _logger.LogWarning(
+                    "Retry-with-alternate-model fallback to default because no alternate model configured. Job {OriginalJobId}",
+                    request.OriginalJobId);
+                alternateModelToUse = DefaultAlternateModel;
+            }
+
+            await _jobManager.EnqueueJobAsync(job, forceModel: alternateModelToUse);
 
             _logger.LogInformation(
                 "User {User} requested Opus retry for job {OriginalJobId}, created new job {NewJobId}",
@@ -1411,7 +1321,7 @@ public class QueryController : ControllerBase
             {
                 success = true,
                 job_id = newJobId,
-                message = "Query resubmitted with alternate model"
+                message = $"Query resubmitted with alternate model ({_alternateModelDisplayName})"
             });
         }
         catch (Exception ex)
@@ -1419,6 +1329,370 @@ public class QueryController : ControllerBase
             _logger.LogError(ex, "Failed to retry query with Opus for job {JobId}", request.OriginalJobId);
             return StatusCode(500, new { error = "Failed to retry query" });
         }
+    }
+
+    /// <summary>
+    /// Processes CSV data with natural language query using LLM-generated enrichment plan.
+    /// The LLM acts as "operator" - it decides what to do (match column, attributes to fetch, filters).
+    /// The backend does all the actual work (iterating CSV rows, AD lookups, merging results).
+    /// </summary>
+    [HttpPost("csv-enrich")]
+    public async Task<ActionResult<object>> CsvEnrich([FromBody] CsvEnrichmentRequest request)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        if (request.CsvHeaders == null || !request.CsvHeaders.Any())
+        {
+            return BadRequest(new { error = "No CSV headers provided" });
+        }
+
+        if (request.CsvData == null || !request.CsvData.Any())
+        {
+            return BadRequest(new { error = "No CSV data provided" });
+        }
+
+        var userName = GetSamAccountName(HttpContext.User);
+        var timestampUtc = DateTime.UtcNow;
+        var userDirectory = QueryLogHelper.GetUserDirectory(userName);
+        var baseFileName = QueryLogHelper.BuildFileBaseName(userName, timestampUtc);
+        var logPath = Path.Combine(userDirectory, $"{baseFileName}_csv.log");
+        var outputPath = Path.Combine(userDirectory, $"{baseFileName}_csv.csv");
+        string? rawModelResponse = null;
+        string? modelPlanJson = null;
+
+        _logger.LogInformation("CSV enrichment request from {User}: '{Query}' with {RowCount} rows, columns: {Columns}",
+            userName, request.Query, request.CsvData.Count, string.Join(", ", request.CsvHeaders));
+
+        try
+        {
+            // Detect data patterns for each column (CUI-safe: describes format, not actual values)
+            var columnPatterns = DetectColumnPatterns(request.CsvHeaders, request.CsvData);
+
+            // Step 1: Call LLM to generate a CsvEnrichmentPlan (simple instruction set)
+            // LLM is the "operator" - decides WHAT to do (which column, which AD attribute, what to retrieve)
+            var planResponse = await _claudeService.GenerateCsvEnrichmentPlanAsync(
+                request.Query,
+                request.CsvHeaders,
+                request.CsvData.Count,
+                HttpContext.RequestAborted,
+                columnPatterns);
+
+            rawModelResponse = planResponse.RawResponse;
+
+            if (!planResponse.Success || planResponse.Plan == null)
+            {
+                var errorMessage = $"Failed to generate enrichment plan: {planResponse.ErrorMessage}";
+                _logger.LogWarning("Claude failed to generate CSV enrichment plan for {User}: {Error}",
+                    userName, planResponse.ErrorMessage);
+
+                WriteCsvLog(logPath, timestampUtc, userName, request.Query, errorMessage, rawModelResponse, null);
+                return BadRequest(new { error = errorMessage });
+            }
+
+            var plan = planResponse.Plan;
+            modelPlanJson = JsonSerializer.Serialize(plan, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+                WriteIndented = true
+            });
+
+            _logger.LogInformation("Generated CSV enrichment plan: match '{MatchColumn}' on AD '{MatchAttribute}', retrieve: {Attributes}",
+                plan.MatchColumn, plan.MatchAttribute, string.Join(", ", plan.RetrieveAttributes));
+
+            // Step 2: Execute the plan - backend does all the work
+            // Iterates through CSV rows, does per-user AD lookups, merges results
+            var enrichmentResult = await _csvEnrichmentService.ExecuteAsync(
+                plan,
+                request.CsvHeaders,
+                request.CsvData,
+                HttpContext.RequestAborted);
+
+            var requestId = Guid.NewGuid().ToString();
+            var previewRowCount = _configuration.GetValue<int>("QueryDefaults:PreviewRowCount", 10);
+            var previewRows = enrichmentResult.Data.Take(previewRowCount).ToList();
+
+            // Save results to file
+            var headers = DetermineHeaders(enrichmentResult.Data);
+            var csvContent = GenerateFileContent(enrichmentResult.Data, headers, "csv");
+            System.IO.File.WriteAllBytes(outputPath, csvContent);
+
+            // Cache for download
+            CacheQueryResult(
+                requestId,
+                enrichmentResult.Data,
+                userName,
+                request.Query,
+                $"CSV enrichment: {plan.Description}",
+                logPath,
+                outputPath,
+                timestampUtc,
+                null);
+
+            // Log the operation
+            WriteCsvLog(logPath, timestampUtc, userName, request.Query, null, rawModelResponse, modelPlanJson,
+                enrichmentResult.TotalRows, enrichmentResult.MatchedRows, enrichmentResult.FilteredRows,
+                enrichmentResult.Warnings, outputPath);
+
+            _logger.LogInformation("CSV enrichment completed for {User}: {Total} rows, {Matched} matched, {Output} in output",
+                userName, enrichmentResult.TotalRows, enrichmentResult.MatchedRows, enrichmentResult.Data.Count);
+
+            return Ok(new
+            {
+                success = enrichmentResult.Success,
+                jobId = requestId,
+                data = previewRows,
+                recordCount = enrichmentResult.Data.Count,
+                totalRows = enrichmentResult.TotalRows,
+                matchedRows = enrichmentResult.MatchedRows,
+                filteredRows = enrichmentResult.FilteredRows,
+                plan = new
+                {
+                    matchColumn = plan.MatchColumn,
+                    matchAttribute = plan.MatchAttribute,
+                    retrieveAttributes = plan.RetrieveAttributes,
+                    outputMode = plan.OutputMode,
+                    description = plan.Description
+                },
+                warnings = enrichmentResult.Warnings.Any() ? enrichmentResult.Warnings : null,
+                errors = enrichmentResult.Errors.Any() ? enrichmentResult.Errors : null,
+                tokenUsage = planResponse.TokenUsage
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("CSV enrichment request was cancelled for {User}", userName);
+            return StatusCode(408, new { error = "Request was cancelled or timed out" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "CSV enrichment failed for user {User}", userName);
+            WriteCsvLog(logPath, timestampUtc, userName, request.Query, ex.Message, rawModelResponse, modelPlanJson);
+            return StatusCode(500, new { error = "CSV enrichment failed", message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Detects data patterns for each column WITHOUT exposing actual CUI values.
+    /// Returns format descriptions like "email/UPN format (*@domain)" not actual data.
+    /// </summary>
+    private static Dictionary<string, string> DetectColumnPatterns(List<string> headers, List<List<string>> data)
+    {
+        var patterns = new Dictionary<string, string>();
+        if (data.Count == 0) return patterns;
+
+        // Sample up to 100 rows for pattern detection
+        var sampleSize = Math.Min(100, data.Count);
+
+        for (int colIndex = 0; colIndex < headers.Count; colIndex++)
+        {
+            var header = headers[colIndex];
+            var sampleValues = new List<string>();
+
+            for (int rowIndex = 0; rowIndex < sampleSize; rowIndex++)
+            {
+                if (colIndex < data[rowIndex].Count)
+                {
+                    var val = data[rowIndex][colIndex];
+                    if (!string.IsNullOrWhiteSpace(val))
+                    {
+                        sampleValues.Add(val);
+                    }
+                }
+            }
+
+            if (sampleValues.Count == 0)
+            {
+                patterns[header] = "empty or null values";
+                continue;
+            }
+
+            // Detect pattern type (CUI-safe: describes format, not values)
+            var pattern = DetectValuePattern(sampleValues);
+            patterns[header] = pattern;
+        }
+
+        return patterns;
+    }
+
+    /// <summary>
+    /// Analyzes sample values to determine the data format pattern.
+    /// Returns a CUI-safe description of the format (no actual values exposed).
+    /// </summary>
+    private static string DetectValuePattern(List<string> values)
+    {
+        if (values.Count == 0) return "no data";
+
+        // Check for email/UPN pattern (contains @)
+        var emailCount = values.Count(v => v.Contains('@'));
+        if (emailCount > values.Count * 0.8)
+        {
+            // Check if they all share a common domain
+            var domains = values
+                .Where(v => v.Contains('@'))
+                .Select(v => v.Split('@').LastOrDefault()?.ToLowerInvariant() ?? "")
+                .Where(d => !string.IsNullOrEmpty(d))
+                .GroupBy(d => d)
+                .OrderByDescending(g => g.Count())
+                .FirstOrDefault();
+
+            if (domains != null && domains.Count() > values.Count * 0.5)
+            {
+                return $"email/UPN format (*@{domains.Key}) - use userPrincipalName or mail";
+            }
+            return "email/UPN format (*@domain) - use userPrincipalName or mail";
+        }
+
+        // Check for numeric pattern (employee IDs)
+        var numericCount = values.Count(v => v.All(c => char.IsDigit(c) || c == '-'));
+        if (numericCount > values.Count * 0.8)
+        {
+            var avgLength = values.Average(v => v.Length);
+            return $"numeric IDs (avg {avgLength:F0} digits) - use employeeID";
+        }
+
+        // Check for name format (contains comma - "Last, First")
+        var commaCount = values.Count(v => v.Contains(','));
+        if (commaCount > values.Count * 0.5)
+        {
+            return "name format (Last, First) - use displayName with 'equals' operator";
+        }
+
+        // Check for "First Last" name format (spaces, mostly letters, 2-4 words)
+        var namePatternCount = values.Count(v =>
+        {
+            var parts = v.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            return parts.Length >= 2 &&
+                   parts.Length <= 4 &&
+                   parts.All(p => p.All(c => char.IsLetter(c) || c == '-' || c == '\''));
+        });
+        if (namePatternCount > values.Count * 0.7)
+        {
+            return "name format (First Last) - use displayName with 'contains' operator (WARNING: may have duplicates)";
+        }
+
+        // Check for sAMAccountName pattern (short alphanumeric, no spaces, no @)
+        var shortAlphanumeric = values.Count(v =>
+            v.Length <= 20 &&
+            !v.Contains('@') &&
+            !v.Contains(' ') &&
+            !v.Contains(',') &&
+            v.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.'));
+
+        if (shortAlphanumeric > values.Count * 0.8)
+        {
+            var avgLength = values.Average(v => v.Length);
+            if (avgLength <= 8)
+            {
+                return $"short alphanumeric (avg {avgLength:F0} chars) - likely sAMAccountName";
+            }
+            return $"alphanumeric identifiers (avg {avgLength:F0} chars)";
+        }
+
+        // Check for DN pattern
+        var dnCount = values.Count(v => v.StartsWith("CN=", StringComparison.OrdinalIgnoreCase));
+        if (dnCount > values.Count * 0.5)
+        {
+            return "Distinguished Name format (CN=...) - use distinguishedName";
+        }
+
+        // Default: describe general characteristics
+        var avgLen = values.Average(v => v.Length);
+        var hasSpaces = values.Count(v => v.Contains(' ')) > values.Count * 0.3;
+
+        if (hasSpaces)
+        {
+            return $"text with spaces (avg {avgLen:F0} chars) - may be displayName or description";
+        }
+
+        return $"mixed format (avg {avgLen:F0} chars)";
+    }
+
+    private static void WriteCsvLog(
+        string logPath,
+        DateTime timestampUtc,
+        string userName,
+        string query,
+        string? errorMessage,
+        string? rawModelResponse,
+        string? planJson,
+        int totalRows = 0,
+        int matchedRows = 0,
+        int filteredRows = 0,
+        List<string>? warnings = null,
+        string? outputPath = null)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"TimestampUtc: {timestampUtc:o}");
+        sb.AppendLine($"User: {userName}");
+        sb.AppendLine($"Query: {query}");
+        sb.AppendLine($"Success: {string.IsNullOrEmpty(errorMessage)}");
+        if (!string.IsNullOrEmpty(errorMessage))
+        {
+            sb.AppendLine($"Error: {errorMessage}");
+        }
+        sb.AppendLine($"TotalRows: {totalRows}");
+        sb.AppendLine($"MatchedRows: {matchedRows}");
+        sb.AppendLine($"FilteredRows: {filteredRows}");
+        if (warnings != null && warnings.Any())
+        {
+            sb.AppendLine($"Warnings: {string.Join("; ", warnings)}");
+        }
+        if (!string.IsNullOrEmpty(outputPath))
+        {
+            sb.AppendLine($"OutputFile: {outputPath}");
+        }
+        if (!string.IsNullOrEmpty(planJson))
+        {
+            sb.AppendLine($"EnrichmentPlan: {planJson}");
+        }
+        if (!string.IsNullOrEmpty(rawModelResponse))
+        {
+            sb.AppendLine($"RawModelResponse: {rawModelResponse}");
+        }
+
+        try
+        {
+            var directory = Path.GetDirectoryName(logPath);
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+            System.IO.File.WriteAllText(logPath, sb.ToString());
+        }
+        catch
+        {
+            // Best effort logging
+        }
+    }
+
+    private static string DeriveModelDisplayName(string modelId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId))
+        {
+            return "alternate-model";
+        }
+
+        var trimmed = modelId.Trim().Trim('@');
+        var withoutVersion = trimmed;
+        var versionSeparator = trimmed.LastIndexOf('@');
+        if (versionSeparator > 0)
+        {
+            withoutVersion = trimmed.Substring(0, versionSeparator);
+        }
+
+        var lastSlash = withoutVersion.LastIndexOf('/');
+        var baseName = lastSlash >= 0 ? withoutVersion.Substring(lastSlash + 1) : withoutVersion;
+
+        const string anthropicPrefix = "anthropic.";
+        if (baseName.StartsWith(anthropicPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            baseName = baseName.Substring(anthropicPrefix.Length);
+        }
+
+        return string.IsNullOrWhiteSpace(baseName) ? "alternate-model" : baseName;
     }
 
     private object? BuildAggregationSummary(QueryJob job)
@@ -1626,6 +1900,32 @@ internal class QueryMetadata
     public string User { get; set; } = string.Empty;
     public DateTime Timestamp { get; set; }
     public int RecordCount { get; set; }
+    public string? Model { get; set; }
+}
+
+/// <summary>
+/// Request model for CSV enrichment
+/// </summary>
+public class CsvEnrichmentRequest
+{
+    /// <summary>
+    /// Natural language query describing what to do with the CSV users
+    /// </summary>
+    [Required]
+    [StringLength(2000, MinimumLength = 1)]
+    public string Query { get; set; } = string.Empty;
+
+    /// <summary>
+    /// CSV column headers
+    /// </summary>
+    [Required]
+    public List<string> CsvHeaders { get; set; } = new();
+
+    /// <summary>
+    /// CSV data rows (each row is a list of values)
+    /// </summary>
+    [Required]
+    public List<List<string>> CsvData { get; set; } = new();
 }
 
 

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -16,6 +17,7 @@ public class ClaudeService : IClaudeService
   private readonly HttpClient _httpClient;
   private readonly ILogger<ClaudeService> _logger;
   private readonly IConfiguration _configuration;
+  private readonly string? _promptTemplate;
 
   public ClaudeService(HttpClient httpClient, ILogger<ClaudeService> logger, IConfiguration configuration)
   {
@@ -49,13 +51,29 @@ public class ClaudeService : IClaudeService
       _httpClient.DefaultRequestHeaders.Add("x-api-key", apiKey);
       _httpClient.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
     }
+
+    // Load prompt template from file if it exists
+    var promptTemplatePath = _configuration["Claude:PromptTemplate"] ?? "Configuration/prompt_template.txt";
+    if (File.Exists(promptTemplatePath))
+    {
+      try
+      {
+        _promptTemplate = File.ReadAllText(promptTemplatePath);
+        _logger.LogInformation("Loaded prompt template from {Path}", promptTemplatePath);
+      }
+      catch (Exception ex)
+      {
+        _logger.LogWarning(ex, "Failed to load prompt template from {Path}, using built-in template", promptTemplatePath);
+      }
+    }
   }
 
   public async Task<ClaudeResponse> GenerateExecutionPlanAsync(
     string userQuery,
     string? context = null,
     int? requestedResultLimit = null,
-    CancellationToken cancellationToken = default)
+    CancellationToken cancellationToken = default,
+    string? modelOverride = null)
   {
     var response = new ClaudeResponse();
     var stopwatch = Stopwatch.StartNew();
@@ -70,14 +88,21 @@ public class ClaudeService : IClaudeService
         return response;
       }
 
-      _logger.LogInformation("Generating directory plan for query: {Query}", userQuery);
+      var effectiveModel = !string.IsNullOrWhiteSpace(modelOverride)
+        ? modelOverride
+        : _configuration["Claude:Model"] ?? "claude-3-sonnet-20240229";
+
+      _logger.LogInformation("Generating directory plan for query: {Query} using model {Model}", userQuery, effectiveModel);
 
       var prompt = BuildExecutionPlanPrompt(userQuery, context, requestedResultLimit);
 
+      var temperature = double.TryParse(_configuration["Claude:Temperature"], out var t) ? t : 0;
+
       var claudeRequest = new
       {
-        model = _configuration["Claude:Model"] ?? "claude-3-sonnet-20240229",
+        model = effectiveModel,
         max_tokens = int.Parse(_configuration["Claude:MaxTokens"] ?? "4000"),
+        temperature,
         system = BuildSystemGuidance(_configuration),
         messages = new[]
         {
@@ -152,6 +177,7 @@ public class ClaudeService : IClaudeService
       }
 
       response.Success = true;
+      response.ModelUsed = effectiveModel;
       response.TokenUsage = new TokenUsage
       {
         InputTokens = claudeResponse?.Usage?.InputTokens ?? 0,
@@ -206,8 +232,251 @@ public class ClaudeService : IClaudeService
     return result;
   }
 
+  public async Task<CsvEnrichmentPlanResponse> GenerateCsvEnrichmentPlanAsync(
+    string userQuery,
+    List<string> csvHeaders,
+    int rowCount,
+    CancellationToken cancellationToken = default,
+    Dictionary<string, string>? columnPatterns = null)
+  {
+    var response = new CsvEnrichmentPlanResponse();
+    var stopwatch = Stopwatch.StartNew();
+
+    try
+    {
+      if (string.IsNullOrWhiteSpace(_configuration["Claude:ApiKey"]))
+      {
+        response.Success = false;
+        response.ErrorMessage = "Claude API key is not configured.";
+        return response;
+      }
+
+      var effectiveModel = _configuration["Claude:Model"] ?? "claude-3-sonnet-20240229";
+      _logger.LogInformation("Generating CSV enrichment plan for query: {Query} using model {Model}", userQuery, effectiveModel);
+
+      var prompt = BuildCsvEnrichmentPrompt(userQuery, csvHeaders, rowCount, columnPatterns);
+
+      var temperature = double.TryParse(_configuration["Claude:Temperature"], out var t) ? t : 0;
+
+      var claudeRequest = new
+      {
+        model = effectiveModel,
+        max_tokens = int.Parse(_configuration["Claude:MaxTokens"] ?? "4000"),
+        temperature,
+        system = BuildCsvEnrichmentSystemGuidance(),
+        messages = new[]
+        {
+          new { role = "user", content = prompt }
+        }
+      };
+
+      var requestJson = JsonSerializer.Serialize(claudeRequest);
+      using var requestContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
+
+      var endpoint = _configuration["Claude:Endpoint"] ?? "/v1/messages";
+      var apiResponse = await _httpClient.PostAsync(endpoint, requestContent, cancellationToken);
+
+      if (!apiResponse.IsSuccessStatusCode)
+      {
+        var errorBody = await apiResponse.Content.ReadAsStringAsync();
+        response.Success = false;
+        response.ErrorMessage = $"Claude API error: {apiResponse.StatusCode} - {errorBody}";
+        _logger.LogError("Claude API request failed: {StatusCode} - {Error}", apiResponse.StatusCode, response.ErrorMessage);
+        return response;
+      }
+
+      var responseContent = await apiResponse.Content.ReadAsStringAsync(cancellationToken);
+      response.RawResponse = responseContent;
+
+      var claudeResponse = JsonSerializer.Deserialize<ClaudeApiResponse>(
+        responseContent,
+        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+      var assistantMessage = claudeResponse?.Content?
+        .FirstOrDefault(block => !string.IsNullOrWhiteSpace(block.Text));
+
+      if (assistantMessage?.Text is null)
+      {
+        response.Success = false;
+        response.ErrorMessage = "Invalid response format from Claude API";
+        return response;
+      }
+
+      var planJson = ExtractJsonFromResponse(assistantMessage.Text);
+      if (string.IsNullOrWhiteSpace(planJson))
+      {
+        response.Success = false;
+        response.ErrorMessage = "Claude response did not contain a JSON plan.";
+        return response;
+      }
+
+      var jsonOptions = new JsonSerializerOptions
+      {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        PropertyNameCaseInsensitive = true
+      };
+
+      response.Plan = JsonSerializer.Deserialize<CsvEnrichmentPlan>(planJson, jsonOptions);
+      if (response.Plan is null)
+      {
+        response.Success = false;
+        response.ErrorMessage = "Failed to parse CSV enrichment plan.";
+        return response;
+      }
+
+      response.Success = true;
+      response.TokenUsage = new TokenUsage
+      {
+        InputTokens = claudeResponse?.Usage?.InputTokens ?? 0,
+        OutputTokens = claudeResponse?.Usage?.OutputTokens ?? 0
+      };
+    }
+    catch (Exception ex)
+    {
+      response.Success = false;
+      response.ErrorMessage = "Error generating CSV enrichment plan.";
+      _logger.LogError(ex, "Error generating CSV enrichment plan for query: {Query}", userQuery);
+    }
+    finally
+    {
+      stopwatch.Stop();
+      response.ResponseTimeMs = stopwatch.ElapsedMilliseconds;
+    }
+
+    return response;
+  }
+
+  private static string BuildCsvEnrichmentPrompt(string userQuery, List<string> csvHeaders, int rowCount, Dictionary<string, string>? columnPatterns)
+  {
+    var sb = new StringBuilder();
+    sb.AppendLine("You are an expert Active Directory analyst helping with CSV data enrichment.");
+    sb.AppendLine();
+    sb.AppendLine("The user has uploaded a CSV file and wants to enrich it with Active Directory data.");
+    sb.AppendLine();
+    sb.AppendLine("CSV FILE INFO:");
+    sb.AppendLine($"- Row count: {rowCount}");
+    sb.AppendLine($"- Column headers: {string.Join(", ", csvHeaders)}");
+    sb.AppendLine();
+
+    // Add detected patterns (CUI-safe: describes format, not actual values)
+    if (columnPatterns != null && columnPatterns.Count > 0)
+    {
+      sb.AppendLine("DETECTED DATA PATTERNS (format analysis, no actual values):");
+      foreach (var kvp in columnPatterns)
+      {
+        sb.AppendLine($"- Column '{kvp.Key}': {kvp.Value}");
+      }
+      sb.AppendLine();
+      sb.AppendLine("CRITICAL: Use the detected patterns to choose the correct match_attribute:");
+      sb.AppendLine("- If pattern shows 'email/UPN format (*@domain)' → use 'userPrincipalName' or 'mail'");
+      sb.AppendLine("- If pattern shows 'short alphanumeric (8 chars or less)' → use 'sAMAccountName'");
+      sb.AppendLine("- If pattern shows 'name format (Last, First)' → use 'displayName'");
+      sb.AppendLine("- If pattern shows 'numeric IDs' → use 'employeeID'");
+      sb.AppendLine();
+    }
+    else
+    {
+      sb.AppendLine("IMPORTANT: No sample data is provided due to data sensitivity (CUI compliance).");
+      sb.AppendLine("You must infer the identifier type from column names only.");
+    }
+    sb.AppendLine();
+    sb.AppendLine("YOUR TASK:");
+    sb.AppendLine("Generate a JSON instruction plan that tells the backend how to:");
+    sb.AppendLine("1. Match CSV rows to AD users (which CSV column contains identifiers, which AD attribute to match)");
+    sb.AppendLine("2. What AD attributes to retrieve for each matched user");
+    sb.AppendLine("3. Optional: filter criteria to apply to results");
+    sb.AppendLine("4. Output mode: 'all' (include unmatched rows) or 'matched' (only matched rows)");
+    sb.AppendLine();
+    sb.AppendLine("COMMON IDENTIFIER PATTERNS:");
+    sb.AppendLine("- 'email', 'mail', 'e-mail', 'EmailAddress' → match on: userPrincipalName or mail");
+    sb.AppendLine("- 'username', 'user', 'samaccountname', 'login', 'userid' → match on: sAMAccountName");
+    sb.AppendLine("- 'upn', 'userprincipalname' → match on: userPrincipalName");
+    sb.AppendLine("- 'name', 'displayname', 'full name', 'fullname' → match on: displayName");
+    sb.AppendLine("- 'employeeid', 'employee id', 'empid', 'emp_id' → match on: employeeID");
+    sb.AppendLine();
+    sb.AppendLine("COMMON AD ATTRIBUTES TO RETRIEVE:");
+    sb.AppendLine("- User info: displayName, mail, department, title, manager, employeeType");
+    sb.AppendLine("- Account status: Enabled, AccountExpirationDate, LastLogonDate, LockedOut");
+    sb.AppendLine("- Group membership: memberOf (for group membership checks)");
+    sb.AppendLine("- Custom: extensionAttribute1-15, employeeID");
+    sb.AppendLine();
+    sb.AppendLine("JSON OUTPUT FORMAT:");
+    sb.AppendLine("```json");
+    sb.AppendLine("{");
+    sb.AppendLine("  \"match_column\": \"<CSV column name containing user identifiers>\",");
+    sb.AppendLine("  \"match_attribute\": \"<AD attribute to match: sAMAccountName|userPrincipalName|mail|displayName|employeeID>\",");
+    sb.AppendLine("  \"retrieve_attributes\": [\"<AD attributes to fetch>\"],");
+    sb.AppendLine("  \"filter\": {");
+    sb.AppendLine("    \"attribute\": \"<optional: AD attribute to filter on>\",");
+    sb.AppendLine("    \"operator\": \"<equals|not_equals|contains|not_contains|starts_with|ends_with>\",");
+    sb.AppendLine("    \"value\": \"<filter value>\"");
+    sb.AppendLine("  },");
+    sb.AppendLine("  \"output_mode\": \"all|matched\",");
+    sb.AppendLine("  \"description\": \"<human-readable description of what this plan does>\"");
+    sb.AppendLine("}");
+    sb.AppendLine("```");
+    sb.AppendLine();
+    sb.AppendLine("EXAMPLES:");
+    sb.AppendLine();
+    sb.AppendLine("Query: 'identify which users are contractors'");
+    sb.AppendLine("→ retrieve_attributes should include 'employeeType', filter on employeeType equals 'CWK'");
+    sb.AppendLine();
+    sb.AppendLine("Query: 'add department and manager info'");
+    sb.AppendLine("→ retrieve_attributes: ['department', 'manager', 'displayName'], no filter needed");
+    sb.AppendLine();
+    sb.AppendLine("Query: 'show which accounts are disabled'");
+    sb.AppendLine("→ retrieve_attributes should include 'Enabled', filter on Enabled equals 'false'");
+    sb.AppendLine();
+    sb.AppendLine("Query: 'add mailbox location and license'");
+    sb.AppendLine("→ retrieve_attributes: ['msExchRecipientTypeDetails', 'extensionAttribute11'] (license is in extensionAttribute11)");
+    sb.AppendLine();
+    sb.AppendLine("USER QUERY:");
+    sb.AppendLine(userQuery);
+    sb.AppendLine();
+    sb.AppendLine("Produce only the JSON plan. Do not include explanations.");
+
+    return sb.ToString();
+  }
+
+  private string BuildCsvEnrichmentSystemGuidance()
+  {
+    var sb = new StringBuilder();
+    sb.AppendLine("You are an expert Active Directory analyst. Your role is to interpret user requests about CSV data enrichment and output structured JSON instructions.");
+    sb.AppendLine();
+    sb.AppendLine("Key rules:");
+    sb.AppendLine("- Always output valid JSON matching the specified schema");
+    sb.AppendLine("- Use the DETECTED DATA PATTERNS to choose the correct match_attribute - this is critical!");
+    sb.AppendLine("- For contractor queries, use employeeType = 'CWK'");
+    sb.AppendLine("- For license queries, use extensionAttribute11");
+    sb.AppendLine("- Default to output_mode 'all' unless user specifically wants filtered results only");
+    sb.AppendLine("- Include enough attributes to answer the user's question fully");
+    sb.AppendLine();
+    sb.AppendLine("Match attribute reliability (prefer higher reliability):");
+    sb.AppendLine("- userPrincipalName, mail: HIGH reliability (unique identifiers)");
+    sb.AppendLine("- sAMAccountName: HIGH reliability (unique within domain)");
+    sb.AppendLine("- employeeID: HIGH reliability (unique per employee)");
+    sb.AppendLine("- displayName: MEDIUM reliability (may have duplicates, use exact match)");
+
+    // Add org-specific displayName format if configured
+    var displayFormat = _configuration["OrganizationADSchema:NamingConventions:ActiveUsers:DisplayName"];
+    if (!string.IsNullOrWhiteSpace(displayFormat))
+    {
+      sb.AppendLine();
+      sb.AppendLine($"Organization displayName format: {displayFormat}");
+      sb.AppendLine("When matching on displayName, expect values in this format.");
+    }
+
+    return sb.ToString();
+  }
+
   private string BuildExecutionPlanPrompt(string userQuery, string? context, int? requestedResultLimit)
   {
+    // Use external template if loaded, otherwise fall back to built-in
+    if (!string.IsNullOrWhiteSpace(_promptTemplate))
+    {
+      return BuildPromptFromTemplate(userQuery, context, requestedResultLimit);
+    }
+
     var promptBuilder = new StringBuilder();
     promptBuilder.AppendLine("Act as an expert Active Directory analyst.");
     promptBuilder.AppendLine("Generate a JSON plan that a C# service can execute without shell commands.");
@@ -367,6 +636,32 @@ public class ClaudeService : IClaudeService
     promptBuilder.AppendLine("Produce only the JSON plan. Do not include explanations.");
 
     return promptBuilder.ToString();
+  }
+
+  private string BuildPromptFromTemplate(string userQuery, string? context, int? requestedResultLimit)
+  {
+    var prompt = _promptTemplate!;
+
+    // Build result limit guidance
+    var resultLimitGuidance = "";
+    if (requestedResultLimit.HasValue && requestedResultLimit.Value > 0)
+    {
+      resultLimitGuidance = $"The user explicitly requested only {requestedResultLimit.Value} rows. Ensure the plan sets \"result_limit\": {requestedResultLimit.Value} and that the search step supplying those rows uses \"size_limit\": {requestedResultLimit.Value}.\n";
+    }
+
+    // Build context section
+    var contextSection = "";
+    if (!string.IsNullOrWhiteSpace(context))
+    {
+      contextSection = $"CONTEXT:\n{context}\n";
+    }
+
+    // Replace placeholders
+    prompt = prompt.Replace("{{RESULT_LIMIT_GUIDANCE}}", resultLimitGuidance);
+    prompt = prompt.Replace("{{CONTEXT}}", contextSection);
+    prompt = prompt.Replace("{{USER_QUERY}}", userQuery);
+
+    return prompt;
   }
 
   private static string BuildSystemGuidance(IConfiguration configuration)

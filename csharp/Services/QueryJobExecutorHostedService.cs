@@ -45,52 +45,52 @@ public class QueryJobExecutorHostedService : BackgroundService
                 var jobManager = scope.ServiceProvider.GetRequiredService<IQueryJobManager>();
                 var jobQueue = scope.ServiceProvider.GetRequiredService<IQueryJobQueue>();
 
-                // Check for queued jobs
-                var queuedJobs = jobManager.GetQueuedJobs();
+                // Process queue entries. We use the larger of store-queued count and channel depth
+                // so stale queue items (e.g., cancelled before execution) still get drained.
+                var queuedCount = jobManager.GetQueuedJobs().Count;
+                var queueDepth = jobQueue.Count;
+                var workItemsToProcess = Math.Max(queuedCount, queueDepth);
 
-                if (queuedJobs.Any())
+                for (var i = 0; i < workItemsToProcess; i++)
                 {
-                    foreach (var job in queuedJobs)
+                    if (stoppingToken.IsCancellationRequested) break;
+
+                    // Dequeue job ID
+                    var jobId = await jobQueue.DequeueAsync(stoppingToken);
+                    if (jobId == null) continue;
+
+                    // Acquire concurrency slot
+                    await _concurrencySemaphore.WaitAsync(stoppingToken);
+
+                    // Execute in background (don't await - fire and forget)
+                    _ = Task.Run(async () =>
                     {
-                        if (stoppingToken.IsCancellationRequested) break;
-
-                        // Dequeue job ID
-                        var jobId = await jobQueue.DequeueAsync(stoppingToken);
-                        if (jobId == null) continue;
-
-                        // Acquire concurrency slot
-                        await _concurrencySemaphore.WaitAsync(stoppingToken);
-
-                        // Execute in background (don't await - fire and forget)
-                        _ = Task.Run(async () =>
+                        try
                         {
-                            try
-                            {
-                                using var execScope = _serviceScopeFactory.CreateScope();
-                                var execJobManager = execScope.ServiceProvider.GetRequiredService<IQueryJobManager>();
-                                var claude = execScope.ServiceProvider.GetRequiredService<IClaudeService>();
-                                var validator = execScope.ServiceProvider.GetRequiredService<IPlanValidator>();
-                                var executor = execScope.ServiceProvider.GetRequiredService<IDirectoryPlanExecutor>();
-                                var cache = execScope.ServiceProvider.GetRequiredService<IMemoryCache>();
+                            using var execScope = _serviceScopeFactory.CreateScope();
+                            var execJobManager = execScope.ServiceProvider.GetRequiredService<IQueryJobManager>();
+                            var claude = execScope.ServiceProvider.GetRequiredService<IClaudeService>();
+                            var validator = execScope.ServiceProvider.GetRequiredService<IPlanValidator>();
+                            var executor = execScope.ServiceProvider.GetRequiredService<IDirectoryPlanExecutor>();
+                            var cache = execScope.ServiceProvider.GetRequiredService<IMemoryCache>();
 
-                                await execJobManager.ExecuteJobWithServicesAsync(
-                                    jobId,
-                                    claude,
-                                    validator,
-                                    executor,
-                                    cache,
-                                    stoppingToken);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError(ex, "Error executing job {JobId}", jobId);
-                            }
-                            finally
-                            {
-                                _concurrencySemaphore.Release();
-                            }
-                        }, stoppingToken);
-                    }
+                            await execJobManager.ExecuteJobWithServicesAsync(
+                                jobId,
+                                claude,
+                                validator,
+                                executor,
+                                cache,
+                                stoppingToken);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error executing job {JobId}", jobId);
+                        }
+                        finally
+                        {
+                            _concurrencySemaphore.Release();
+                        }
+                    }, stoppingToken);
                 }
 
                 // Cleanup old jobs based on retention setting
