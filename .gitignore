@@ -18,3 +18,4 @@ Thumbs.db
 .vscode/
 /lint-report.sarif/
 /.serena/
+docs/ArchitectureDesignReview-ADQuery*
