@@ -75,14 +75,24 @@ builder.Services.AddHealthChecks()
     .AddCheck<ClaudeHealthCheck>("claude")
     .AddCheck<OrchestratorHealthCheck>("directory_plan");
 
-// Configure CORS if needed
+var allowedCorsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins")
+    .GetChildren()
+    .Select(origin => origin.Value?.Trim())
+    .Where(origin => !string.IsNullOrWhiteSpace(origin))
+    .Distinct(StringComparer.OrdinalIgnoreCase)
+    .Select(origin => origin!)
+    .ToArray();
+
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
-        policy.AllowAnyOrigin()
-              .AllowAnyMethod()
-              .AllowAnyHeader();
+        if (allowedCorsOrigins.Length > 0)
+        {
+            policy.WithOrigins(allowedCorsOrigins)
+                  .AllowAnyMethod()
+                  .AllowAnyHeader();
+        }
     });
 });
 

@@ -87,7 +87,7 @@ This project delivers a pure C# pipeline for answering natural-language question
 
 ## Security Guardrails
 
-- **Operation allow-list**: only the three operations above are permitted.
+- **Operation allow-list**: only `search`, `expand_members`, `lookup`, and `expand_reports` are permitted.
 - **Attribute allow-list**: per object type (e.g., users can expose `displayName`, `manager`, `mail`, etc.).
 - **Filter limits**: maximum five predicates per step.
 - **Plan limits**: ten steps max, projection capped at 25 columns.
@@ -113,8 +113,7 @@ This project delivers a pure C# pipeline for answering natural-language question
 "Security": {
   "HmacSecretKey": "",
   "EnableHmacValidation": false,
-  "MaxPlanComplexity": 10,
-  "MaxExecutionTimeSeconds": 60
+  "MaxPlanComplexity": 10
 }
 ```
 

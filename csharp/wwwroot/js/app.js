@@ -459,7 +459,7 @@
 
     async function loadConfig() {
         try {
-            const response = await fetch('./api/query/config');
+            const response = await fetch('./api/query/config', { credentials: 'include' });
             if (response.ok) {
                 const config = await response.json();
                 if (config.summaryRowCount > 0) {

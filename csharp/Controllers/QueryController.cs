@@ -1,4 +1,5 @@
 using AdQuery.Orchestrator.Models;
+using AdQuery.Orchestrator.Security;
 using AdQuery.Orchestrator.Services;
 using ClosedXML.Excel;
 using Microsoft.AspNetCore.Authorization;
@@ -41,6 +42,7 @@ public class QueryController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly IQueryJobManager _jobManager;
     private readonly IPlanPreprocessor _planPreprocessor;
+    private readonly IPlanValidator _planValidator;
     private readonly ICsvEnrichmentService _csvEnrichmentService;
     private readonly string _defaultModelId;
     private readonly string _defaultModelDisplayName;
@@ -55,6 +57,7 @@ public class QueryController : ControllerBase
         IConfiguration configuration,
         IQueryJobManager jobManager,
         IPlanPreprocessor planPreprocessor,
+        IPlanValidator planValidator,
         ICsvEnrichmentService csvEnrichmentService)
     {
         _logger = logger;
@@ -64,6 +67,7 @@ public class QueryController : ControllerBase
         _configuration = configuration;
         _jobManager = jobManager;
         _planPreprocessor = planPreprocessor;
+        _planValidator = planValidator;
         _csvEnrichmentService = csvEnrichmentService;
 
         _defaultModelId = configuration.GetValue<string>("Claude:Model", "claude-3-sonnet-20240229")!;
@@ -229,7 +233,9 @@ public class QueryController : ControllerBase
     /// Validates an execution plan without executing it
     /// </summary>
     [HttpPost("validate")]
-    public async Task<ActionResult<ValidationResponse>> ValidatePlan([FromBody] DirectoryQueryPlan plan)
+    public async Task<ActionResult<ValidationResponse>> ValidatePlan(
+        [FromBody] DirectoryQueryPlan plan,
+        [FromHeader(Name = "X-Plan-Signature")] string? signature = null)
     {
         if (!ModelState.IsValid)
         {
@@ -241,6 +247,20 @@ public class QueryController : ControllerBase
 
             try
             {
+                if (_configuration.GetValue<bool>("Security:EnableHmacValidation"))
+                {
+                    if (string.IsNullOrWhiteSpace(signature) || !_planValidator.ValidateHmac(plan, signature))
+                    {
+                        return Unauthorized(new ValidationResponse
+                        {
+                            IsValid = false,
+                            Errors = new List<string> { "Plan signature validation failed." },
+                            Security = new PlanSecurityResult { HmacValid = false },
+                            RequestId = requestId
+                        });
+                    }
+                }
+
                 _planPreprocessor.ApplyCustomMappings(plan);
 
                 var validationResult = await _planExecutor.ValidatePlanAsync(plan);
@@ -366,7 +386,6 @@ public class QueryController : ControllerBase
     /// Gets client configuration settings
     /// </summary>
     [HttpGet("config")]
-    [AllowAnonymous]
     public IActionResult GetConfig()
     {
         return Ok(new

@@ -40,8 +40,9 @@ public class PlanValidator : IPlanValidator
     private readonly ILogger<PlanValidator> _logger;
     private readonly IConfiguration _configuration;
     private readonly Dictionary<DirectoryObjectType, HashSet<string>> _allowedAttributes;
+    private readonly int _maxStepsPerPlan;
 
-    private const int MaxStepsPerPlan = 10;
+    private const int DefaultMaxStepsPerPlan = 10;
     private const int MaxFiltersPerStep = 5;
     private const int MaxAttributesPerStep = 25;
     private const int MaxProjectionColumns = 25;
@@ -54,6 +55,7 @@ public class PlanValidator : IPlanValidator
         _logger = logger;
         _configuration = configuration;
         _allowedAttributes = LoadAllowedAttributes(configuration, environment, logger);
+        _maxStepsPerPlan = Math.Max(1, _configuration.GetValue<int>("Security:MaxPlanComplexity", DefaultMaxStepsPerPlan));
     }
 
     public Task<PlanSecurityResult> ValidateSecurityAsync(DirectoryQueryPlan plan)
@@ -197,7 +199,7 @@ public class PlanValidator : IPlanValidator
 
     public bool ValidateComplexity(DirectoryQueryPlan plan)
     {
-        if (plan.Steps.Count > MaxStepsPerPlan)
+        if (plan.Steps.Count > _maxStepsPerPlan)
         {
             _logger.LogWarning("Plan exceeds maximum step count: {Count}", plan.Steps.Count);
             return false;
