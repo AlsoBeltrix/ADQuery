@@ -24,7 +24,6 @@ The implementation lives under `csharp\`.
 | `csharp\Security\` | Directory plan validation |
 | `csharp\Configuration\` | Attribute allow-list files and prompt template |
 | `csharp\deploy.ps1` | IIS deployment script |
-| `docs\` | Architecture review and supporting project docs |
 | `tools\` | Feedback analysis tooling |
 
 ## Security Model
@@ -63,8 +62,6 @@ cd csharp
 
 The deployment script publishes the app, copies it to `D:\inetpub\adquery` by default, configures the IIS application, enables Windows Authentication, disables Anonymous Authentication, and performs local HTTP health checks.
 
-## Review Docs
+## Additional Documentation
 
-- Architecture review Markdown: `docs\ArchitectureDesignReview-ADQuery.md`
-- Architecture review Word document: `docs\ArchitectureDesignReview-ADQuery.docx`
 - Detailed implementation README: `csharp\README.md`

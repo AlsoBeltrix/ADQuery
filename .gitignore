@@ -18,4 +18,13 @@ Thumbs.db
 .vscode/
 /lint-report.sarif/
 /.serena/
-docs/ArchitectureDesignReview-ADQuery*
+.claude/
+/_not_for_github/
+/docs/
+/csharp/docs/
+/codex_resume.ps1
+/session-summary.txt
+/rollout-*.jsonl
+/patch.diff
+/SECURITY_RESTRICTIONS.md
+/csharp/IMPLEMENTATION_SUMMARY.md
