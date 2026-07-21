@@ -1,6 +1,6 @@
 # P15 — Safe, Checked, and Recoverable IIS Deployment
 
-**Status:** Draft — implementation is unauthorized. Owner decisions and prerequisite contracts are unresolved; the three-round advisory review is complete. Round 3 accepted its reviewed snapshot; a later terminology/ownership alignment to committed P16 was applied without a fourth round and was not re-reviewed.
+**Status:** Draft — implementation is unauthorized. Owner decisions and prerequisite contracts are unresolved; the three-round advisory review is complete. Round 3 accepted its reviewed snapshot; later P16 terminology and P14/P20 rollback-admission repairs were applied without a fourth round and were not re-reviewed.
 
 ## Finding
 
@@ -62,6 +62,7 @@ Each finding below predicts an observable failure and maps to exactly one implem
 | P15-F7 | HIGH | Warning-only pool/probe failures at `deploy.ps1:127-169` allow a dead, unauthorized, redirected, dependency-broken, or old process to be announced as deployed. |
 | P15-F8 | MEDIUM | No package identity, hash manifest, deployment lock, or duplicate-release rule allows concurrent or tampered/mixed artifacts to become live. |
 | P15-F9 | MEDIUM | The documented `-Force` workflow directs operators to the unsafe entry point and makes the risky path the normal path. |
+| P15-F10 | HIGH | After the new pool starts, P14 is traffic-ready and may accept jobs during P20's multi-observation probe window, but the recorded rollback stops that pool before a new-release drain. A late probe failure can therefore interrupt accepted work. |
 
 ## Desired Outcome
 
@@ -74,7 +75,7 @@ Each finding below predicts an observable failure and maps to exactly one implem
 - A durable phase journal and exact IIS snapshot exist before cutover.
 - Cutover changes only the target application's physical path and exact P16 environment-reference projection, preserves its app-pool assignment and authentication policy, and starts only the target pool.
 - P20 liveness, readiness, and release-identity probes are hard gates. Success is published only after all required probes pass.
-- Any failure after mutation automatically restores the exact prior physical path, P16 promotion ID, and pool state. A rollback failure leaves an explicit recovery-required journal and a nonzero result.
+- Any failure after mutation attempts to restore the exact prior physical path, P16 promotion ID, and pool state. Once the new pool could have admitted work, rollback first drains that exact release; inability to prove quiescence leaves `RecoveryRequired` without stopping or switching it automatically.
 - Release binaries and checked-in defaults are read/execute-only to the application identity. P16 supplies one versioned production-promotion projection for typed configuration, secret-source references, the portable data root, the sole Serilog pipeline, and required ACLs; P15 applies and verifies that projection without creating another configuration model.
 - Every phase, failure, rollback, and committed release has a bounded secret-free operator record. No output path, response body, configuration value, credential, or raw exception is emitted to user-visible telemetry.
 
@@ -90,6 +91,7 @@ Each finding below predicts an observable failure and maps to exactly one implem
 - Per-application deployment locking.
 - Existing-IIS preflight and a target-only IIS adapter.
 - P14 drain handoff and bounded pool-state waits.
+- A second exact-release P14 drain before any rollback stop after the new pool could have admitted work.
 - P16 production-promotion, immutable-release, IIS environment-injection, and least-privilege filesystem contracts.
 - Journaled physical-path/P16-promotion cutover, rollback, and interrupted-run recovery.
 - P20 liveness/readiness/release-identity gates.
@@ -134,7 +136,7 @@ P14 owns:
 - terminal job outcomes across host stop;
 - host-shutdown coordination.
 
-P15 invokes one authenticated, bounded operator drain contract and requires a response that identifies the currently serving release and proves `accepting_work = false`, `queued = 0`, and `running = 0`. P15 does not inspect or mutate job memory directly. If P14 cannot prove quiescence before the approved deadline, deployment stops before IIS mutation and returns the old release to normal admission according to P14's contract.
+P15 invokes P14's authenticated, bounded operator drain contract and requires a response that identifies the currently serving release and proves `accepting_work = false`, `queued = 0`, `running = 0`, and `quiescent = true`. It uses this once for the old release before cutover and again for the exact new release before any rollback stop after that pool could have admitted work. P15 does not inspect or mutate job memory directly. If the old release cannot quiesce, deployment stops before IIS mutation and returns it to normal admission when P14 permits. If the new release cannot quiesce during rollback, P15 records `RecoveryRequired` and does not stop the pool or switch path/configuration automatically.
 
 The production cutover slices cannot land until P14's exact operator contract is approved and implemented. There is no `-AllowJobLoss`, `-ForceDrain`, or silent recycle fallback.
 
@@ -172,9 +174,9 @@ P15 consumes:
 
 - a liveness probe proving the new process is running;
 - a readiness probe proving the instance is eligible to serve normal work;
-- a fixed release identity returned by the probe contract.
+- a fixed release identity returned by the probe contract on both ready and unready responses.
 
-P15 does not parse today's combined `/health` body or create another health endpoint. The final probe-gated cutover slice cannot land until P20's contract is approved and implemented.
+P20's deployment response is bounded and parseable on both `200` and `503`, always carries the immutable serving release ID plus truthful liveness/traffic-readiness state, and never redefines readiness as merely “safe to probe before admission.” P15 uses that identity to target rollback drain. An unavailable, malformed, or wrong-release deployment response cannot prove rollback authority and therefore yields `RecoveryRequired` once admission was possible. P15 does not parse today's combined `/health` body or create another health endpoint. The final probe-gated cutover slice cannot land until P20's contract is approved and implemented.
 
 ### IIS infrastructure and operator ownership
 
@@ -210,11 +212,11 @@ Blocks: immutable release, ACL, cutover, and rollback slices.
 
 ### P15-D4 — accepted-work policy
 
-**Recommendation:** Require a successful P14 drain with no accepted queued/running work before stopping the target pool. If quiescence cannot be proved within 120 seconds, abort before mutation and keep the old release serving. P15 owns this deployment wait ceiling and clamps it to any shorter P14-reported bound; P14 continues to own drain semantics and state.
+**Recommendation:** Require a successful exact-release P14 drain before every target-pool stop that could interrupt accepted work: once for the old release before cutover and, if the new pool ever reached a state where admission was possible, again before rollback. If old-release quiescence cannot be proved within 120 seconds, abort before mutation and keep it serving; if new-release quiescence cannot be proved, enter `RecoveryRequired` without stopping or switching it. P15 owns this deployment wait ceiling and clamps it to any shorter P14-reported bound; P14 continues to own drain semantics and state.
 
 The alternative intentionally loses accepted work and needs a user-visible retry/recovery contract that does not exist.
 
-Blocks: drain and cutover slices.
+Blocks: drain, cutover, probe, and rollback-quiescence slices.
 
 ### P15-D5 — post-cutover gate
 
@@ -268,17 +270,18 @@ Blocks: retention tooling only; it does not block safe cutover.
 22. If the pool was not running at preflight, an update deployment refuses to proceed; first installation or intentionally stopped maintenance uses a separate administrator procedure.
 23. No success is committed until P20 liveness/readiness return the expected release identity for the required consecutive observations.
 24. Redirects, authentication failures, TLS failures, timeouts, malformed bodies, mismatched release IDs, degraded/unready states, or dependency failures are probe failures.
-25. Every failure after the first live mutation attempts rollback exactly once through the recorded snapshot.
+25. Every failure after the first live mutation attempts rollback exactly once through the recorded snapshot, subject to the no-work-loss gate below.
 26. Rollback never restores global IIS configuration. Through the same target-application commit boundary used for cutover, it restores the target physical path and the recorded prior P16 promotion state, then restores the target pool state. `Applied` reapplies the prior ID; `Absent` removes exactly the P16-owned environment-reference entries introduced by the new projection. Rollback is not verified until path, promotion state, pool state, and required old-release liveness all read back successfully.
 27. If the current target path/promotion pair equals neither the complete recorded old pair nor the complete recorded new pair during recovery, automation stops without overwriting the external change.
 28. Failed or rolled-back new releases remain for diagnosis and are never selected as a future rollback target automatically.
 29. A rollback failure returns a distinct nonzero outcome, preserves the journal, and prints bounded manual recovery identifiers without claiming completion.
-30. Releases grant the app-pool identity read/execute only. Broad groups and `IUSR` receive no P15 grant.
-31. Write permission is granted only to P16-named external mutable directories and only to the actual configured app-pool identity.
-32. P15 treats the P16 promotion projection as opaque, validates only its closed envelope/ID/hash through P16, and never persists or logs its values.
-33. Logs, console output, journals, metrics, and probes contain no configuration values, secrets, response bodies, credentials, user queries, or raw exception messages.
-34. The current unsafe `-Force` semantics do not remain as an alias, compatibility mode, or hidden fallback.
-35. Every deterministic test runs without administrator rights, IIS, network, wall-clock sleep, or production paths.
+30. Once the durable journal reached `PoolStartRequested` or the new pool was observed starting/running, rollback may stop that pool or restore the old path/projection only after P14 proves the exact new release is non-accepting and quiescent. Unavailable/malformed/wrong-release identity, drain timeout, or a stopped/unreachable process whose prior admission cannot be disproved records `RecoveryRequired` with no further live mutation.
+31. Releases grant the app-pool identity read/execute only. Broad groups and `IUSR` receive no P15 grant.
+32. Write permission is granted only to P16-named external mutable directories and only to the actual configured app-pool identity.
+33. P15 treats the P16 promotion projection as opaque, validates only its closed envelope/ID/hash through P16, and never persists or logs its values.
+34. Logs, console output, journals, metrics, and probes contain no configuration values, secrets, response bodies, credentials, user queries, or raw exception messages.
+35. The current unsafe `-Force` semantics do not remain as an alias, compatibility mode, or hidden fallback.
+36. Every deterministic test runs without administrator rights, IIS, network, wall-clock sleep, or production paths.
 
 ## Target and Tool Contract
 
@@ -345,10 +348,12 @@ IIisDeploymentAdapter
   stop/start target pool, wait state, set target physical path
 
 IDrainClient
-  baseline, close admission, await quiescence, resume-old-on-precutover-abort
+  begin exact-release drain, await non-accepting quiescence,
+  resume-old-on-precutover-abort
 
 IDeploymentProbeClient
-  liveness, readiness, expected release identity
+  bounded deployment envelope on 200/503: liveness, traffic readiness,
+  immutable serving release identity
 
 IProductionPromotionAdapter
   load P16 projection envelope by ID, validate through P16, plan/apply/read-back
@@ -449,6 +454,7 @@ Write a versioned JSON journal through write-temp, flush, and atomic replace. It
 - initial pool state;
 - manifest/package hashes;
 - monotonic phase sequence plus UTC audit timestamps;
+- old/new P14 drain generations and quiescence observations, never bearer tokens;
 - fixed outcome/failure/rollback codes;
 - probe attempt counts and status classes, never bodies.
 
@@ -460,12 +466,14 @@ Prepared
   -> Quiescent
   -> PoolStopped
   -> PathSwitched
+  -> PoolStartRequested
   -> PoolStarted
   -> Probing
   -> Committed
 
 Any post-mutation failure:
   -> RollingBack
+  -> RollbackQuiescent (required if new-release admission was possible)
   -> RolledBack | RecoveryRequired
 ```
 
@@ -485,8 +493,8 @@ If drain or stop fails before the physical path changes, ask P14 to resume the o
 
 1. In one target-application commit boundary, change the physical path from the journaled old path to the verified new release and apply the exact P16-owned IIS environment-reference projection.
 2. Re-read IIS state and require exact equality with the new path and P16 projection hash plus unchanged pool assignment/authentication policy.
-3. Start only the configured pool and wait for `Started` within a monotonic bound.
-4. Probe the explicit URI without redirects or TLS bypass. Require P20 liveness and readiness to carry the exact new `release_id`.
+3. Flush `PoolStartRequested` before asking IIS to start only the configured pool, then wait for `Started` within a monotonic bound and flush `PoolStarted`.
+4. Probe the explicit URI without redirects or TLS bypass. Parse P20's bounded deployment contract on both `200` and `503`, require the exact new `release_id`, and treat only truthful traffic-readiness success as a qualifying observation.
 5. Require three consecutive successful observations two seconds apart within 60 seconds; reset the consecutive count on any permitted transient non-success, but never extend the absolute deadline.
 6. Revalidate IIS physical path and release identity, then atomically record `Committed` and update the separate last-known-good pointer.
 
@@ -499,12 +507,14 @@ Only `Committed` returns success. The command prints a bounded summary containin
 For a failure at or after `PathSwitched`:
 
 1. Transition and flush `RollingBack` exactly once.
-2. Stop only the target pool if it is running/starting; wait within the same bounded pool-state policy.
-3. Re-read the complete target path/promotion pair. Only when it equals the recorded new pair, restore the recorded old physical path and prior P16 promotion state through the same target commit boundary: reapply the old ID for `Applied`, or remove exactly the P16-owned entries introduced at cutover for `Absent`. Only when it already equals the complete recorded old pair, continue idempotently. For every other combination—including an old-path/new-projection or new-path/old-projection mixed pair—record `RecoveryRequired` and do not overwrite an external change.
-4. Restore the initial target-pool state. Normal updates require it to have been running, so start and wait.
-5. Probe the old release's P20 liveness and expected old release identity when known. Readiness failure is reported separately because an external dependency outage may affect both releases.
-6. Read back the exact old path, prior P16 promotion state (`Applied` or `Absent`), and initial pool state; record `RolledBack` only when all three plus required rollback liveness are proven.
-7. Exit nonzero even after a successful rollback; deployment did not succeed.
+2. Determine from both the durable journal and current IIS state whether new-release admission was ever possible. A journal state at or beyond `PoolStartRequested`, or a target pool observed `Started`/`Starting` against the new path, requires the rollback drain; only proof that no start was requested and the new pool never ran permits the drain to be skipped. This deliberately treats a crash or timeout after the start request but before the started observation as admission-possible.
+3. When required, read P20's deployment contract and require the exact new release ID even if it returns `503`; call P14 `BeginDrain(expected new release ID)` and poll through the same absolute drain bound until `accepting_work=false`, `queued=0`, `running=0`, and `quiescent=true`. Flush `RollbackQuiescent` only after that proof. An unavailable/malformed/wrong-ID deployment response, drain failure/timeout, or a stopped/unreachable pool whose earlier admission cannot be disproved records `RecoveryRequired` and performs no pool stop, path switch, or projection change.
+4. Stop only the target pool after the required quiescence proof (or the never-started proof); wait within the same bounded pool-state policy.
+5. Re-read the complete target path/promotion pair. Only when it equals the recorded new pair, restore the recorded old physical path and prior P16 promotion state through the same target commit boundary: reapply the old ID for `Applied`, or remove exactly the P16-owned entries introduced at cutover for `Absent`. Only when it already equals the complete recorded old pair, continue idempotently. For every other combination—including an old-path/new-projection or new-path/old-projection mixed pair—record `RecoveryRequired` and do not overwrite an external change.
+6. Restore the initial target-pool state. Normal updates require it to have been running, so start and wait.
+7. Probe the old release's P20 liveness and expected old release identity when known. Readiness failure is reported separately because an external dependency outage may affect both releases.
+8. Read back the exact old path, prior P16 promotion state (`Applied` or `Absent`), and initial pool state; record `RolledBack` only when all three plus required rollback liveness are proven.
+9. Exit nonzero even after a successful rollback; deployment did not succeed.
 
 Do not delete the failed new release or its journal. Do not roll back ACLs on an immutable unused release. Do not restore an `applicationHost.config` backup.
 
@@ -547,6 +557,8 @@ An unexpected exception is mapped by the phase into one of these nonzero classes
 ## Implementation Slices and Commits
 
 Each slice closes exactly one admitted finding, receives its own guard proof, and is committed before the next starts. Do not amend, squash, combine, or leave a completed slice uncommitted.
+
+The production cutover entry remains fail-closed until Slices 7–10 have all landed. Those commits stay independently testable behind that gate; no intermediate Slice 8/9 workflow may start a new pool without Slice 10's rollback-quiescence protection.
 
 ### Slice 1 — P15-F0 deterministic deployment verification
 
@@ -638,11 +650,22 @@ Guard proof: disable restoration after a post-switch fault; the phase-matrix tes
 
 - Integrate P20 liveness/readiness/release identity, explicit binding-matched URI, TLS/redirect/auth policy, absolute probe deadline, consecutive-success rule, and bounded safe diagnostics.
 - Add start timeout, redirect, 401/403, TLS failure, malformed body, wrong release, transient readiness, permanent dependency failure, and success tests.
-- Ensure every post-switch failure enters Slice 8 rollback and never prints completion.
+- Ensure every post-switch failure enters Slice 8 rollback and never prints completion; Slice 10 adds the mandatory new-release quiescence gate before rollback mutation.
 
 Guard proof: accept a probe carrying the old release ID; the identity test must fail. Restore and verify green.
 
-### Slice 10 — P15-F9 retire the unsafe workflow
+### Slice 10 — P15-F10 quiescent post-start rollback
+
+**Commit:** `fix(deploy): quiesce a failed release before rollback`
+
+- Extend the journal/recovery state machine with durable admission-possible and `RollbackQuiescent` evidence.
+- On every rollback after the new pool could admit, consume P20's exact release identity on `200` or `503`, invoke P14 drain for that release, and require non-accepting quiescence before pool stop or path/projection restoration.
+- Enter `RecoveryRequired` without further live mutation when release identity or quiescence cannot be proved; preserve the distinct never-started rollback path.
+- Add post-start probe-failure, accepted queued/running convergence, unavailable/malformed/wrong-ID probe, drain timeout, stopped-after-start ambiguity, never-started, and interrupted-recovery tests.
+
+Guard proof: bypass the rollback drain and allow the fake pool-stop operation before `RollbackQuiescent`; the exact operation-order test must fail. Restore and verify green.
+
+### Slice 11 — P15-F9 retire the unsafe workflow
 
 **Commit:** `docs(deploy): require the recoverable IIS workflow`
 
@@ -703,17 +726,22 @@ Use Pester `5.7.1`, `TestDrive:`, fake adapters, a fake monotonic clock, and exa
 33. Re-running recovery is idempotent when path/promotion state is the recorded old or new pair; a third path, third projection, or mixed pair refuses mutation.
 34. A first migration with prior P16 promotion state `Absent` removes only the new projection's owned entries and proves the old environment is absent before `RolledBack`.
 35. Journal temp-write/flush/replace failure cannot advance the live mutation beyond the last durable intent.
+36. A probe failure after the new pool starts calls P14 drain for the exact P20-reported new release and emits no pool-stop/path/projection operation until non-accepting quiescence is proven.
+37. Queued/running work admitted during the probe window converges under the rollback drain; rising/nonzero counts, timeout, or wrong release cannot be bypassed.
+38. An unavailable/malformed deployment response, wrong release ID, drain failure, or a stopped process after recorded start enters `RecoveryRequired` with no further live mutation.
+39. A transaction that proves no `PoolStartRequested` intent was flushed and the new pool never started may roll back without a drain; interrupted recovery derives that proof from both durable phase and current IIS state rather than current state alone.
 
 ### Probes, outcomes, and leakage
 
-36. Pool-start timeout rolls back.
-37. Redirect, TLS, transport, timeout, 401/403, malformed schema, liveness failure, readiness failure, and wrong release roll back.
-38. Transient failures reset the consecutive count and never extend the absolute deadline.
-39. Exactly three qualifying observations commit; fewer do not.
-40. P06/P13 application errors are irrelevant to deployment outcome mapping; P15 emits only fixed deployment codes.
-41. Package contents, journals, logs, console output, and fake metrics omit seeded secrets, configuration values, response bodies, credentials, and raw exception text.
-42. Only `Committed` exits zero.
-43. No production deployment source references `-Force`, global process enumeration/kill, `SilentlyContinue`, raw native mutation without the checked runner, or unbounded `Start-Sleep`.
+40. A pool-start failure after `PoolStartRequested` is admission-possible and requires drain/quiescence or `RecoveryRequired`; only a failure before that durable intent may use the never-started proof.
+41. Redirect, TLS, transport, timeout, 401/403, malformed schema, liveness failure, readiness failure, and wrong release fail deployment and enter the applicable safe rollback/quiescence path.
+42. A P20 `503` with the exact release ID remains parseable for rollback targeting but never counts as a ready observation.
+43. Transient failures reset the consecutive count and never extend the absolute deadline.
+44. Exactly three qualifying observations commit; fewer do not.
+45. P06/P13 application errors are irrelevant to deployment outcome mapping; P15 emits only fixed deployment codes.
+46. Package contents, journals, logs, console output, and fake metrics omit seeded secrets, configuration values, response bodies, credentials, and raw exception text.
+47. Only `Committed` exits zero.
+48. No production deployment source references `-Force`, global process enumeration/kill, `SilentlyContinue`, raw native mutation without the checked runner, or unbounded `Start-Sleep`.
 
 ## Red-Green Guard Protocol
 
@@ -776,7 +804,7 @@ Verify:
 - package and deploy a benign local test build;
 - unrelated test site/pool remains continuously available;
 - injected bad package fails before mutation;
-- injected new-release liveness/readiness failure restores the prior path;
+- injected new-release liveness/readiness failure drains the exact new release before restoring the prior path; an injected rollback-drain failure leaves `RecoveryRequired` without a stop/switch;
 - target pool stop/start is bounded and no worker kill occurs;
 - a simulated interrupted journal is recovered to the prior release;
 - ACLs match the planned principals/rights;
@@ -801,11 +829,11 @@ P15 is complete only when:
 - Production configuration/logs/state are external to immutable releases, and the approved P16 IIS environment/ACL projection is applied, read back, and included by ID/hash in rollback.
 - Release binaries are read/execute-only to the actual pool identity; no broad `IIS_IUSRS`/`IUSR` grant remains.
 - Existing site/application/dedicated pool/auth/binding/runtime are validated, not silently provisioned or repaired.
-- P14 proves quiescence before target-pool stop; no accepted work is intentionally discarded.
+- P14 proves old-release quiescence before cutover stop and exact new-release quiescence before any rollback stop after admission was possible; no accepted work is intentionally discarded.
 - No code enumerates or kills `w3wp`; only the target dedicated pool is controlled.
 - The journal is durable before mutation and every injected phase failure reaches the specified old/new path, pool, journal, and exit outcome.
-- P20 liveness/readiness/release identity satisfy the approved consecutive/absolute deadline gate before `Committed`.
-- Every post-switch failure rolls back once; rollback failure is explicit and recoverable without global IIS restore.
+- P20 liveness/readiness/release identity satisfy the approved consecutive/absolute deadline gate before `Committed`, and its exact-ID `200`/`503` deployment envelope safely targets rollback drain without weakening traffic readiness.
+- Every post-switch failure enters rollback once; rollback mutates a possibly admission-capable new release only after exact-release quiescence, and any inability to prove that state is explicit `RecoveryRequired` without global IIS restore.
 - Only `Committed` returns zero or prints completion.
 - Old-release pruning is a separate contained, confirmation-aware action that protects all referenced releases.
 - The unsafe legacy script and `deploy.ps1 -Force` documentation are gone.
@@ -830,6 +858,7 @@ Use new revert commits; do not rewrite history.
 - **P14/P16/P20 are later plans.** Implement non-mutating foundations first, but block production cutover until their exact contracts land. Adapt names, not ownership.
 - **Side-by-side releases consume disk.** Preflight required space and use separate confirmed pruning; never trade rollback safety for automatic deletion.
 - **External dependency readiness can fail independently of a release.** Baseline the old release before drain, distinguish rollback liveness from readiness, and report fixed cause classes without claiming rollback repairs providers.
+- **The new release may accept work during readiness observations.** Treat readiness as truthful traffic eligibility, drain the exact new release before rollback stop, and prefer `RecoveryRequired`/manual intervention over interrupting work when identity or quiescence cannot be proven.
 - **Physical-path changes may interact with IIS configuration locking or shared configuration.** Validate dedicated local ownership before mutation; reject unsupported shared-config mode until separately tested.
 - **A custom app-pool identity complicates ACLs.** Read the configured identity and require P16's explicit principal mapping; never guess or broaden.
 - **Hashing large packages costs time and I/O.** Stream bounded content once before extraction and once after; correctness outranks saving one verification pass.
@@ -884,3 +913,9 @@ Round 2 reviewed the reconciled P16 rollback state, first-migration behavior, gu
 - Optional comments retained without revision: the exact-old branch could repeat that it performs no path/promotion mutation before pool/read-back checks, but the algorithm is already unambiguous; the exhaustive pair branch belongs in its current canonical algorithm/invariant rather than being duplicated in Invariant 26.
 
 Round 3 made no required change to the reviewed snapshot. After P16 landed, P15 replaced its stale `output` child wording with P16's fixed typed-child contract and narrowed P16's retention ownership to operational logs/root controls while domain plans retain their own store policies. This precision alignment was not re-reviewed; the three-round limit prohibits a fourth round.
+
+### Post-review cross-plan finding — rollback admission race
+
+During P20 planning, the P14/P15/P20 composition exposed a new HIGH finding: P14's new process becomes `Accepting`, P20 readiness truthfully means eligible for normal work, and P15 observes readiness multiple times before commit. The prior automatic rollback stopped the new pool before any P14 drain, so a late probe failure could interrupt work admitted during that window.
+
+P15-F10 now requires an exact-release P14 drain and durable `RollbackQuiescent` proof before any rollback stop/path/projection mutation once new-release admission was possible. P20 supplies a bounded exact-release deployment envelope on both `200` and `503`; unavailable/malformed/wrong-ID state or drain failure produces `RecoveryRequired` without further live mutation. A separately guarded never-started path remains eligible for direct rollback. This repair was made after all three Claude rounds and was not re-reviewed; no fourth round was run.
