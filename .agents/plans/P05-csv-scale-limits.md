@@ -99,7 +99,7 @@ P05 consumes those validated plan and outcome contracts, introduces and owns the
 
 P05 limits the size and shape of one CSV enrichment request. It does not add global or per-user semaphores, workload admission, request queues, or overall execution deadlines.
 
-P06 may later reject a request that is individually within P05’s limits because aggregate service capacity is exhausted. P05 rejection codes and metrics must remain distinguishable from P06 admission and deadline failures.
+P06 may later fail a request that is individually within P05's limits when its per-query directory-operation, retained-record, or active-time budget is exhausted. P14, not P06, owns any future global queue, concurrency, or per-user admission rejection. P05 rejection codes and metrics must remain distinguishable from P06 budget/deadline failures and P14 admission outcomes.
 
 ### P09 — Bounded and timeout-aware LDAP execution
 
