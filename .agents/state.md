@@ -2,15 +2,13 @@
 
 ## Now
 
-- Optimization and modernization findings have been triaged into plan-sized candidates; durable implementation plans have not yet been drafted.
-- The requested use of `codereview` for plan documents conflicts with the playbook's completed-fix and guard-proof contract, so the review mode needs an owner ruling before dispatch.
+- Optimization and modernization plan drafting and advisory review are active; see `.agents/plans/index.md` for the canonical inventory and status.
+- The owner directed use of the headless Claude harness with its configured model and maximum effort. Plan critiques are recorded as advisory reviews, not implementation `codereview` verdicts.
 
 ## Next
 
-- After the owner rules on review mode, draft one self-contained plan per admitted issue or recommendation and review each through the authorized Claude workflow for at most three rounds.
+- Draft, review, revise, and commit each queued plan separately, using at most three review rounds per plan.
 
 ## Blockers
 
-- Owner ruling required: use an advisory Claude plan critique, or reserve `codereview` for implemented fixes.
-- The requested Claude harness is not currently dispatchable on this machine; see `.agents/machines.md`.
-
+- Implementation remains blocked until the applicable plan is reviewed and the owner approves its decisions and status.
