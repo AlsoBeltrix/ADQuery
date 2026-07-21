@@ -31,7 +31,7 @@ Plan reviews are advisory reviews of plan quality, performed headlessly with the
 | P14 | Atomic, bounded query-job orchestration | Queued | 0 |
 | P15 | Safe, checked, and recoverable IIS deployment | Reviewed | 3 |
 | P16 | Portable configuration, storage, and logging | Reviewed | 3 |
-| P17 | Versioned feedback storage and analyzer contract | Queued | 0 |
+| P17 | Versioned feedback storage and analyzer contract | Reviewed | 3 |
 | P18 | Standards-compliant CSV ingestion | Queued | 0 |
 | P19 | Single-flight browser job polling | Queued | 0 |
 | P20 | Separated liveness, readiness, and diagnostics | Queued | 0 |
