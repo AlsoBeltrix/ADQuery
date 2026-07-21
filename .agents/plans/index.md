@@ -15,7 +15,7 @@ Plan reviews are advisory reviews of plan quality, performed headlessly with the
 
 | ID | Plan | Status | Review rounds |
 |---|---|---|---:|
-| P01 | Verification foundation and CI | Queued | 0 |
+| P01 | Verification foundation and CI | Reviewed | 2 |
 | P02 | LLM provider request compatibility | Reviewed | 2 |
 | P03 | Dependency security and .NET runtime modernization | Queued | 0 |
 | P04 | CSV enrichment authorization and failure integrity | Queued | 0 |
