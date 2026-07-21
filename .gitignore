@@ -18,7 +18,7 @@ Thumbs.db
 .vscode/
 /lint-report.sarif/
 /.serena/
-.claude/
+.claude/settings.local.json
 /_not_for_github/
 /docs/
 /csharp/docs/
