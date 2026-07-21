@@ -21,7 +21,7 @@ Plan reviews are advisory reviews of plan quality, performed headlessly with the
 | P04 | CSV enrichment authorization and failure integrity | Reviewed | 2 |
 | P05 | CSV enrichment scale and request limits | Reviewed | 2 |
 | P06 | End-to-end query work budgets | Reviewed | 3 |
-| P07 | Streaming results, exports, and artifact caching | Queued | 0 |
+| P07 | Streaming results, exports, and artifact caching | Reviewed | 3 |
 | P08 | Template expansion and LDAP filter complexity | Queued | 0 |
 | P09 | Bounded and timeout-aware LDAP execution | Queued | 0 |
 | P10 | Cycle-safe and bounded directory traversal | Queued | 0 |
