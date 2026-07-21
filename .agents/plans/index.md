@@ -24,7 +24,7 @@ Plan reviews are advisory reviews of plan quality, performed headlessly with the
 | P07 | Streaming results, exports, and artifact caching | Reviewed | 3 |
 | P08 | Template expansion and LDAP filter complexity | Queued | 0 |
 | P09 | Bounded and timeout-aware LDAP execution | Queued | 0 |
-| P10 | Cycle-safe and bounded directory traversal | Queued | 0 |
+| P10 | Cycle-safe and bounded directory traversal | Reviewed | 3 |
 | P11 | Indexed projection and single-pass aggregation | Reviewed | 2 |
 | P12 | Authoritative semantic plan validation | Reviewed | 2 |
 | P13 | End-to-end cancellation and error contracts | Reviewed | 2 |
