@@ -6,7 +6,7 @@ Owner approval: Pending
 
 Implementation dependencies: P01, P02, P04, P05, P06, P07, P09, and P12 must supply their verified provider, CSV, budget, artifact, LDAP, and compilation failure contracts first. P10/P11 failures flow through P12/P06. P13 must land before P14 persists immutable job outcomes and before P19 consumes browser retry/cancellation behavior.
 
-Review status: Accepted in advisory round 2
+Review status: Accepted in advisory round 3; final optional clarifications were not re-reviewed because the round limit was reached
 
 ## Problem
 
@@ -199,8 +199,10 @@ The registry combines dependency-owned codes with P13-owned boundary codes. Init
 | `ldap_queue_saturated` | capacity | 503 | retry_after_delay | failed |
 | `ldap_queue_timeout` | capacity | 503 | retry_new_attempt | failed |
 | `ldap_operation_timeout` | dependency | 504 | retry_new_attempt | failed |
-| `ldap_dependency_failed` | dependency | 503 | retry_new_attempt | failed |
-| `ldap_scheduler_stopping` | capacity | 503 | retry_new_attempt | failed |
+| `ldap_provider_timeout` | dependency | 504 | retry_new_attempt | failed |
+| `ldap_scheduler_stopping` | capacity | 503 | retry_new_attempt | interrupted/failed until P14 decides |
+| `ldap_scheduler_faulted` | internal | 503 | retry_new_attempt | failed |
+| `ldap_dependency_failure` | dependency | 503 | retry_new_attempt | failed |
 | `artifact_size_exceeded` | budget | 422 | narrow_request | failed |
 | `artifact_manifest_too_large` | budget | 422 | narrow_request | failed |
 | `artifact_store_full` | capacity | 503 | retry_after_delay | failed |
@@ -218,7 +220,9 @@ The registry combines dependency-owned codes with P13-owned boundary codes. Init
 | `unsupported_export_format` | invalid_request | 400 | never | n/a |
 | `internal_error` | internal | 500 | never | failed |
 
-The `ldap_*` strings are owned by P09, not invented by P13. Slice 1 is blocked until the reviewed P09 plan publishes its final closed taxonomy; the registry must consume those exact strings and its exhaustiveness tests must fail on a mismatch. Any later rename is a versioned cross-plan contract change.
+The seven `ldap_*` strings are owned by reviewed P09, not invented by P13. The registry consumes them exactly and its exhaustiveness tests fail on a missing code, extra alias, or spelling mismatch. Caller cancellation remains P13-owned and P06 budget/deadline exhaustion remains `query_budget_exceeded`; neither receives an LDAP alias. Any later rename is a versioned cross-plan contract change.
+
+The LDAP capacity retry split is intentional. `ldap_queue_saturated` means no attempt was admitted and tells a caller to back off for the bounded `Retry-After`; `ldap_queue_timeout` means an admitted attempt expired in the queue and can only be retried as a fresh attempt under P14/P19 idempotency rules.
 
 `artifact_root_in_use` is normally exposed only as unavailable readiness because P07 fails startup; the 503 mapping is the sanitized fallback if a hosting boundary must render it. It is never downgraded to request-local success or a second-writer fallback.
 
@@ -299,11 +303,11 @@ Provider response bodies may be parsed into fixed classifications but are not st
 
 ## LDAP and CSV adaptation
 
-P09 exceptions map one-to-one to P09's finalized stable code strings without losing their inner causal exception locally. Broad directory catches must rethrow:
+P09 exceptions map one-to-one to P09's finalized stable code strings without losing their inner causal exception locally. Broad directory catches must rethrow or propagate through the typed adapter:
 
 - caller/user/deadline/host cancellation;
 - P06 budget exhaustion;
-- P09 saturation, queue timeout, operation timeout, stopping, and fatal dependency failure.
+- P09 `ldap_queue_saturated`, `ldap_queue_timeout`, `ldap_operation_timeout`, `ldap_provider_timeout`, `ldap_scheduler_stopping`, `ldap_scheduler_faulted`, and `ldap_dependency_failure`.
 
 Only explicitly characterized per-entry not-found/nonfatal data-quality outcomes may remain best effort. They become typed lookup outcomes, not null from an exception. Any terminal typed failure discards accumulated search/lookup/traversal results.
 
@@ -609,5 +613,15 @@ Blocked until decided: Slice 6 and P14 transition design.
 - Confirmed cancellation callbacks and dependency timeouts share one atomic `TerminalStopClaim`; the single winner governs both HTTP and stored job outcomes and blocks late completion.
 - Confirmed caller disconnect, response-start handling, typed no-partial failures, deprecated-`temperature` classification/redaction, P04/P07/P09/P12 handoffs, pre-P14 job boundaries, deterministic guards, rollback, and decision gates are implementable without an invented contract.
 - Applied optional precision by correcting P13/P12 and P04/P05 ownership labels, enumerating P07's finalized failure codes and retry mappings, and adding a mandatory mutation for P06 execution-time mapping.
+
+### Round 3 — 2026-07-21
+
+**Reviewer:** Headless Claude Code 2.1.217 / configured model / maximum effort
+
+**Verdict:** Accepted
+
+- Confirmed P13 consumes P09's finalized seven stable strings verbatim, keeps caller cancellation and P06 budget exhaustion outside LDAP aliases, and distinguishes native `ldap_provider_timeout` from caller-observed `ldap_operation_timeout`.
+- Confirmed the category, HTTP, retry, and job mappings remain coherent and registry/mutation guards prevent missing codes, aliases, or spelling drift.
+- Applied optional clarity after the final review by aligning LDAP shutdown job wording, enumerating all seven codes in the broad-catch rule, and documenting the intentional queue-saturation/queue-timeout retry split. These edits were not re-reviewed because no fourth round is permitted.
 
 Record no more than three headless Claude review rounds. Each round must identify material findings, the resulting revision or retained disagreement, and the reviewer's final assessment.
