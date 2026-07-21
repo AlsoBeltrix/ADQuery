@@ -28,7 +28,7 @@ Plan reviews are advisory reviews of plan quality, performed headlessly with the
 | P11 | Indexed projection and single-pass aggregation | Reviewed | 2 |
 | P12 | Authoritative semantic plan validation | Reviewed | 2 |
 | P13 | End-to-end cancellation and error contracts | Reviewed | 3 |
-| P14 | Atomic, bounded query-job orchestration | Queued | 0 |
+| P14 | Atomic, bounded query-job orchestration | Reviewed | 3 |
 | P15 | Safe, checked, and recoverable IIS deployment | Reviewed | 3 |
 | P16 | Portable configuration, storage, and logging | Reviewed | 3 |
 | P17 | Versioned feedback storage and analyzer contract | Reviewed | 3 |
