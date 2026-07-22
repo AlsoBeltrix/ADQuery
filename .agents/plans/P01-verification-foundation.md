@@ -2,7 +2,7 @@
 
 Status: **Approved — implementation is authorized**
 
-Owner approval: P01-D1, P01-D2, P01-D3, and the full plan approved on 2026-07-22
+Owner approval: P01-D1, P01-D2, P01-D3, P01-D4, P01-D5, and the full plan approved on 2026-07-22
 
 Implementation dependency: This foundation, including the owner-directed direct migration to patched .NET 10, should land before behavior-changing plans P02 and P04–P21.
 
@@ -93,10 +93,11 @@ Slice 1 must not set analyzer level or warning policy. Extend that same file in 
 - `Nullable` enabled.
 - `ImplicitUsings` enabled.
 - `EnableNETAnalyzers` enabled.
-- `AnalysisLevel` set to the pinned SDK's recommended analysis level.
+- `AnalysisLevel` set to the pinned .NET 10 SDK's default `10.0` level.
 - `TreatWarningsAsErrors` enabled.
+- Code-style enforcement enabled for rules explicitly configured as diagnostics.
 
-The root warning policy also applies to the test project. Both application and characterization-test code must be warning-clean under the selected analyzer set before Slice 3 can land.
+The root warning policy also applies to the test project. Both application and characterization-test code must be warning-clean under the selected analyzer set before Slice 3 can land. P01-D4 deliberately avoids a suppressions baseline: a dry run of `10.0-recommended` at `5716462` produced 290 pre-existing diagnostics whose fixes cross the behavior and performance plans, while the strict `10.0` default set is clean. Later owning plans must fix applicable recommended diagnostics and may raise the level only when the entire solution remains green.
 
 Do not add a blanket `NoWarn`. If enabling recommended analyzers exposes existing diagnostics:
 
@@ -150,6 +151,8 @@ Add a root `.editorconfig` defining only repository-wide mechanical conventions 
 - No trailing whitespace.
 - C# conventions compatible with the SDK formatter.
 - An explicit line-ending policy selected in the owner decision below.
+
+P01-D5 selects LF for repository-owned text, with CRLF only for Windows command scripts. Add `.gitattributes` with the same policy so checkout configuration cannot override `.editorconfig`.
 
 Do not mix mechanical formatting and behavior changes. If the owner approves normalization, apply `dotnet format ADQuery.sln whitespace --no-restore` once in an isolated commit, verify that the diff is whitespace-only, and then add this enforcement stage to the canonical script:
 
@@ -468,6 +471,18 @@ Choose whether to commit a transitional .NET 9 foundation before P03 or establis
 Decision: Approved on 2026-07-22. The canonical record is `.agents/decisions.md` under `P01-D3 — Establish the verification foundation directly on .NET 10`.
 
 Result: Slice 1 establishes the SDK, application, aligned Microsoft packages, and solution directly on patched .NET 10; Slice 2 creates the test project on the same target. No .NET 9 foundation commit or vulnerable-package baseline is permitted.
+
+### Decision 4 — Progressive analyzer enforcement
+
+Decision: Approved as an implementation selection on 2026-07-22. The canonical record is `.agents/decisions.md` under `P01-D4 — Progressive analyzer enforcement`.
+
+Result: P01 enforces the clean .NET 10 default analyzer set with every warning fatal and no suppressions. Recommended diagnostics are fixed by their owning plans before the repository raises the level.
+
+### Decision 5 — Repository line endings
+
+Decision: Approved as an implementation selection on 2026-07-22. The canonical record is `.agents/decisions.md` under `P01-D5 — Repository line endings`.
+
+Result: `.gitattributes` and `.editorconfig` make LF canonical for repository text, except CRLF Windows command scripts. Slice 4 performs the isolated normalization.
 
 ## Review history
 

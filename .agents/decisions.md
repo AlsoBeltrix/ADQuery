@@ -1,5 +1,24 @@
 # Settled Decisions
 
+## P01-D5 — Repository line endings
+
+- Status: Approved implementation selection
+- Date: 2026-07-22
+- Authority: Repository owner delegated implementation through the approved P01 execution direction
+- Decision: Store repository-owned text as LF through `.gitattributes` and `.editorconfig`, with CRLF reserved for Windows command scripts (`*.bat` and `*.cmd`). Use four-space indentation for C# and PowerShell and two-space indentation for JSON, YAML, and MSBuild XML.
+- Constraints: Land policy before the isolated Slice 4 normalization; do not mix the resulting whole-repository whitespace rewrite with analyzer or behavior changes.
+- Consequence: Git configuration such as `core.autocrlf` cannot silently select a different canonical representation, and the formatter gate has one deterministic cross-platform baseline.
+
+## P01-D4 — Progressive analyzer enforcement
+
+- Status: Approved implementation selection
+- Date: 2026-07-22
+- Authority: Repository owner delegated implementation through the approved P01 execution direction
+- Decision: Enforce the .NET 10 SDK's default analyzer set and all compiler/analyzer warnings as errors in P01. Do not enable the full `10.0-recommended` set until its existing findings are fixed under their owning modernization plans.
+- Evidence: A dry run at implementation base `5716462` with `AnalysisLevel=10.0-recommended` produced 290 errors spanning logging source generation, globalization, API naming, allocation, and semantic cleanup. The same solution passed with zero warnings under `AnalysisLevel=10.0` and warnings-as-errors.
+- Constraints: Add no blanket or per-rule suppression baseline. New warnings in the enforced set fail immediately. Later plans must resolve applicable recommended diagnostics rather than suppress them and may raise the repository level only when the complete solution is clean.
+- Consequence: P01 establishes a strict, green analyzer floor without absorbing behavior-sensitive work from P02–P21.
+
 ## P01-D3 — Establish the verification foundation directly on .NET 10
 
 - Status: Approved
