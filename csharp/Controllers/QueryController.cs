@@ -471,7 +471,7 @@ public class QueryController : ControllerBase
         };
     }
 
-    private static byte[] GenerateFileContent(
+    internal static byte[] GenerateFileContent(
         IReadOnlyList<Dictionary<string, object?>> rows,
         IReadOnlyList<string> headers,
         string format,
