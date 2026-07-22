@@ -35,4 +35,4 @@ Plan reviews are advisory reviews of plan quality, performed headlessly with the
 | P18 | Standards-compliant CSV ingestion | Reviewed | 3 |
 | P19 | Single-flight browser job polling | Reviewed | 3 |
 | P20 | Separated liveness, readiness, and diagnostics | Reviewed | 3 |
-| P21 | Behavior-preserving component decomposition | Queued | 0 |
+| P21 | Behavior-preserving component decomposition | Reviewed | 3 |
