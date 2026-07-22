@@ -6,6 +6,8 @@
 /csharp/obj/Debug/
 /csharp/obj/Release/
 /csharp/logs/
+/tests/**/bin/
+/tests/**/obj/
 /csharp/wwwroot/css/*.map
 /csharp/wwwroot/js/*.map
 **/*.user
@@ -17,6 +19,7 @@ Thumbs.db
 .idea/
 .vscode/
 /lint-report.sarif/
+/artifacts/
 /.serena/
 .claude/settings.local.json
 /_not_for_github/

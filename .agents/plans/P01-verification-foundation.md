@@ -114,11 +114,13 @@ Create `tests/AdQueryOrchestrator.Tests/AdQueryOrchestrator.Tests.csproj` with:
 
 - Target framework `net10.0-windows`.
 - A project reference to `csharp/AdQueryOrchestrator.csproj`.
-- The selected xUnit package set, pinned to explicit stable versions compatible with `net10.0-windows`.
+- The current stable xUnit v3 package set, pinned to explicit versions compatible with `net10.0-windows`.
 - `Microsoft.NET.Test.Sdk`.
-- `xunit`.
+- `xunit.v3.mtp-off`, using xUnit v3 without the Microsoft Testing Platform extension while the canonical verifier relies on VSTest TRX and Coverlet collector contracts.
 - `xunit.runner.visualstudio` marked as a private asset.
 - `coverlet.collector` marked as a private asset.
+
+Set the test project output type to `Exe`, as required by xUnit v3, while retaining VSTest compatibility for `dotnet test`, TRX output, Visual Studio discovery, and `XPlat Code Coverage`. Do not add the deprecated xUnit v2 `xunit` package.
 
 Before committing package versions, check them with the repository vulnerability-audit command. Do not add a general-purpose mocking package. Later plans should prefer fake `HttpMessageHandler`, in-memory configuration, temporary directories, and small test doubles implementing existing interfaces.
 
