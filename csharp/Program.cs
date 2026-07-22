@@ -1,3 +1,4 @@
+using AdQuery.Orchestrator.Configuration;
 using AdQuery.Orchestrator.Security;
 using AdQuery.Orchestrator.Services;
 using Microsoft.AspNetCore.Authentication.Negotiate;
@@ -23,6 +24,7 @@ builder.Services.AddControllers()
         options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
     });
 builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddLlmProviderConfiguration(builder.Configuration);
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
