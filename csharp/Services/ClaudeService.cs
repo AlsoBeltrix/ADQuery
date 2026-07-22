@@ -88,6 +88,10 @@ internal sealed class ClaudeService : IClaudeService
     {
         var response = new ClaudeResponse();
         var stopwatch = Stopwatch.StartNew();
+        var effectiveModel = !string.IsNullOrWhiteSpace(modelOverride)
+          ? modelOverride
+          : _providerOptions.Model ?? "claude-3-sonnet-20240229";
+        var endpoint = _providerOptions.Endpoint ?? "/v1/messages";
 
         try
         {
@@ -99,46 +103,71 @@ internal sealed class ClaudeService : IClaudeService
                 return response;
             }
 
-            var effectiveModel = !string.IsNullOrWhiteSpace(modelOverride)
-              ? modelOverride
-              : _providerOptions.Model ?? "claude-3-sonnet-20240229";
-
-            _logger.LogInformation("Generating directory plan for query: {Query} using model {Model}", userQuery, effectiveModel);
+            _logger.LogInformation("Generating directory plan using model {Model}", effectiveModel);
 
             var prompt = BuildExecutionPlanPrompt(userQuery, context, requestedResultLimit);
+            var systemGuidance = BuildSystemGuidance(_configuration);
 
             var claudeRequest = _requestBuilder.Build(
                 effectiveModel,
                 int.Parse(_providerOptions.MaxTokens),
-                BuildSystemGuidance(_configuration),
+                systemGuidance,
                 prompt);
 
             var requestJson = JsonSerializer.Serialize(claudeRequest);
-            using var requestContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
-
-            var endpoint = _providerOptions.Endpoint ?? "/v1/messages";
-            var apiResponse = await _httpClient.PostAsync(endpoint, requestContent, cancellationToken);
+            using var apiRequest = new HttpRequestMessage(HttpMethod.Post, endpoint)
+            {
+                Content = new StringContent(requestJson, Encoding.UTF8, "application/json")
+            };
+            using var apiResponse = await _httpClient.SendAsync(
+                apiRequest,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
             if (!apiResponse.IsSuccessStatusCode)
             {
-                var errorBody = await apiResponse.Content.ReadAsStringAsync();
+                var errorBody = await LlmProviderErrorParser.ReadBoundedBodyAsync(
+                    apiResponse.Content,
+                    cancellationToken);
+                var errorDetails = LlmProviderErrorParser.Parse(
+                    errorBody,
+                    LlmProviderErrorParser.GetCorrelationId(apiResponse),
+                    [
+                        _providerOptions.ApiKey,
+                        _providerOptions.AuthToken,
+                        userQuery,
+                        context,
+                        systemGuidance,
+                        prompt,
+                        requestJson
+                    ]);
 
                 if (apiResponse.StatusCode == HttpStatusCode.Unauthorized ||
-                  errorBody.Contains("API Key Not Found", StringComparison.OrdinalIgnoreCase))
+                  errorBody.Content.Contains("API Key Not Found", StringComparison.OrdinalIgnoreCase))
                 {
                     response.Success = false;
                     response.ErrorMessage = "Claude API key is missing or invalid. Please verify Claude:ApiKey.";
-                    _logger.LogWarning("Claude API returned Unauthorized. Verify Claude:ApiKey configuration.");
+                    LogProviderFailure(
+                        endpoint,
+                        effectiveModel,
+                        apiResponse.StatusCode,
+                        errorDetails,
+                        authenticationFailure: true);
                     return response;
                 }
 
                 response.Success = false;
-                response.ErrorMessage = $"Claude API error: {apiResponse.StatusCode} - {errorBody}";
-                _logger.LogError("Claude API request failed: {StatusCode} - {Error}", apiResponse.StatusCode, response.ErrorMessage);
+                response.ErrorMessage =
+                    $"Claude API error: {apiResponse.StatusCode} - {errorDetails.ToPublicDescription()}";
+                LogProviderFailure(
+                    endpoint,
+                    effectiveModel,
+                    apiResponse.StatusCode,
+                    errorDetails,
+                    authenticationFailure: false);
                 return response;
             }
 
             var responseContent = await apiResponse.Content.ReadAsStringAsync(cancellationToken);
-            response.RawResponse = responseContent;
 
             var claudeResponse = JsonSerializer.Deserialize<ClaudeApiResponse>(
               responseContent,
@@ -151,7 +180,7 @@ internal sealed class ClaudeService : IClaudeService
             {
                 response.Success = false;
                 response.ErrorMessage = "Invalid response format from Claude API";
-                _logger.LogWarning("Claude API returned unexpected payload: {Payload}", TruncateForLog(responseContent));
+                LogProviderProtocolFailure(endpoint, effectiveModel, "assistant_content_missing");
                 return response;
             }
 
@@ -160,7 +189,7 @@ internal sealed class ClaudeService : IClaudeService
             {
                 response.Success = false;
                 response.ErrorMessage = "Claude response did not contain a JSON plan.";
-                _logger.LogWarning("Claude response text missing JSON block: {Payload}", TruncateForLog(assistantMessage.Text));
+                LogProviderProtocolFailure(endpoint, effectiveModel, "json_plan_missing");
                 return response;
             }
 
@@ -175,10 +204,11 @@ internal sealed class ClaudeService : IClaudeService
             {
                 response.Success = false;
                 response.ErrorMessage = "Failed to parse directory plan.";
-                _logger.LogWarning("Unable to deserialize plan: {PlanJson}", TruncateForLog(planJson));
+                LogProviderProtocolFailure(endpoint, effectiveModel, "json_plan_invalid");
                 return response;
             }
 
+            response.RawResponse = responseContent;
             response.Success = true;
             response.ModelUsed = effectiveModel;
             response.TokenUsage = new TokenUsage
@@ -191,7 +221,7 @@ internal sealed class ClaudeService : IClaudeService
         {
             response.Success = false;
             response.ErrorMessage = "Error generating directory plan.";
-            _logger.LogError(ex, "Error generating directory plan for query: {Query}", userQuery);
+            LogProviderException(endpoint, effectiveModel, ex);
         }
         finally
         {
@@ -222,8 +252,10 @@ internal sealed class ClaudeService : IClaudeService
         {
             result.IsHealthy = false;
             result.JsonParsingWorking = false;
-            result.ErrorMessage = ex.Message;
-            _logger.LogError(ex, "Claude health check failed");
+            result.ErrorMessage = "Provider health check failed.";
+            _logger.LogError(
+                "LLM provider health check failed with {ExceptionType}",
+                ex.GetType().Name);
         }
         finally
         {
@@ -244,6 +276,8 @@ internal sealed class ClaudeService : IClaudeService
     {
         var response = new CsvEnrichmentPlanResponse();
         var stopwatch = Stopwatch.StartNew();
+        var effectiveModel = _providerOptions.Model ?? "claude-3-sonnet-20240229";
+        var endpoint = _providerOptions.Endpoint ?? "/v1/messages";
 
         try
         {
@@ -254,34 +288,56 @@ internal sealed class ClaudeService : IClaudeService
                 return response;
             }
 
-            var effectiveModel = _providerOptions.Model ?? "claude-3-sonnet-20240229";
-            _logger.LogInformation("Generating CSV enrichment plan for query: {Query} using model {Model}", userQuery, effectiveModel);
+            _logger.LogInformation("Generating CSV enrichment plan using model {Model}", effectiveModel);
 
             var prompt = BuildCsvEnrichmentPrompt(userQuery, csvHeaders, rowCount, columnPatterns);
+            var systemGuidance = BuildCsvEnrichmentSystemGuidance();
 
             var claudeRequest = _requestBuilder.Build(
                 effectiveModel,
                 int.Parse(_providerOptions.MaxTokens),
-                BuildCsvEnrichmentSystemGuidance(),
+                systemGuidance,
                 prompt);
 
             var requestJson = JsonSerializer.Serialize(claudeRequest);
-            using var requestContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
-
-            var endpoint = _providerOptions.Endpoint ?? "/v1/messages";
-            var apiResponse = await _httpClient.PostAsync(endpoint, requestContent, cancellationToken);
+            using var apiRequest = new HttpRequestMessage(HttpMethod.Post, endpoint)
+            {
+                Content = new StringContent(requestJson, Encoding.UTF8, "application/json")
+            };
+            using var apiResponse = await _httpClient.SendAsync(
+                apiRequest,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
 
             if (!apiResponse.IsSuccessStatusCode)
             {
-                var errorBody = await apiResponse.Content.ReadAsStringAsync();
+                var errorBody = await LlmProviderErrorParser.ReadBoundedBodyAsync(
+                    apiResponse.Content,
+                    cancellationToken);
+                var errorDetails = LlmProviderErrorParser.Parse(
+                    errorBody,
+                    LlmProviderErrorParser.GetCorrelationId(apiResponse),
+                    [
+                        _providerOptions.ApiKey,
+                        _providerOptions.AuthToken,
+                        userQuery,
+                        systemGuidance,
+                        prompt,
+                        requestJson
+                    ]);
                 response.Success = false;
-                response.ErrorMessage = $"Claude API error: {apiResponse.StatusCode} - {errorBody}";
-                _logger.LogError("Claude API request failed: {StatusCode} - {Error}", apiResponse.StatusCode, response.ErrorMessage);
+                response.ErrorMessage =
+                    $"Claude API error: {apiResponse.StatusCode} - {errorDetails.ToPublicDescription()}";
+                LogProviderFailure(
+                    endpoint,
+                    effectiveModel,
+                    apiResponse.StatusCode,
+                    errorDetails,
+                    authenticationFailure: false);
                 return response;
             }
 
             var responseContent = await apiResponse.Content.ReadAsStringAsync(cancellationToken);
-            response.RawResponse = responseContent;
 
             var claudeResponse = JsonSerializer.Deserialize<ClaudeApiResponse>(
               responseContent,
@@ -319,6 +375,7 @@ internal sealed class ClaudeService : IClaudeService
                 return response;
             }
 
+            response.RawResponse = responseContent;
             response.Success = true;
             response.TokenUsage = new TokenUsage
             {
@@ -330,7 +387,7 @@ internal sealed class ClaudeService : IClaudeService
         {
             response.Success = false;
             response.ErrorMessage = "Error generating CSV enrichment plan.";
-            _logger.LogError(ex, "Error generating CSV enrichment plan for query: {Query}", userQuery);
+            LogProviderException(endpoint, effectiveModel, ex);
         }
         finally
         {
@@ -711,14 +768,73 @@ internal sealed class ClaudeService : IClaudeService
         return string.Empty;
     }
 
-    private static string TruncateForLog(string? value, int maxLength = 1500)
+    private void LogProviderFailure(
+        string endpoint,
+        string effectiveModel,
+        HttpStatusCode statusCode,
+        LlmProviderErrorDetails details,
+        bool authenticationFailure)
     {
-        if (string.IsNullOrEmpty(value))
+        const string message =
+            "LLM provider request failed for host {EndpointHost} using model {Model}: " +
+            "status {StatusCode}, provider {Provider}, type {ErrorType}, code {ErrorCode}, " +
+            "correlation {CorrelationId}";
+        var arguments = new object?[]
         {
-            return string.Empty;
+            GetEndpointHost(endpoint),
+            effectiveModel,
+            statusCode,
+            details.Provider,
+            details.Type,
+            details.Code,
+            details.CorrelationId
+        };
+
+        if (authenticationFailure)
+        {
+            _logger.LogWarning(message, arguments);
+        }
+        else
+        {
+            _logger.LogError(message, arguments);
+        }
+    }
+
+    private void LogProviderProtocolFailure(
+        string endpoint,
+        string effectiveModel,
+        string failureReason)
+    {
+        _logger.LogWarning(
+            "LLM provider returned an unusable response for host {EndpointHost} using model {Model}: {FailureReason}",
+            GetEndpointHost(endpoint),
+            effectiveModel,
+            failureReason);
+    }
+
+    private void LogProviderException(string endpoint, string effectiveModel, Exception exception)
+    {
+        _logger.LogError(
+            "LLM provider request for host {EndpointHost} using model {Model} failed with {ExceptionType}",
+            GetEndpointHost(endpoint),
+            effectiveModel,
+            exception.GetType().Name);
+    }
+
+    private string GetEndpointHost(string endpoint)
+    {
+        if (Uri.TryCreate(endpoint, UriKind.Absolute, out var absoluteUri))
+        {
+            return absoluteUri.Host;
         }
 
-        return value.Length <= maxLength ? value : value.Substring(0, maxLength) + "...(truncated)";
+        if (_httpClient.BaseAddress is not null &&
+            Uri.TryCreate(_httpClient.BaseAddress, endpoint, out var combinedUri))
+        {
+            return combinedUri.Host;
+        }
+
+        return "unknown";
     }
 }
 
@@ -738,6 +854,3 @@ internal class ClaudeUsage
     public int InputTokens { get; set; }
     public int OutputTokens { get; set; }
 }
-
-
-
