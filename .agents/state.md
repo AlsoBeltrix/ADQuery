@@ -2,11 +2,12 @@
 
 ## Now
 
-- P04 is complete. CSV enrichment now shares the directory authorization policy, rejects invalid plans before directory access, distinguishes absence from failure, propagates cancellation, discards partial results after directory errors, and publishes only successful results.
+- P04 is complete.
+- P05's third and final advisory review is complete at `f662e44`. The plan fixes `MaxRows` at 100,000, removes unearned defaults, records mechanical derivations only as rejected-envelope evidence, and requires capacity, provider, P07, and LDAP evidence before D1. P05 implementation remains unauthorized.
 
 ## Next
 
-- Present P05 Slice 0 for owner approval. If approved, build only the non-behavior-changing capacity harness, measure the current HTTP path plus benchmark-mode planned structures/provider/P07 encodings, and return with evidence-derived D1 values before any limit default or endpoint behavior changes.
+- Obtain owner approval for P05 Slice 0 only. Then add the non-behavior-changing capacity harness described in `.agents/plans/P05-csv-scale-limits.md`, run the current-HTTP and benchmark-mode measurements without live provider, Active Directory, or output-root access, and return with evidence-derived D1 values before any runtime or default change.
 
 ## Blockers
 
