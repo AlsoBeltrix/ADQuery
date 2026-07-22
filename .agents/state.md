@@ -3,13 +3,13 @@
 ## Now
 
 - P04 is complete.
-- P05's third and final advisory review is complete at `f662e44`. The plan fixes `MaxRows` at 100,000, removes unearned defaults, records mechanical derivations only as rejected-envelope evidence, and requires capacity, provider, P07, and LDAP evidence before D1.
-- Owner approved **P05 Slice 0 only** on 2026-07-22: the read-only capacity-evidence harness. No endpoint behavior change, no checked-in limit defaults, no live provider/AD/output-root access. Slices 1-6 stay unauthorized until D1 is approved from Slice 0's evidence.
+- **P05 Slice 0 landed** at `43848b1` (`perf(csv): measure enrichment capacity`): the opt-in, env-gated (`ADQUERY_CAPACITY_MATRIX`) capacity harness under `tests/AdQueryOrchestrator.Tests/Benchmarks/` — actual-HTTP mode via `WebApplicationFactory`, benchmark-only planned-structure model, closed-form byte calculators (all cross-checked against real encoders), and the matrix runner. Verification stays inert (matrix skips; 170 tests executed, verify passed). No endpoint behavior change, no checked-in limit defaults, no live provider/AD/output-root access. Evidence and D1 derivation recorded in `.agents/plans/P05-slice0-capacity-evidence.md`.
+- **D1 (initial cap values) awaits owner approval.** Five genuine choices with computed consequences are laid out in the evidence doc's "D1 choices" section: (1) enforced active-CSV count, (2) column/header admission, (3) per-field/body byte budget, (4) retrieval-attribute/output budget, (5) batch-size candidate. Key caveat: all heap/working-set figures are workstation GC on `ASHBIAMWEB1`; deployment uses server GC and must remeasure before any memory-derived cap is finalized. P06/P07 have not landed.
 
 ## Next
 
-- Implement P05 Slice 0 (`perf(csv): measure enrichment capacity`): the opt-in separate-client/actual-HTTP benchmark plus deterministic fake directory, benchmark-only models of the planned retained structures, complete rendered provider-request bytes, and P07 canonical/export encodings. Run the evidence matrix, record raw results and derived variance, then return with D1's genuine resource/product choices and computed consequences for approval before any Slice 1-6 work.
+- Present the D1 choices to the owner (one decision at a time, plain English) and record the approved values durably. Slices 1-6 stay unauthorized until D1 is approved.
 
 ## Blockers
 
-- None.
+- None. D1 owner approval gates Slices 1-6 but is a normal decision point, not a blocker.
