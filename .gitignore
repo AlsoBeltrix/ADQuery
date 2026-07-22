@@ -23,7 +23,10 @@ Thumbs.db
 /.serena/
 .claude/settings.local.json
 /_not_for_github/
-/docs/
+/docs/*
+!/docs/history/
+/docs/history/*
+!/docs/history/state-archive.md
 /csharp/docs/
 /codex_resume.ps1
 /session-summary.txt
