@@ -1,6 +1,6 @@
 # P03 — Dependency Security and .NET Runtime Modernization
 
-**Status:** Approved — implementation is authorized. P01-D3's direct local .NET 10 SDK/runtime/Microsoft-package migration landed in `f97e62e` and `5716462`; P03 retains the remaining package-family, hosting-prerequisite, and deferred real-server acceptance work.
+**Status:** Complete — the .NET 10 foundation, third-party package updates, automated compatibility checks, and hosting-prerequisite documentation have landed. P03-D5 intentionally defers real-server sign-in checks and makes them non-gating; no production installation has been performed.
 
 ## Finding
 
@@ -373,6 +373,25 @@ P03 is complete only when:
 - Runtime and Hosting Bundle prerequisites are documented and handed to P15.
 - Rollback instructions retain a verified non-vulnerable .NET 10 artifact once one exists; no unavailable staging drill is required.
 - Required owner decisions are durably recorded and the plan status is explicitly changed to `Approved` before implementation begins.
+
+## Implementation Evidence
+
+Completed on 2026-07-22. The implementation consists of these independently verified slices:
+
+- `f97e62e` and `5716462` — established the pinned .NET 10 SDK, `net10.0-windows` application and test projects, aligned Microsoft packages, and locked dependency graphs through P01-D3.
+- `1b1052c` and `f8da977` — recorded the maintained shared-runtime decision and the owner-accepted deferral of real-server sign-in checks.
+- `ba0e5b6` — aligned Serilog with ASP.NET Core 10 and verified configuration binding, rolling-file output, structured exceptions, and flush behavior.
+- `b9bb587` — extended the canonical verifier to publish and start the framework-dependent application, inspect its .NET 10 runtime contract, and require a protected endpoint to return `401`.
+- `f6eec35` — upgraded Swashbuckle and verified that Swagger JSON and UI work in Development and are unavailable in Production.
+- `61854b0` — documented the Windows, IIS, .NET 10 Hosting Bundle, authentication, restart, permissions, verification, and rollback prerequisites without bundling a private runtime.
+- `fccc8bc` — added isolated in-process authorization tests for approved (`200`), refused (`403`), and anonymous (`401`) identities while preserving both production role gates.
+- `feacf5c` — exercised the real CSV/XLSX formatter, reopened generated workbooks with ClosedXML, and verified worksheet, header, escaping, and row values.
+
+The final canonical verifier passed at `feacf5c` with SDK `10.0.302`, 74 tests, zero build warnings, successful Production and Development publish/startup checks, and zero direct or transitive vulnerability findings. A final current-package audit found no outdated, deprecated, or vulnerable direct dependency. Retained older transitives are owned by their current parent packages: ClosedXML owns OpenXML and `System.IO.Packaging`; Swashbuckle owns Microsoft.OpenApi; Serilog owns its core/configuration graph; and xUnit owns its test-only compatibility graph. No unsupported direct override was added.
+
+Guard proofs temporarily disabled each protected behavior and were fully restored: logging package/version and file-sink checks, published-process startup, Development/Production Swagger isolation, both production authorization gates, and CSV/XLSX row generation all failed their focused checks when removed. For the security gate, temporarily resolving Negotiate `10.0.0` made restore report both high-severity advisories; allowing those warnings only for the negative test let the canonical verifier reach its independent structured audit, which rejected the vulnerable graph. Negotiate `10.0.10`, strict warnings-as-errors, and both lock files were then restored, and the complete verifier passed.
+
+No real IIS or company-account check was run because there is no separate non-production server and P03-D5 makes that check non-gating. The prerequisite checklist remains the required input to P15 before any separately authorized production installation. Any later allowed-user, refused-user, anonymous-user, Kerberos/NTLM, directory-read, or rollback result must be recorded only after it is actually observed.
 
 ## Advisory Review
 

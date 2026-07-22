@@ -19,7 +19,7 @@ Plan reviews are advisory reviews of plan quality, performed headlessly with the
 |---|---|---|---:|
 | P01 | Verification foundation and CI | Complete | 2 |
 | P02 | LLM provider request compatibility | Complete | 2 |
-| P03 | Dependency security and .NET runtime modernization | Approved | 2 |
+| P03 | Dependency security and .NET runtime modernization | Complete | 2 |
 | P04 | CSV enrichment authorization and failure integrity | Reviewed | 2 |
 | P05 | CSV enrichment scale and request limits | Reviewed | 2 |
 | P06 | End-to-end query work budgets | Reviewed | 3 |
