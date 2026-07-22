@@ -8,6 +8,8 @@ Implementation dependency: This foundation, including the owner-directed direct 
 
 Review status: Accepted after 2 advisory rounds
 
+The Problem and Repository evidence sections describe the preimplementation tree inspected at `b9c6afe`; they are historical evidence, not claims about the implemented repository state.
+
 ## Problem
 
 The repository has one ASP.NET Core application project but no automated test project, solution file, pinned .NET SDK, repository-wide analyzer configuration, canonical verification script, or checked-in CI workflow. The existing verification entry point only compiles the application, so regressions in security validation, request construction, concurrency, serialization, CSV handling, and deployment behavior can compile successfully and remain undetected.
@@ -299,6 +301,24 @@ Guard proof:
 - For the alias test, temporarily bypass the assignment to `extensionAttribute11`. Run only the affected test and confirm it fails. Restore the source and confirm it passes.
 - Leave no mutation in the worktree.
 - Record the exact failing and passing filtered commands in the commit evidence or plan progress record.
+
+Implementation evidence recorded on 2026-07-22 for `5716462`:
+
+- With the `Math.Min` choice temporarily replaced by the requested limit, this exact command failed with expected `25` and actual `100`:
+
+  ```powershell
+  dotnet test tests/AdQueryOrchestrator.Tests/AdQueryOrchestrator.Tests.csproj -c Release --no-restore --nologo --filter "FullyQualifiedName~EnsurePlanLimit_PreservesExistingStricterPlanLimit"
+  ```
+
+- After restoring `Math.Min`, the same exact filtered command passed with one test executed.
+- With the `extensionAttribute11` assignment temporarily removed, this exact command failed with expected `extensionAttribute11` and actual `LICENSEDSKU`:
+
+  ```powershell
+  dotnet test tests/AdQueryOrchestrator.Tests/AdQueryOrchestrator.Tests.csproj -c Release --no-restore --nologo --filter "FullyQualifiedName~ApplyCustomMappings_MapsConfiguredLicenseAlias"
+  ```
+
+- After restoring the assignment, the same exact filtered command passed with one test executed.
+- Both mutations were restored; `git diff --exit-code -- csharp/Services/PlanPreprocessor.cs` passed before this evidence was recorded.
 
 ### Slice 3 — Enable analyzers and mechanical conventions
 
