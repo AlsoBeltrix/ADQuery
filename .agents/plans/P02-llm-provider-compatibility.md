@@ -1,6 +1,6 @@
 # P02: LLM Provider Request Compatibility
 
-**Status**: Approved — implementation is authorized
+**Status**: Complete
 **Review**: Accepted after 2 advisory rounds
 **Dependencies**: P01's test project and canonical verification command have landed; P02 must extend them rather than create another test host or verifier.
 
@@ -114,6 +114,20 @@ Manual verification, when credentials are available:
 - Existing model override, endpoint, authentication, prompt, and response contracts remain compatible.
 - The reported Vertex 400 is absent in a credentialed smoke test, or that smoke test is explicitly recorded as not run when credentials are unavailable.
 - The red/green guard proof and the repository verification command both pass.
+
+## Implementation evidence
+
+Completed on 2026-07-22 in five independently verified slices:
+
+- `6f4fb08` — characterized the normal, CSV, model-override, header, and health request contracts.
+- `13ed146` — added validated provider-neutral options, the typed wire DTO, and the exact-profile request builder.
+- `f1b9885` — routed normal, CSV, alternate-model, and health-related requests through the shared builder so unmatched routes omit sampling.
+- `65a0aa1` — removed the checked-in global sampling key, documented exact-route opt-in, and guarded legacy warnings and fail-fast startup validation.
+- `78fbc01` — added bounded provider-neutral error parsing, streaming error reads, finite fail-closed redaction, metadata-only logging, and privacy guards.
+
+The canonical verifier passed on the committed implementation tree with 67 tests, zero build warnings, and zero direct or transitive vulnerability findings. Temporary mutations proved the omission, exact-route isolation, validation, warning, raw-body, query/exception privacy, invalid-payload, streaming bound, redaction-budget, and metadata-redaction guards fail when their protected behavior is removed.
+
+The credentialed normal/CSV smoke was not run because no provider API key or authorization-token override was available in the implementation environment. This is explicitly optional under the acceptance criterion when credentials are unavailable; the networkless transport tests cover both request paths and the reported Vertex error envelope.
 
 ## Rollback and risks
 
