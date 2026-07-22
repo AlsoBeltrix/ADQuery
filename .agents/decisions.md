@@ -1,5 +1,14 @@
 # Settled Decisions
 
+## P02-D1 — Provider-capable sampling
+
+- Status: Approved
+- Date: 2026-07-22
+- Authority: Repository owner
+- Decision: Retain `temperature` as an explicit provider-configured opt-in. Omit it from every request by default and whenever sampling is not explicitly enabled. The application is multi-provider; never infer sampling support from a provider name, integration name, service class name, or model identifier.
+- Constraints: The checked-in Vertex Claude configuration must omit sampling. One centralized request builder must apply the same explicit sampling policy to normal, CSV-enrichment, and health-related requests. Unknown modes and invalid opted-in values fail configuration validation; legacy `Temperature` alone never enables the field.
+- Consequence: Current Claude Opus 4.8 requests stop failing on the deprecated parameter, while other providers that support temperature can enable it deliberately without a code fork.
+
 ## P01-D5 — Repository line endings
 
 - Status: Approved implementation selection

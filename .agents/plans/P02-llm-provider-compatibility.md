@@ -1,6 +1,6 @@
 # P02: LLM Provider Request Compatibility
 
-**Status**: Reviewed — implementation is not authorized
+**Status**: Approved — implementation is authorized
 **Review**: Accepted after 2 advisory rounds
 **Dependencies**: P01's test project and canonical verification command have landed; P02 must extend them rather than create another test host or verifier.
 
@@ -121,6 +121,8 @@ The code rollback is the set of P02 commits. Configuration rollback is not suffi
 ## Open owner decision
 
 **P02-D1 — Sampling support**: retain a disabled, explicit temperature opt-in, or remove temperature support entirely. Recommendation: retain the opt-in because it costs little once centralized and avoids model-name conditionals, while the safe checked-in and missing-configuration behavior remains unconditional omission.
+
+**Decision**: Approved on 2026-07-22. Retain a disabled-by-default, explicitly configured temperature opt-in because the application is multi-provider. Never infer support from provider or model names. The canonical record is `.agents/decisions.md` under `P02-D1 — Provider-capable sampling`.
 
 ## Review history
 

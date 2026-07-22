@@ -2,12 +2,12 @@
 
 ## Now
 
-- The owner-reported Vertex sampling incompatibility is owned by P02; implementation has not begun.
+- The owner-reported Vertex sampling incompatibility is owned by P02. P02-D1 and the reviewed plan are approved: sampling remains provider-capable but is omitted unless explicitly enabled, with no provider/model-name inference. Implementation is active.
 
 ## Next
 
-- Resolve P02-D1, record the owner's sampling-support decision, then implement P02 one verified commit at a time using P01's test project and canonical verifier.
+- Implement P02 one verified commit at a time using P01's test project and canonical verifier, beginning with request-serialization guards.
 
 ## Blockers
 
-- P02 implementation awaits P02-D1 approval.
+- None.
