@@ -1,6 +1,6 @@
 # P04 — CSV Enrichment Authorization and Failure Integrity
 
-**Status:** Reviewed — implementation is unauthorized; owner decision is unresolved; advisory review accepted after 2 rounds.
+**Status:** Approved — P04-D1 selected atomic failure with no partial publication; implementation is authorized. Advisory review was accepted after 2 rounds.
 
 **Finding:** CSV enrichment executes model-generated Active Directory attributes without the authorization policy used by normal directory plans. It also converts directory exceptions into “not found,” reports success after partial work, and lets the controller write and cache failed results.
 
@@ -53,7 +53,7 @@ Every model-generated CSV enrichment plan is semantically validated against the 
 
 Alternative: continue after operational failures, mark affected rows, and publish partial results. This improves availability but requires a durable per-row error schema, unmistakable incomplete-result UI, download annotations, retry semantics, and acceptance of potentially misleading output. That larger product contract is not defined.
 
-**Approval required before implementation.**
+**Decision:** Approved on 2026-07-22. Fail atomically and publish nothing after an operational directory error. The canonical record is `.agents/decisions.md` under `P04-D1 — Fail CSV enrichment atomically`.
 
 ## Target design
 

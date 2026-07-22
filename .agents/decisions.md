@@ -1,5 +1,14 @@
 # Settled Decisions
 
+## P04-D1 — Fail CSV enrichment atomically
+
+- Status: Approved
+- Date: 2026-07-22
+- Authority: Repository owner
+- Decision: On the first non-cancellation Active Directory operational error during CSV enrichment, fail the entire enrichment, discard every accumulated row, and publish no result file, download identifier, preview, or cache entry.
+- Constraints: A successful lookup with no result remains an ordinary “not found” outcome. Cancellation must propagate rather than becoming a lookup failure. Invalid plans must fail before directory access. Partial-result publication is out of scope unless a later owner decision defines its data, UI, retry, and warning contract.
+- Consequence: Users must retry after a directory failure, but the application cannot present an incomplete dataset as a successful authoritative result.
+
 ## P03-D5 — Defer the real-server sign-in check
 
 - Status: Approved
