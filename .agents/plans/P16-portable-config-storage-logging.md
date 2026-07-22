@@ -70,7 +70,7 @@ Evidence was verified at `6edfe58d27054cce7bc4411406097fa0ad8ed1d7`.
 
 ### P02 and P03
 
-P02 owns `ClaudeOptions`, the one provider request builder, sampling modes, provider URL/model/endpoint fields, and compatible existing key names. P16 extends startup validation for finite numeric/provider connection values and secret-source presence; it does not add another provider options type.
+P02 owns `LlmProviderOptions` bound to the legacy `Claude` section, the one provider request builder, exact-model sampling profiles, provider URL/model/endpoint fields, and compatible existing key names. P16 extends startup validation for finite numeric/provider connection values and secret-source presence; it does not add another provider options type.
 
 P03 owns runtime and package compatibility. Any logging package change or `Microsoft.Data.Sqlite` package later used by P14 follows P03's restore/vulnerability audit. P16 removes duplicate sink registration only after P03's behavior baseline exists.
 
@@ -115,7 +115,7 @@ The catalog points to, rather than duplicates, bounds owned by P02/P06/P07/P08/P
 Representative owners:
 
 ```text
-Claude                 ClaudeOptions (P02, extended by P16 validation)
+Claude                 LlmProviderOptions (P02, extended by P16 validation)
 Storage                StorageOptions (P16)
 OperationalLogging     OperationalLoggingOptions (P16)
 Authorization          AuthorizationPolicyOptions (P16/P04 boundary)
@@ -143,7 +143,7 @@ Rules:
 4. Relative read-only resource paths resolve exactly once against `IHostEnvironment.ContentRootPath`. Writable paths never resolve from the current directory.
 5. Base URLs must be absolute HTTPS URIs; an explicit loopback HTTP exception is allowed only in Development and is tested.
 6. Required authorization roles/origins/policy values are trimmed, deduplicated under their specified comparer, bounded, and validated before middleware construction.
-7. P02's `MaxTokens` becomes a positive bounded integer in `ClaudeOptions`; both provider paths consume the same value.
+7. P02's `MaxTokens` becomes a positive bounded integer in `LlmProviderOptions`; both provider paths consume the same value.
 8. When HMAC validation is enabled, the secret must be present before P12's verifier is constructed. Disabled mode does not fabricate a key.
 9. Options are process-lifetime snapshots. A change requires a controlled restart so P12 executables, P14 commands, provider requests, and storage operations cannot observe mixed generations.
 
@@ -400,7 +400,7 @@ Each slice addresses one finding, is verified, and is committed before the next.
 Commit intent: `refactor: bind validated application options`
 
 - Add the canonical registry and owner-specific `ValidateOnStart` wiring.
-- Complete P02 `ClaudeOptions` finite parsing and migrate remaining raw consumer reads.
+- Complete P02 `LlmProviderOptions` finite parsing and migrate remaining raw consumer reads.
 - Add immutable restart-stable snapshots and invalid-config tests.
 - Add the no-raw-`IConfiguration` architecture guard.
 

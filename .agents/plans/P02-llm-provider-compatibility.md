@@ -37,32 +37,33 @@ Observable failure: every plan-generation, CSV-enrichment, and provider-health r
 
 ### Typed options and request contract
 
-Introduce a validated `ClaudeOptions` options type bound from the `Claude` section through `AddOptions<ClaudeOptions>().Bind(...).ValidateOnStart()` in `Program.cs`. Keep existing names for connection, endpoint, token budget, model, and prompt-template settings so environment/IIS overrides remain compatible. Preserve the typed client's configuration-driven `BaseAddress` behavior.
+Introduce a validated `LlmProviderOptions` options type bound from the legacy `Claude` section through `AddOptions<LlmProviderOptions>().Bind(...).ValidateOnStart()` in `Program.cs`. The neutral type reflects that Portkey routes multiple providers, while the existing section and connection, endpoint, token-budget, model, and prompt-template key names remain unchanged for environment/IIS compatibility. Preserve the typed client's configuration-driven `BaseAddress` behavior.
 
-Represent sampling as an explicit opt-in rather than inferring capabilities from a provider name or model slug:
+Represent sampling as a list of explicit `SamplingProfiles`, each containing an exact integration-qualified `TargetModel`, a `Mode`, and an optional `Temperature`. Resolve profiles with ordinal equality against the effective request model; this is an exact configuration lookup, not capability inference:
 
-- `SamplingMode` defaults to `Omit`.
-- When mode is `Omit`, ignore any legacy `Temperature` value and emit one startup warning; this remains true even when that ignored value is non-finite or out of range because it will not enter a request.
-- When mode is `Temperature`, require a value and validate it as finite and within the inclusive `0.0..1.0` application range.
-- Reject an unknown sampling mode, a missing opted-in value, or an invalid opted-in value during startup validation.
+- No matching profile means `Omit`; arbitrary or alternate model overrides therefore fail closed without a separate default profile.
+- When a matching profile's mode is `Omit`, ignore any supplied value and emit one startup warning; this remains true even when that ignored value is non-finite or out of range because it will not enter a request.
+- When a matching profile's mode is `Temperature`, require a value and validate it as finite and within the inclusive `0.0..1.0` application range.
+- Reject a blank or duplicate target, an unknown mode, a missing opted-in value, or an invalid opted-in value during startup validation.
+- Ignore a legacy global `Claude:Temperature` value and emit one startup warning; it never creates a sampling profile.
 
 The messages request DTO has explicit `JsonPropertyName` attributes for `model`, `max_tokens`, `temperature`, `system`, and `messages`; the nested message DTO similarly pins `role` and `content`. Its nullable `Temperature` property uses `JsonIgnoreCondition.WhenWritingNull`. The default builder assigns `null`; therefore the serialized payload contains no `temperature` key. Do not use anonymous objects or a naming policy as an implicit wire-contract definition.
 
 ### One request builder
 
-Extract a single internal builder or small provider-client component that accepts the effective model, system guidance, user content, and token limit and returns the typed messages request. Both `GenerateExecutionPlanAsync` and `GenerateCsvEnrichmentPlanAsync` must use it. The health path continues to call the shared path until P20 replaces it.
+Extract a single internal builder or small provider-client component that accepts the effective model, system guidance, user content, and token limit and returns the typed messages request. It resolves only the exact configured sampling profile for that effective model. Both `GenerateExecutionPlanAsync` and `GenerateCsvEnrichmentPlanAsync` must use it. The health path continues to call the shared path until P20 replaces it. P14 may later replace today's model-string selection seam with its closed route identity without changing this fail-closed capability behavior.
 
 The builder is the only location allowed to translate sampling configuration into a request property. No call site may append optional provider parameters independently.
 
 ### Configuration migration
 
-Change the checked-in default configuration from `Claude:Temperature: 0` to the explicit omit mode and remove the comment that recommends temperature for deterministic JSON. Keep a documented opt-in example without enabling it. Environment-specific configuration that still supplies only `Claude:Temperature` must not silently enable the field. A custom `IValidateOptions<ClaudeOptions>` logs the ignored legacy key through its injected logger while returning success for `Omit`; options caching makes this an initialization-time observation. The same validator returns a failure for invalid opted-in configuration. Tests resolve `IOptions<ClaudeOptions>.Value` with a capturing logger and assert the warning and validation outcomes.
+Remove checked-in `Claude:Temperature` and its deterministic-JSON comment, leaving `SamplingProfiles` empty so every route omits sampling. Keep a documented profile example without enabling it. Environment-specific configuration that still supplies only `Claude:Temperature` must not silently enable the field. A custom `IValidateOptions<LlmProviderOptions>` logs ignored legacy/profile values through its injected logger while returning success when they cannot enter a request; options caching makes this an initialization-time observation. It returns failure for invalid enabled profiles. Tests resolve `IOptions<LlmProviderOptions>.Value` with a capturing logger and assert warning and validation outcomes.
 
 The existing `int.Parse` handling for malformed `MaxTokens` is a separate typed-configuration defect owned by P16. P02 must preserve valid token-limit behavior and must not broaden into the full configuration migration.
 
 ### Provider error handling
 
-Parse known Anthropic/Portkey error envelopes enough to retain HTTP status, provider type, error code when present, and a bounded sanitized message. Log the endpoint host, effective model identifier, status, and request correlation information, but never log authorization headers, API keys, or full prompts. Preserve the existing user-facing failure shape for this plan; P13 may later standardize error categories.
+Parse known bounded provider/gateway envelopes, including Portkey and Anthropic/OpenAI-style nested errors, without selecting a parser from provider or model names. Retain HTTP status, provider type, error code when present, and a bounded sanitized message; use a bounded generic fallback for unknown shapes. Log the endpoint host, effective model identifier, status, and request correlation information, but never log authorization headers, API keys, full prompts, or raw bodies. Preserve the existing user-facing failure shape for this plan; P13 may later standardize error categories.
 
 ## Implementation slices
 
@@ -84,9 +85,9 @@ Automated tests must cover:
 - The default CSV request JSON does not contain a `temperature` property.
 - Both payloads retain the exact required wire names `model`, `max_tokens`, `system`, and `messages`, and every message retains `role` and `content`; assert their JSON value kinds and representative values as well as their presence.
 - Removing all sampling configuration still omits the property.
-- Explicit `SamplingMode=Temperature` plus a valid value includes the property in both request types.
-- Any Temperature value with `SamplingMode=Omit` is omitted and produces the expected startup warning, including a non-finite or out-of-range ignored value.
-- Unknown mode, missing temperature in opted-in mode, and a non-finite or out-of-range opted-in value fail startup options validation.
+- An exact matching `Temperature` profile plus a valid value includes the property in both request types.
+- A profile value with mode `Omit` is omitted and produces the expected startup warning, including a non-finite or out-of-range ignored value.
+- Blank or duplicate targets, unknown mode, missing temperature in opted-in mode, and a non-finite or out-of-range opted-in value fail startup options validation.
 - Base model, configured alternate model, and per-request model override are preserved and omit temperature unless their exact request configuration opts in.
 - The health call reaches the same compatible request builder while P20 is pending.
 - A representative Portkey/Vertex 400 response is converted to a bounded sanitized error and does not expose configured secrets.
@@ -118,7 +119,7 @@ Manual verification, when credentials are available:
 
 The code rollback is the set of P02 commits. Configuration rollback is not sufficient because the original code serializes a fallback value. Omitting temperature may allow provider defaults to vary across integrations; structured-output correctness must continue to be enforced by schema validation rather than sampling configuration. The optional mode prevents a future provider that supports temperature from requiring another code fork.
 
-## Open owner decision
+## Owner decision
 
 **P02-D1 — Sampling support**: retain a disabled, explicit temperature opt-in, or remove temperature support entirely. Recommendation: retain the opt-in because it costs little once centralized and avoids model-name conditionals, while the safe checked-in and missing-configuration behavior remains unconditional omission.
 

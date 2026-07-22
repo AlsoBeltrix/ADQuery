@@ -5,9 +5,9 @@
 - Status: Approved
 - Date: 2026-07-22
 - Authority: Repository owner
-- Decision: Retain `temperature` as an explicit provider-configured opt-in. Omit it from every request by default and whenever sampling is not explicitly enabled. The application is multi-provider; never infer sampling support from a provider name, integration name, service class name, or model identifier.
-- Constraints: The checked-in Vertex Claude configuration must omit sampling. One centralized request builder must apply the same explicit sampling policy to normal, CSV-enrichment, and health-related requests. Unknown modes and invalid opted-in values fail configuration validation; legacy `Temperature` alone never enables the field.
-- Consequence: Current Claude Opus 4.8 requests stop failing on the deprecated parameter, while other providers that support temperature can enable it deliberately without a code fork.
+- Decision: Retain `temperature` as an explicit capability of a configured LLM route. Sampling is omitted unless one valid profile's exact integration-qualified model identifier equals the effective request model. A matching `Temperature` profile emits its finite `0.0..1.0` value; no match emits nothing. Exact configured equality is selection, not capability inference: never derive support from provider, gateway, class, endpoint, or model-name patterns.
+- Constraints: The checked-in Vertex Claude route has no enabled sampling profile. Blank or duplicate profile identifiers, unknown modes, and missing or invalid opted-in values fail startup validation. A legacy global `Claude:Temperature` value is ignored with one warning and never enables sampling. One centralized request builder applies the same exact-profile policy to normal, CSV-enrichment, and health-related requests.
+- Consequence: Current Claude Opus 4.8 requests stop failing on the deprecated parameter, while another configured provider can opt in without leaking that capability to the primary, alternate, or arbitrary unprofiled model routes.
 
 ## P01-D5 — Repository line endings
 
