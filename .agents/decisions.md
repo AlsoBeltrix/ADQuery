@@ -1,5 +1,14 @@
 # Settled Decisions
 
+## P03-D2 — Use the maintained server runtime
+
+- Status: Approved
+- Date: 2026-07-22
+- Authority: Repository owner
+- Decision: Keep the application framework-dependent on IIS. Install and maintain one patched .NET 10 runtime and Hosting Bundle on each Windows server instead of shipping a private .NET runtime inside every application release.
+- Constraints: Publish a clear prerequisite checklist covering the required .NET 10 runtime, IIS hosting components, installation order, server architecture, authentication settings, and restart requirements. Deployment must stop before replacing application files when those prerequisites are missing or stale.
+- Consequence: Application releases stay smaller and do not carry runtime files that become stale independently. Server maintenance owns .NET security updates, and deployment documentation must make that responsibility explicit.
+
 ## P02-D1 — Provider-capable sampling
 
 - Status: Approved

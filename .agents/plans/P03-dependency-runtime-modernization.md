@@ -99,6 +99,8 @@ Authoritative references:
 
 **Recommendation:** Retain framework-dependent, IIS in-process hosting. It matches `web.config`, keeps artifacts smaller, and centralizes runtime servicing. The cost is an explicit requirement to keep the IIS Hosting Bundle patched. Self-contained deployment shifts servicing responsibility into every application publish.
 
+**Decision:** Approved. Keep one patched .NET 10 runtime and Hosting Bundle maintained on each Windows server rather than shipping a private runtime with the application. Publish an explicit prerequisite checklist and make later deployment checks stop before copying application files when the server runtime or hosting components are missing or stale.
+
 ### D3 — SDK selection
 
 **Recommendation:** Modify P01's root `global.json` to the approved .NET 10 `10.0.300` feature band with `rollForward: latestPatch` and `allowPrerelease: false`. This accepts patched SDKs within the tested feature band without silently moving to a new feature band.
