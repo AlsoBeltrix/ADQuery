@@ -1,6 +1,6 @@
 # P01 — Verification Foundation and CI
 
-Status: **Approved — implementation is authorized**
+Status: **Evidence pending — local implementation complete; hosted CI evidence outstanding**
 
 Owner approval: P01-D1, P01-D2, P01-D3, P01-D4, P01-D5, and the full plan approved on 2026-07-22
 
@@ -404,7 +404,7 @@ Live integration checks must be separate, opt-in commands with explicit prerequi
 ## Acceptance criteria
 
 - `ADQuery.sln` contains the application and test projects.
-- `global.json` resolves a patched SDK in the selected .NET 9 feature band.
+- `global.json` resolves a patched SDK in the selected .NET 10 feature band.
 - Locked restore succeeds from a clean package state.
 - Both projects have committed package lock files.
 - The initial deterministic tests pass without network, domain, IIS, or LLM access.

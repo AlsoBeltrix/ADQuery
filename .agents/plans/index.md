@@ -10,12 +10,14 @@ Plan reviews are advisory reviews of plan quality, performed headlessly with the
 - `In review`: draft exists and review is active.
 - `Reviewed`: review comments are resolved or explicitly retained as open decisions.
 - `Approved`: owner approved the plan for implementation.
+- `Evidence pending`: checked-in implementation is complete, but required external acceptance evidence has not yet been collected.
+- `Complete`: implementation and all required acceptance evidence are complete.
 
 ## Plans
 
 | ID | Plan | Status | Review rounds |
 |---|---|---|---:|
-| P01 | Verification foundation and CI | Approved | 2 |
+| P01 | Verification foundation and CI | Evidence pending | 2 |
 | P02 | LLM provider request compatibility | Reviewed | 2 |
 | P03 | Dependency security and .NET runtime modernization | Reviewed | 2 |
 | P04 | CSV enrichment authorization and failure integrity | Reviewed | 2 |
