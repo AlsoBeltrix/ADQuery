@@ -1,9 +1,11 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using AdQuery.Orchestrator.Configuration;
 using AdQuery.Orchestrator.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace AdQuery.Orchestrator.Tests.Unit;
@@ -87,6 +89,85 @@ public sealed class LlmProviderRequestTests
         AssertRequiredWireContract(request.Body, BaseModel, "Return a simple confirmation");
     }
 
+    [Fact]
+    public async Task ExactBaseProfile_AppliesTemperatureAcrossNormalCsvAndHealthRequests()
+    {
+        var handler = new RecordingHttpMessageHandler();
+        var service = CreateService(
+            handler,
+            new Dictionary<string, string?>
+            {
+                ["Claude:SamplingProfiles:0:TargetModel"] = BaseModel,
+                ["Claude:SamplingProfiles:0:Mode"] = LlmSamplingModes.Temperature,
+                ["Claude:SamplingProfiles:0:Temperature"] = "0.25"
+            });
+
+        var normalResponse = await service.GenerateExecutionPlanAsync(
+            "show active users",
+            cancellationToken: TestContext.Current.CancellationToken);
+        var csvResponse = await service.GenerateCsvEnrichmentPlanAsync(
+            "add department",
+            ["employee"],
+            rowCount: 3,
+            cancellationToken: TestContext.Current.CancellationToken);
+        var healthResponse = await service.CheckHealthAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(normalResponse.Success);
+        Assert.True(csvResponse.Success);
+        Assert.True(healthResponse.IsHealthy);
+        Assert.Equal(3, handler.Requests.Count);
+        AssertRequiredWireContract(handler.Requests[0].Body, BaseModel, "show active users", 0.25);
+        AssertRequiredWireContract(handler.Requests[1].Body, BaseModel, "CSV FILE INFO:", 0.25);
+        AssertRequiredWireContract(handler.Requests[2].Body, BaseModel, "Return a simple confirmation", 0.25);
+    }
+
+    [Fact]
+    public async Task AlternateProfile_AppliesOnlyToItsExactModelOverride()
+    {
+        const string arbitraryModel = "@unconfigured-integration/arbitrary.model";
+        var handler = new RecordingHttpMessageHandler();
+        var service = CreateService(
+            handler,
+            new Dictionary<string, string?>
+            {
+                ["Claude:SamplingProfiles:0:TargetModel"] = AlternateModel,
+                ["Claude:SamplingProfiles:0:Mode"] = LlmSamplingModes.Temperature,
+                ["Claude:SamplingProfiles:0:Temperature"] = "0.65"
+            });
+
+        var normalResponse = await service.GenerateExecutionPlanAsync(
+            "show active users",
+            cancellationToken: TestContext.Current.CancellationToken);
+        var csvResponse = await service.GenerateCsvEnrichmentPlanAsync(
+            "add department",
+            ["employee"],
+            rowCount: 3,
+            cancellationToken: TestContext.Current.CancellationToken);
+        var healthResponse = await service.CheckHealthAsync(TestContext.Current.CancellationToken);
+        var alternateResponse = await service.GenerateExecutionPlanAsync(
+            "show alternate users",
+            cancellationToken: TestContext.Current.CancellationToken,
+            modelOverride: AlternateModel);
+        var arbitraryResponse = await service.GenerateExecutionPlanAsync(
+            "show arbitrary users",
+            cancellationToken: TestContext.Current.CancellationToken,
+            modelOverride: arbitraryModel);
+
+        Assert.True(normalResponse.Success);
+        Assert.True(csvResponse.Success);
+        Assert.True(healthResponse.IsHealthy);
+        Assert.True(alternateResponse.Success);
+        Assert.True(arbitraryResponse.Success);
+        Assert.Equal(AlternateModel, alternateResponse.ModelUsed);
+        Assert.Equal(arbitraryModel, arbitraryResponse.ModelUsed);
+        Assert.Equal(5, handler.Requests.Count);
+        AssertRequiredWireContract(handler.Requests[0].Body, BaseModel, "show active users");
+        AssertRequiredWireContract(handler.Requests[1].Body, BaseModel, "CSV FILE INFO:");
+        AssertRequiredWireContract(handler.Requests[2].Body, BaseModel, "Return a simple confirmation");
+        AssertRequiredWireContract(handler.Requests[3].Body, AlternateModel, "show alternate users", 0.65);
+        AssertRequiredWireContract(handler.Requests[4].Body, arbitraryModel, "show arbitrary users");
+    }
+
     private static ClaudeService CreateService(
         RecordingHttpMessageHandler handler,
         IReadOnlyDictionary<string, string?>? overrides = null)
@@ -114,17 +195,33 @@ public sealed class LlmProviderRequestTests
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(settings)
             .Build();
+        var providerOptions = Options.Create(
+            configuration
+                .GetSection(LlmProviderOptions.SectionName)
+                .Get<LlmProviderOptions>() ?? new LlmProviderOptions());
 
         return new ClaudeService(
             new HttpClient(handler),
             NullLogger<ClaudeService>.Instance,
-            configuration);
+            configuration,
+            providerOptions,
+            new LlmMessagesRequestBuilder(providerOptions));
     }
 
-    private static void AssertRequiredWireContract(string body, string expectedModel, string expectedPromptContent)
+    private static void AssertRequiredWireContract(
+        string body,
+        string expectedModel,
+        string expectedPromptContent,
+        double? expectedTemperature = null)
     {
         using var document = JsonDocument.Parse(body);
         var root = document.RootElement;
+
+        Assert.Equal(
+            expectedTemperature.HasValue
+                ? ["model", "max_tokens", "temperature", "system", "messages"]
+                : ["model", "max_tokens", "system", "messages"],
+            root.EnumerateObject().Select(property => property.Name));
 
         var model = root.GetProperty("model");
         Assert.Equal(JsonValueKind.String, model.ValueKind);
@@ -134,6 +231,17 @@ public sealed class LlmProviderRequestTests
         Assert.Equal(JsonValueKind.Number, maxTokens.ValueKind);
         Assert.Equal(1234, maxTokens.GetInt32());
 
+        if (expectedTemperature.HasValue)
+        {
+            var temperature = root.GetProperty("temperature");
+            Assert.Equal(JsonValueKind.Number, temperature.ValueKind);
+            Assert.Equal(expectedTemperature.Value, temperature.GetDouble());
+        }
+        else
+        {
+            Assert.False(root.TryGetProperty("temperature", out _));
+        }
+
         var system = root.GetProperty("system");
         Assert.Equal(JsonValueKind.String, system.ValueKind);
 
@@ -141,6 +249,9 @@ public sealed class LlmProviderRequestTests
         Assert.Equal(JsonValueKind.Array, messages.ValueKind);
         var message = Assert.Single(messages.EnumerateArray());
         Assert.Equal(JsonValueKind.Object, message.ValueKind);
+        Assert.Equal(
+            ["role", "content"],
+            message.EnumerateObject().Select(property => property.Name));
         Assert.Equal("user", message.GetProperty("role").GetString());
 
         var content = message.GetProperty("content");

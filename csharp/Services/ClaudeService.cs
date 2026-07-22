@@ -5,34 +5,45 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using AdQuery.Orchestrator.Configuration;
 using AdQuery.Orchestrator.Models;
+using Microsoft.Extensions.Options;
 
 namespace AdQuery.Orchestrator.Services;
 
 /// <summary>
 /// Service for integrating with Claude AI to generate JSON directory plans.
 /// </summary>
-public class ClaudeService : IClaudeService
+internal sealed class ClaudeService : IClaudeService
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<ClaudeService> _logger;
     private readonly IConfiguration _configuration;
+    private readonly LlmProviderOptions _providerOptions;
+    private readonly LlmMessagesRequestBuilder _requestBuilder;
     private readonly string? _promptTemplate;
 
-    public ClaudeService(HttpClient httpClient, ILogger<ClaudeService> logger, IConfiguration configuration)
+    public ClaudeService(
+        HttpClient httpClient,
+        ILogger<ClaudeService> logger,
+        IConfiguration configuration,
+        IOptions<LlmProviderOptions> providerOptions,
+        LlmMessagesRequestBuilder requestBuilder)
     {
         _httpClient = httpClient;
         _logger = logger;
         _configuration = configuration;
+        _providerOptions = providerOptions.Value;
+        _requestBuilder = requestBuilder;
 
-        var baseUrl = _configuration["Claude:BaseUrl"];
+        var baseUrl = _providerOptions.BaseUrl;
         if (!string.IsNullOrWhiteSpace(baseUrl))
         {
             _httpClient.BaseAddress = new Uri(baseUrl);
         }
 
-        var apiKey = _configuration["Claude:ApiKey"];
-        var authToken = _configuration["Claude:AuthToken"];
+        var apiKey = _providerOptions.ApiKey;
+        var authToken = _providerOptions.AuthToken;
 
         if (!string.IsNullOrWhiteSpace(baseUrl) && baseUrl.Contains("portkey", StringComparison.OrdinalIgnoreCase))
         {
@@ -53,7 +64,7 @@ public class ClaudeService : IClaudeService
         }
 
         // Load prompt template from file if it exists
-        var promptTemplatePath = _configuration["Claude:PromptTemplate"] ?? "Configuration/prompt_template.txt";
+        var promptTemplatePath = _providerOptions.PromptTemplate ?? "Configuration/prompt_template.txt";
         if (File.Exists(promptTemplatePath))
         {
             try
@@ -80,7 +91,7 @@ public class ClaudeService : IClaudeService
 
         try
         {
-            if (string.IsNullOrWhiteSpace(_configuration["Claude:ApiKey"]))
+            if (string.IsNullOrWhiteSpace(_providerOptions.ApiKey))
             {
                 response.Success = false;
                 response.ErrorMessage = "Claude API key is not configured.";
@@ -90,30 +101,22 @@ public class ClaudeService : IClaudeService
 
             var effectiveModel = !string.IsNullOrWhiteSpace(modelOverride)
               ? modelOverride
-              : _configuration["Claude:Model"] ?? "claude-3-sonnet-20240229";
+              : _providerOptions.Model ?? "claude-3-sonnet-20240229";
 
             _logger.LogInformation("Generating directory plan for query: {Query} using model {Model}", userQuery, effectiveModel);
 
             var prompt = BuildExecutionPlanPrompt(userQuery, context, requestedResultLimit);
 
-            var temperature = double.TryParse(_configuration["Claude:Temperature"], out var t) ? t : 0;
-
-            var claudeRequest = new
-            {
-                model = effectiveModel,
-                max_tokens = int.Parse(_configuration["Claude:MaxTokens"] ?? "4000"),
-                temperature,
-                system = BuildSystemGuidance(_configuration),
-                messages = new[]
-              {
-          new { role = "user", content = prompt }
-        }
-            };
+            var claudeRequest = _requestBuilder.Build(
+                effectiveModel,
+                int.Parse(_providerOptions.MaxTokens),
+                BuildSystemGuidance(_configuration),
+                prompt);
 
             var requestJson = JsonSerializer.Serialize(claudeRequest);
             using var requestContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
 
-            var endpoint = _configuration["Claude:Endpoint"] ?? "/v1/messages";
+            var endpoint = _providerOptions.Endpoint ?? "/v1/messages";
             var apiResponse = await _httpClient.PostAsync(endpoint, requestContent, cancellationToken);
             if (!apiResponse.IsSuccessStatusCode)
             {
@@ -244,36 +247,28 @@ public class ClaudeService : IClaudeService
 
         try
         {
-            if (string.IsNullOrWhiteSpace(_configuration["Claude:ApiKey"]))
+            if (string.IsNullOrWhiteSpace(_providerOptions.ApiKey))
             {
                 response.Success = false;
                 response.ErrorMessage = "Claude API key is not configured.";
                 return response;
             }
 
-            var effectiveModel = _configuration["Claude:Model"] ?? "claude-3-sonnet-20240229";
+            var effectiveModel = _providerOptions.Model ?? "claude-3-sonnet-20240229";
             _logger.LogInformation("Generating CSV enrichment plan for query: {Query} using model {Model}", userQuery, effectiveModel);
 
             var prompt = BuildCsvEnrichmentPrompt(userQuery, csvHeaders, rowCount, columnPatterns);
 
-            var temperature = double.TryParse(_configuration["Claude:Temperature"], out var t) ? t : 0;
-
-            var claudeRequest = new
-            {
-                model = effectiveModel,
-                max_tokens = int.Parse(_configuration["Claude:MaxTokens"] ?? "4000"),
-                temperature,
-                system = BuildCsvEnrichmentSystemGuidance(),
-                messages = new[]
-              {
-          new { role = "user", content = prompt }
-        }
-            };
+            var claudeRequest = _requestBuilder.Build(
+                effectiveModel,
+                int.Parse(_providerOptions.MaxTokens),
+                BuildCsvEnrichmentSystemGuidance(),
+                prompt);
 
             var requestJson = JsonSerializer.Serialize(claudeRequest);
             using var requestContent = new StringContent(requestJson, Encoding.UTF8, "application/json");
 
-            var endpoint = _configuration["Claude:Endpoint"] ?? "/v1/messages";
+            var endpoint = _providerOptions.Endpoint ?? "/v1/messages";
             var apiResponse = await _httpClient.PostAsync(endpoint, requestContent, cancellationToken);
 
             if (!apiResponse.IsSuccessStatusCode)
@@ -743,8 +738,6 @@ internal class ClaudeUsage
     public int InputTokens { get; set; }
     public int OutputTokens { get; set; }
 }
-
-
 
 
 
