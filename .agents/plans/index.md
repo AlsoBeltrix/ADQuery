@@ -32,7 +32,7 @@ Plan reviews are advisory reviews of plan quality, performed headlessly with the
 | P15 | Safe, checked, and recoverable IIS deployment | Reviewed | 3 |
 | P16 | Portable configuration, storage, and logging | Reviewed | 3 |
 | P17 | Versioned feedback storage and analyzer contract | Reviewed | 3 |
-| P18 | Standards-compliant CSV ingestion | Queued | 0 |
+| P18 | Standards-compliant CSV ingestion | Reviewed | 3 |
 | P19 | Single-flight browser job polling | Queued | 0 |
 | P20 | Separated liveness, readiness, and diagnostics | Queued | 0 |
 | P21 | Behavior-preserving component decomposition | Queued | 0 |
