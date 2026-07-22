@@ -1,6 +1,6 @@
 # P03 — Dependency Security and .NET Runtime Modernization
 
-**Status:** Reviewed. P01-D3's direct local .NET 10 SDK/runtime/Microsoft-package migration landed in `f97e62e` and `5716462`; the remaining P03 package-family, hosting, deployment, and staging work is not implemented or authorized.
+**Status:** Approved — implementation is authorized. P01-D3's direct local .NET 10 SDK/runtime/Microsoft-package migration landed in `f97e62e` and `5716462`; P03 retains the remaining package-family, hosting-prerequisite, and deferred real-server acceptance work.
 
 ## Finding
 
@@ -53,7 +53,7 @@ Authoritative references:
 - Microsoft dependency majors align with the target framework, redundant shared-framework references are removed where proven unnecessary, and third-party major upgrades are isolated.
 - A framework-dependent IIS deployment is blocked unless the patched .NET 10 Hosting Bundle and ASP.NET Core Module are present.
 - Automated verification proves startup, authorization policy, package security, build, and publish compatibility.
-- A production-matched IIS staging smoke proves actual Negotiate, role authorization, and LDAP behavior.
+- A documented real-server checklist covers actual Negotiate, role authorization, and LDAP behavior; the owner accepts deferring that check until convenient rather than making it a release condition.
 
 ## Scope
 
@@ -84,7 +84,7 @@ Authoritative references:
 - P01 Slice 1 performs the local .NET 10 SDK, application-target, and Microsoft-package migration before the remaining verification slices.
 - P02 should land before the final end-to-end LLM smoke, but it does not block package patching, compilation, publishing, startup, or Windows Authentication verification.
 - P15 must consume this plan’s runtime preflight contract before any production deployment automation is considered safe.
-- A production-matched IIS staging host, an approved-group test account, and an authenticated non-member test account are required before migration completion.
+- Real company accounts are required only when the deferred real-server sign-in check is performed; they are not prerequisites for implementation, migration completion, or release.
 - Installing or repairing a Hosting Bundle and restarting IIS services are external administrative actions. They require a separate explicit deployment authorization.
 
 ## Owner Decisions Required
@@ -117,9 +117,11 @@ Authoritative references:
 
 **Recommendation:** Do not promote the .NET 10 artifact until the production-matched IIS matrix passes with real domain identities. Automated fake-auth tests protect policy wiring, but they cannot prove Kerberos/NTLM negotiation or domain role expansion.
 
+**Decision:** The owner rejected this release gate because no non-production server exists and the unused application has low operational impact. Automated checks remain required, but release may proceed before real company-account testing. Test allowed, refused, and anonymous access on the real server when convenient, record the result honestly, and close access or remove the failed installation if authentication is wrong.
+
 ## Implementation Stages and Commits
 
-Each stage is a separate commit. Do not amend, squash, or combine commits. Stop on the first unexplained build, audit, test, publish, or staging regression.
+Each stage is a separate commit. Do not amend, squash, or combine commits. Stop on the first unexplained build, audit, test, publish, or real-server regression.
 
 ### Stage 0 — Refresh the baseline
 
@@ -216,17 +218,18 @@ If removing a shared-framework reference produces ambiguity or changes runtime b
    - abort before copying files if prerequisites fail.
 4. Do not implement P15’s deployment mutations in this plan.
 
-### Stage 6 — Production-matched staging acceptance
+### Stage 6 — Deferred real-server acceptance
 
-No production mutation and no commit unless documentation evidence changes.
+This stage is not a release condition. Any production mutation still requires separate explicit authorization, and no commit is required unless documentation evidence changes.
 
 1. Publish the exact candidate commit framework-dependently in Release mode.
-2. Install or repair the approved patched .NET 10 Hosting Bundle on a production-matched staging IIS host under separately authorized administration.
+2. Install or repair the approved patched .NET 10 Hosting Bundle on the real IIS host under separately authorized administration.
 3. Restart the required IIS services or host according to Microsoft guidance.
-4. Deploy the candidate to staging.
-5. Execute the complete compatibility matrix.
-6. Retain the last verified non-vulnerable .NET 10 artifact as the rollback candidate once one exists.
-7. Record results, host OS/IIS/runtime versions, candidate commit, and artifact identity in the release evidence location chosen by P01/P15. Do not put machine-specific inventory in `.agents/state.md`.
+4. Deploy the candidate without opening it to users unnecessarily.
+5. When convenient, execute the applicable real-server compatibility checks with allowed, refused, and anonymous access.
+6. If authentication is wrong, close access and remove or replace the failed installation.
+7. Retain the last verified non-vulnerable .NET 10 artifact as the rollback candidate once one exists.
+8. Record only checks that actually ran, along with host OS/IIS/runtime versions, candidate commit, and artifact identity, in the release evidence location chosen by P01/P15. Do not put machine-specific inventory in `.agents/state.md`.
 
 ## Automated Verification
 
@@ -295,18 +298,18 @@ Repeat the resolved-graph audit after Stage 2. The .NET 10 package must resolve 
 | Publish | Framework-dependent `net10.0-windows` Release publish | Publish succeeds; runtime config targets .NET 10 | Publish log and runtimeconfig inspection |
 | Startup | Published output under test configuration | Host starts and dependency injection resolves | Automated startup smoke |
 | Swagger | Development environment | Swagger JSON and UI load successfully | Automated/manual smoke |
-| IIS module | Production-matched staging IIS | ASP.NET Core Module V2 loads the in-process app | IIS/module inventory and successful request |
+| IIS module | Real IIS server, when checked | ASP.NET Core Module V2 loads the in-process app | IIS/module inventory and successful request |
 | Anonymous request | No Windows credentials | Request is challenged; protected API does not return data | HTTP status and IIS/app log |
 | Approved user | Domain user in `ANALOG\ADEXNLQ_Users` | `/api/user/info` returns `200`, correct identity, and authenticated state | Sanitized response/status |
 | Disallowed user | Authenticated domain user outside the role | Protected endpoint returns `403` | HTTP status and authorization log |
 | Role expansion | Direct and nested membership cases used operationally | Authorization behavior matches the current accepted baseline | Account/membership case results |
-| Kerberos | Domain-joined client where SPN configuration supports Kerberos | Successful access; negotiated mechanism recorded | IIS authentication diagnostics |
+| Kerberos | Domain-joined client where SPN configuration supports Kerberos, when checked | Successful access; negotiated mechanism recorded | IIS authentication diagnostics |
 | NTLM fallback | Approved environment where fallback is intentionally supported | Behavior matches deployment policy | IIS authentication diagnostics |
 | Directory access | Approved identity executes a minimal read-only query | LDAP query succeeds without permission expansion | Sanitized request/result log |
 | LLM path | P02-compatible configuration | One minimal plan-generation request succeeds | Sanitized request/result log |
 | CSV/XLSX | Representative small export | Existing export formats still open and contain expected rows | Smoke artifact/checksum |
 | Logging | Startup, request, and exception cases | Existing configured log outputs remain functional | Sanitized log excerpts |
-| Rollback | Last verified non-vulnerable .NET 10 artifact on staging | Application starts and approved-user auth succeeds | Rollback drill result |
+| Rollback | Last verified non-vulnerable .NET 10 artifact on the real server, once one exists | Application starts and approved-user auth succeeds | Rollback result when exercised |
 
 If production policy does not permit NTLM, replace the NTLM row with proof that NTLM is rejected and Kerberos remains functional.
 
@@ -343,7 +346,7 @@ The independent package-family commits permit Serilog or Swashbuckle rollback wi
 
 ## Risks and Mitigations
 
-- **Windows Authentication regression:** Automated fake-auth tests cannot exercise Negotiate. Require real IIS staging tests with domain accounts before promotion.
+- **Windows Authentication regression:** Automated fake-auth tests cannot exercise Negotiate. The owner accepts that the deferred real-server check may discover a problem after installation; close access and remove or replace a failed installation rather than leaving it exposed.
 - **LDAP role-resolution behavior:** One advisory overlaps LDAP-backed role retrieval. Exercise the same direct/nested membership patterns relied upon operationally.
 - **Hosting Bundle mismatch:** Framework-dependent output will fail if the server lacks the required runtime or module. Make the P15 preflight fail closed.
 - **OpenAPI breaking changes:** Swashbuckle and Microsoft.OpenApi majors may change namespaces and APIs. Isolate that upgrade and test Swagger directly.
@@ -366,9 +369,9 @@ P03 is complete only when:
 - The resolved graph contains no reported vulnerable package.
 - Framework-dependent Release publish and startup checks pass.
 - The vulnerability guard has documented revert-fails/restore-passes proof.
-- The full production-matched IIS and Windows Authentication matrix passes.
+- The real-server IIS and Windows Authentication checklist is documented; any checks already performed are recorded accurately, but their completion does not gate release.
 - Runtime and Hosting Bundle prerequisites are documented and handed to P15.
-- Rollback to a verified non-vulnerable .NET 10 artifact has been demonstrated in staging.
+- Rollback instructions retain a verified non-vulnerable .NET 10 artifact once one exists; no unavailable staging drill is required.
 - Required owner decisions are durably recorded and the plan status is explicitly changed to `Approved` before implementation begins.
 
 ## Advisory Review

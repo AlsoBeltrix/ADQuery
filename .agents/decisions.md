@@ -1,5 +1,14 @@
 # Settled Decisions
 
+## P03-D5 — Defer the real-server sign-in check
+
+- Status: Approved
+- Date: 2026-07-22
+- Authority: Repository owner
+- Decision: Do not require a separate non-production Windows server or make real company-account sign-in testing a release condition. The application may be released after its automated checks pass; test allowed, refused, and anonymous access on the real server when convenient.
+- Constraints: A production installation remains a separately authorized action. Never record the deferred sign-in check as passed until it actually runs. If the later check fails, close access and remove or replace the failed installation rather than leaving known-bad authentication exposed.
+- Consequence: The project accepts the risk that a Windows or company-directory integration problem may first appear on the real server. This is proportionate to the owner's stated context that the application currently has no users and has remained broken for months without reported impact.
+
 ## P03-D2 — Use the maintained server runtime
 
 - Status: Approved

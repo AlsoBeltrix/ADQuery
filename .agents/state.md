@@ -2,11 +2,11 @@
 
 ## Now
 
-- P02 is complete. Its implementation and acceptance evidence are canonical in `.agents/plans/P02-llm-provider-compatibility.md`.
+- P03 is approved. P01 already landed its .NET 10 foundation; P03 owns the remaining third-party package updates, server-prerequisite documentation, and deferred real-server acceptance checklist.
 
 ## Next
 
-- Resolve P03's owner decisions one at a time, then implement the approved dependency and runtime modernization plan one verified commit per finding.
+- Refresh P03's package baseline, then implement one independently verified package family or documentation finding per commit.
 
 ## Blockers
 
