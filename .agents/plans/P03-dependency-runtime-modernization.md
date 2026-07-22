@@ -1,12 +1,12 @@
 # P03 — Dependency Security and .NET Runtime Modernization
 
-**Status:** Reviewed. Implementation is unauthorized. Owner decisions remain pending.
+**Status:** Reviewed. P01-D3 authorizes the direct local .NET 10 SDK/runtime/Microsoft-package migration; the remaining P03 package-family, hosting, deployment, and staging work is not part of that authorization.
 
 ## Finding
 
 The application directly references a vulnerable Negotiate authentication package, targets a short-lived runtime nearing end of support, restores a mixed-major dependency graph, and does not pin its SDK. The eventual .NET 10 migration also requires an explicit IIS hosting prerequisite and Windows Authentication compatibility proof.
 
-This plan deliberately separates the urgent security servicing update from the broader runtime and package modernization. The security fix must not wait for the migration.
+P01-D3 supersedes the proposed interim .NET 9 servicing release: the repository will move directly to a patched .NET 10 graph before establishing its verification baseline.
 
 ## Evidence
 
@@ -48,8 +48,7 @@ Authoritative references:
 ## Desired Outcome
 
 - No direct or transitive NuGet dependency is reported vulnerable.
-- The urgent Negotiate fix can be released independently on .NET 9.
-- The application subsequently targets supported .NET 10 LTS on Windows.
+- The first committed modernization graph removes the vulnerable Negotiate version while targeting supported .NET 10 LTS on Windows.
 - The SDK feature band is selected deliberately through `global.json`.
 - Microsoft dependency majors align with the target framework, redundant shared-framework references are removed where proven unnecessary, and third-party major upgrades are isolated.
 - A framework-dependent IIS deployment is blocked unless the patched .NET 10 Hosting Bundle and ASP.NET Core Module are present.
@@ -60,7 +59,6 @@ Authoritative references:
 
 ### Included
 
-- Immediate servicing of the .NET 9 Negotiate package and hosting runtime.
 - SDK selection through a root `global.json`.
 - Migration from `net9.0-windows` to `net10.0-windows`.
 - Alignment or removal of direct Microsoft package references.
@@ -83,8 +81,7 @@ Authoritative references:
 
 ## Dependencies and Ordering
 
-- The urgent Negotiate servicing slice has **no dependency on P01** and must proceed first once this plan is approved.
-- P01 must land before the .NET 10 migration so the canonical verification command, test project, and CI gate exist.
+- P01 Slice 1 performs the local .NET 10 SDK, application-target, and Microsoft-package migration before the remaining verification slices.
 - P02 should land before the final end-to-end LLM smoke, but it does not block package patching, compilation, publishing, startup, or Windows Authentication verification.
 - P15 must consume this plan’s runtime preflight contract before any production deployment automation is considered safe.
 - A production-matched IIS staging host, an approved-group test account, and an authenticated non-member test account are required before migration completion.
@@ -96,6 +93,8 @@ Authoritative references:
 
 **Recommendation:** Ship the patched .NET 9 Negotiate package as an independent first release, then perform the .NET 10 migration after P01. Combining them delays a High-severity authentication fix and makes authentication regressions harder to attribute.
 
+**Decision:** Superseded by P01-D3. The owner directed a direct .NET 10 foundation with no interim .NET 9 commit or release.
+
 ### D2 — Hosting model
 
 **Recommendation:** Retain framework-dependent, IIS in-process hosting. It matches `web.config`, keeps artifacts smaller, and centralizes runtime servicing. The cost is an explicit requirement to keep the IIS Hosting Bundle patched. Self-contained deployment shifts servicing responsibility into every application publish.
@@ -104,9 +103,13 @@ Authoritative references:
 
 **Recommendation:** Modify P01's root `global.json` to the approved .NET 10 `10.0.300` feature band with `rollForward: latestPatch` and `allowPrerelease: false`. This accepts patched SDKs within the tested feature band without silently moving to a new feature band.
 
+**Decision:** Approved through P01-D3 for the local verification foundation.
+
 ### D4 — Package modernization boundary
 
 **Recommendation:** Align required Microsoft packages with .NET 10, remove redundant shared-framework references after compile proof, and update Serilog and Swashbuckle in separate commits. Do not combine unrelated third-party major upgrades with the target-framework change.
+
+**Decision:** Approved through P01-D3 for the Microsoft-package alignment and exact-version boundary. Third-party major upgrades remain separate commits.
 
 ### D5 — Migration promotion gate
 
@@ -132,29 +135,17 @@ No repository mutation.
 5. Confirm that package sources are the intended trusted feeds.
 6. Save the command output as implementation evidence without committing machine-specific paths or installed-version inventories.
 
-### Stage 1 — Patch Negotiate while retaining .NET 9
+### Stage 1 — Superseded interim .NET 9 patch
 
-**Commit:** `fix(deps): patch Negotiate authentication on net9`
-
-1. Change only `Microsoft.AspNetCore.Authentication.Negotiate` from `9.0.0` to the current patched 9.0 servicing release, with `9.0.18` as the minimum acceptable version.
-2. Do not change `TargetFramework`, other packages, SDK selection, application code, or deployment scripts in this commit.
-3. Restore, build, publish, and run the vulnerability audit.
-   - If P01 package lock files already exist, regenerate and commit every affected lock file in this same commit before running locked verification.
-   - If P01's temporary attribution gate already exists, replace it in this same security commit with the unconditional parsed zero-vulnerability gate. If Stage 1 precedes P01, P01 installs the unconditional gate directly when it later lands.
-4. Confirm that neither named GHSA appears in the resolved graph.
-5. Confirm the staging IIS host has the matching or newer patched .NET 9 Hosting Bundle/shared framework before deploying this artifact.
-6. Restart the application after runtime or package servicing, as required by the advisory.
-7. Run the Windows Authentication smoke subset before accepting the commit.
-
-This slice is urgent and must not wait for P01 or the .NET 10 migration.
+Do not implement this stage. P01-D3 supersedes its commit and release instructions and requires the first committed foundation graph to use patched .NET 10 packages instead.
 
 ### Stage 2 — Atomically migrate the SDK, application, tests, and Microsoft dependencies
 
-**Prerequisite:** P01 completed.
+**Prerequisite:** Incorporated into P01 Slice 1 by P01-D3.
 
 **Commit:** `build(dotnet): migrate the windows solution to net10`
 
-P01 requires the SDK pin, application target, test target, and lock files to move together. Do not split these changes: a `net9.0-windows` test project cannot reference the migrated `net10.0-windows` application.
+P01 Slice 1 creates the SDK pin and migrates the existing application and its lock graph atomically. P01 Slice 2 creates the previously nonexistent test project directly on `net10.0-windows`, so no incompatible `net9.0-windows` test project is ever committed.
 
 1. Modify P01's root `global.json` to the approved D3 policy.
 2. Change both `csharp/AdQueryOrchestrator.csproj` and `tests/AdQueryOrchestrator.Tests/AdQueryOrchestrator.Tests.csproj` to `net10.0-windows`.
@@ -232,7 +223,7 @@ No production mutation and no commit unless documentation evidence changes.
 3. Restart the required IIS services or host according to Microsoft guidance.
 4. Deploy the candidate to staging.
 5. Execute the complete compatibility matrix.
-6. Retain the patched .NET 9 artifact and runtime as the rollback candidate until migration acceptance.
+6. Retain the last verified non-vulnerable .NET 10 artifact as the rollback candidate once one exists.
 7. Record results, host OS/IIS/runtime versions, candidate commit, and artifact identity in the release evidence location chosen by P01/P15. Do not put machine-specific inventory in `.agents/state.md`.
 
 ## Automated Verification
@@ -257,7 +248,7 @@ Run the canonical P01 verification command after every implementation commit. Th
    - preview SDK selection;
    - reported vulnerable packages.
 
-Once the application graph has no vulnerability, replace P01's temporary application-versus-solution attribution comparison with one unconditional parsed zero-vulnerability gate. If urgent Stage 1 lands before P01 is implemented, P01 must install the unconditional gate directly rather than creating the temporary comparison.
+P01 must install an unconditional parsed zero-vulnerability gate directly. No application-versus-solution vulnerability baseline is permitted.
 
 Fake authentication is suitable only for policy-wiring regression coverage. It is not a substitute for the IIS Windows Authentication matrix.
 
@@ -265,24 +256,24 @@ Fake authentication is suitable only for policy-wiring regression coverage. It i
 
 The security guard must produce a red-to-green proof, not merely a successful `dotnet list` process exit. The .NET package-list command can report vulnerabilities while returning success, so P01’s wrapper must parse structured output and fail when any vulnerability is present.
 
-When urgent Stage 1 runs before P01, use the current Release build plus explicit before/after machine-readable package-audit assertions for this proof; do not pretend the package command's exit code is a gate. Once P01 exists, use its canonical verification wrapper.
+During P01 Slice 1, use explicit before/after machine-readable package-audit assertions; do not pretend the package command's exit code is a gate. Once P01's wrapper exists, use it for every later package change.
 
 ### Baseline red
 
-Before Stage 1, run the canonical vulnerability gate against `9.0.0`. It must fail and identify both:
+Before P01 Slice 1, run the structured vulnerability assertion against the existing `9.0.0` graph. It must fail and identify both:
 
 - `GHSA-2p3q-h3hg-jcqq`
 - `GHSA-8prm-248r-h957`
 
 ### Patched green
 
-After Stage 1, run the same gate. It must pass and resolve Negotiate to at least `9.0.18`.
+After P01 Slice 1, run the same assertion. It must pass and resolve Negotiate to at least the patched .NET 10 security floor.
 
 ### Revert-fails/restore-passes proof
 
 After adding or updating the automated guard:
 
-1. Use a temporary patch to restore only the Negotiate reference to `9.0.0`.
+1. Use a temporary patch to set only the Negotiate reference to a known vulnerable 10.0 release covered by the advisories.
 2. Force dependency reevaluation.
 3. Run the canonical verification and confirm it fails because the vulnerability gate reports the advisories.
 4. Reapply the patched package version without using history rewrite or destructive Git restoration.
@@ -313,7 +304,7 @@ Repeat the resolved-graph audit after Stage 2. The .NET 10 package must resolve 
 | LLM path | P02-compatible configuration | One minimal plan-generation request succeeds | Sanitized request/result log |
 | CSV/XLSX | Representative small export | Existing export formats still open and contain expected rows | Smoke artifact/checksum |
 | Logging | Startup, request, and exception cases | Existing configured log outputs remain functional | Sanitized log excerpts |
-| Rollback | Last patched .NET 9 artifact on staging | Application starts and approved-user auth succeeds | Rollback drill result |
+| Rollback | Last verified non-vulnerable .NET 10 artifact on staging | Application starts and approved-user auth succeeds | Rollback drill result |
 
 If production policy does not permit NTLM, replace the NTLM row with proof that NTLM is rejected and Kerberos remains functional.
 
@@ -331,33 +322,20 @@ Before deploying the .NET 10 artifact, the deployment process must establish all
 - Windows Authentication is enabled and Anonymous Authentication is disabled for the intended application scope.
 - The application pool identity retains existing directory permissions.
 - Required SPNs and kernel-mode/app-pool credential settings match the deployment’s accepted Kerberos design.
-- The last patched .NET 9 artifact remains available for rollback.
+- The last verified non-vulnerable application artifact remains available for rollback once deployment candidates exist.
 
 P15 must make these checks fail closed before application files are replaced.
 
 ## Rollback
 
-### Urgent servicing slice
-
-Do not roll back to Negotiate `9.0.0` or any version below the advisory’s patched floor. If the first patched version causes a regression:
-
-1. Stop promotion.
-2. Prefer a newer patched .NET 9 servicing release.
-3. Retain the patched Hosting Bundle.
-4. Diagnose Windows Authentication in staging.
-5. Escalate if no patched version preserves required behavior.
-
-A vulnerable package is not an acceptable rollback target.
-
 ### .NET 10 migration
 
-1. Retain the last verified .NET 9 artifact built with patched Negotiate.
-2. Keep the patched .NET 9 shared runtime installed during the migration window.
-3. On failure, restore the previous artifact through P15’s recoverable deployment mechanism and restart only the target application pool.
-4. Re-run approved-user, disallowed-user, anonymous, and minimal LDAP checks.
-5. Leave the .NET 10 Hosting Bundle installed unless its presence is proven to cause the failure; major runtimes are side-by-side, while the shared IIS module must still be validated.
-6. Revert repository changes only through new commits. Do not rewrite history.
-7. Never restore a package graph that fails the vulnerability gate.
+1. Before the first deployment, establish a verified non-vulnerable .NET 10 rollback artifact.
+2. On a later deployment failure, restore that artifact through P15’s recoverable deployment mechanism and restart only the target application pool.
+3. Re-run approved-user, disallowed-user, anonymous, and minimal LDAP checks.
+4. Leave the .NET 10 Hosting Bundle installed unless its presence is proven to cause the failure; the shared IIS module must still be validated.
+5. Revert repository changes only through new commits. Do not rewrite history.
+6. Never restore a package graph that fails the vulnerability gate.
 
 The independent package-family commits permit Serilog or Swashbuckle rollback without undoing the .NET 10 target or Negotiate security floor.
 
@@ -377,7 +355,6 @@ The independent package-family commits permit Serilog or Swashbuckle rollback wi
 
 P03 is complete only when:
 
-- The urgent .NET 9 Negotiate servicing commit is independently verified and no named advisory remains.
 - P01’s canonical verification is established and green.
 - `global.json` selects the approved stable .NET 10 feature band.
 - The project targets `net10.0-windows`.
@@ -389,7 +366,7 @@ P03 is complete only when:
 - The vulnerability guard has documented revert-fails/restore-passes proof.
 - The full production-matched IIS and Windows Authentication matrix passes.
 - Runtime and Hosting Bundle prerequisites are documented and handed to P15.
-- Rollback to the last patched .NET 9 artifact has been demonstrated in staging.
+- Rollback to a verified non-vulnerable .NET 10 artifact has been demonstrated in staging.
 - Required owner decisions are durably recorded and the plan status is explicitly changed to `Approved` before implementation begins.
 
 ## Advisory Review

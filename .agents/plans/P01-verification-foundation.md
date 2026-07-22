@@ -2,9 +2,9 @@
 
 Status: **Approved — implementation is authorized**
 
-Owner approval: P01-D1, P01-D2, and the full plan approved on 2026-07-22
+Owner approval: P01-D1, P01-D2, P01-D3, and the full plan approved on 2026-07-22
 
-Implementation dependency: This foundation should land before behavior-changing plans P02 and P04–P21. The urgent dependency-security work in P03 may land first if necessary, using the existing build and package-audit commands.
+Implementation dependency: This foundation, including the owner-directed direct migration to patched .NET 10, should land before behavior-changing plans P02 and P04–P21.
 
 Review status: Accepted after 2 advisory rounds
 
@@ -43,8 +43,8 @@ The application is Windows-specific and integrates with Active Directory, Window
 
 ## Non-goals
 
-- Do not fix the runtime, dependency, security, performance, concurrency, or correctness findings owned by P02–P21.
-- Do not upgrade the application target framework or application dependencies; P03 owns those changes.
+- Do not fix performance, concurrency, deployment, or correctness findings owned by P02–P21.
+- Apart from the P01-D3 .NET 10 SDK, target-framework, and Microsoft-package alignment, do not absorb P03's third-party package-family, hosting-documentation, deployment, or staging-acceptance work.
 - Do not require live Active Directory access, Windows domain membership, IIS, deployed secrets, or external LLM calls in the default verification command.
 - Do not establish a numerical code-coverage gate before representative tests exist.
 - Do not add broad mocking frameworks when small in-process fakes or framework types are sufficient.
@@ -78,9 +78,7 @@ Use a conventional `.sln` rather than `.slnx` for the initial foundation because
 
 ### SDK selection
 
-Before adding the pin, confirm that a stable `9.0.3xx` SDK is installed on the implementation machine and record that machine-specific fact in `.agents/machines.md`. Add `global.json` with the .NET 9 `9.0.300` feature band and `rollForward` set to `latestPatch`. This matches the current `net9.0-windows` target while allowing patched SDK servicing releases within the same feature band; it deliberately does not cross to another feature band.
-
-P03 must update `global.json` in the same commit that changes the target framework to .NET 10. P01 must not perform that runtime migration.
+Before adding the pin, confirm that a stable `10.0.3xx` SDK is installed on the implementation machine and record that machine-specific fact in `.agents/machines.md`. Add `global.json` with the .NET 10 `10.0.300` feature band, `rollForward` set to `latestPatch`, and `allowPrerelease` set to `false`. Target `net10.0-windows` from the first committed foundation slice so the repository never commits a transitional .NET 9 pin or lock graph.
 
 ### Shared build policy
 
@@ -114,9 +112,9 @@ Package lock files for both projects must be committed. Normal dependency update
 
 Create `tests/AdQueryOrchestrator.Tests/AdQueryOrchestrator.Tests.csproj` with:
 
-- Target framework `net9.0-windows`.
+- Target framework `net10.0-windows`.
 - A project reference to `csharp/AdQueryOrchestrator.csproj`.
-- The SDK-provided xUnit template package set, pinned to explicit stable versions compatible with `net9.0-windows`.
+- The selected xUnit package set, pinned to explicit stable versions compatible with `net10.0-windows`.
 - `Microsoft.NET.Test.Sdk`.
 - `xunit`.
 - `xunit.runner.visualstudio` marked as a private asset.
@@ -197,7 +195,7 @@ If normalization is declined, omit the `dotnet format` line and record that form
 
 The test command must add a TRX logger, a deterministic results directory, and `XPlat Code Coverage`.
 
-The package-list command returns success even when it reports vulnerabilities, so the generic native-exit check is not a vulnerability gate. During P01, run machine-readable audits for the application graph and the solution graph, parse both, and fail only when the solution introduces a vulnerable `(package, resolved version, advisory)` tuple not already present in the application graph. Always print the known application findings. This temporary attribution check proves test tooling adds nothing while P03 owns the existing application vulnerability. After P03 removes that finding, P03 must replace the comparison with an unconditional zero-vulnerability gate.
+The package-list command returns success even when it reports vulnerabilities, so the generic native-exit check is not a vulnerability gate. Parse its machine-readable output and fail when either the application or solution graph contains any vulnerable direct or transitive package. P01-D3 requires the first committed .NET 10 graph to remove the existing Negotiate advisories, so no temporary vulnerability baseline is permitted.
 
 Add `/artifacts/` to `.gitignore`. CI may publish those files, but they must not be committed.
 
@@ -223,10 +221,7 @@ A required-check or branch-protection change is external state and needs separat
 ## Dependency ordering
 
 ```text
-P03 urgent package patch may land independently
-              |
-              v
-P01 SDK/solution/test/verification foundation
+P01 patched .NET 10 SDK/runtime/package and verification foundation
               |
               +--> P02, P04–P14, P17–P21 add focused automated guards
               |
@@ -239,24 +234,27 @@ P01 SDK/solution/test/verification foundation
 
 - P01 must not absorb tests for every later finding.
 - Each later plan must add its own focused guard and extend `scripts/verify.ps1` only when a new test runtime is required.
-- P03 must update the SDK pin, test target, and solution lock files together with the runtime migration.
+- P03's later package-family and hosting work builds on the .NET 10 target established here and must preserve the zero-vulnerability graph.
 - P15, P17, P18, and P19 must pin any additional PowerShell, Python, or JavaScript tooling they introduce.
 
 ## Implementation slices
 
 Each numbered slice is one commit. Do not start the next slice until the current slice is verified and committed.
 
-### Slice 1 — Pin tooling and establish the solution
+### Slice 1 — Establish the solution directly on patched .NET 10
 
-Commit intent: `build: pin sdk and establish solution`
+Commit intent: `build(dotnet): establish net10 solution`
 
-- Add `global.json`.
+- Add the P01-D3 `global.json` SDK contract.
+- Change the application target to `net10.0-windows`.
+- Align `Microsoft.AspNetCore.Authentication.Negotiate` and `System.DirectoryServices` to the current patched .NET 10 servicing release.
+- Remove redundant `Microsoft.AspNetCore.OpenApi`, `Microsoft.Extensions.Http`, and `System.Text.Json` direct references when the application compiles through the ASP.NET Core shared framework; otherwise retain exact aligned 10.x versions with a recorded reason.
 - Add `ADQuery.sln`.
 - Add the existing application project.
 - Add `Directory.Build.props` containing only `RestorePackagesWithLockFile`, deterministic-build behavior, and conditional CI metadata; do not enable analyzers, analysis level, or warning-as-error policy in this slice.
 - Add the application package lock file.
-- Run locked restore and the existing Release build.
-- Confirm project output is unchanged except for deterministic build metadata.
+- Run locked restore, the Release build, the unconditional structured vulnerability audit, and a framework-dependent Release publish.
+- Inspect generated runtime and dependency metadata to confirm the .NET 10 target and intended dependency versions.
 
 Verification:
 
@@ -265,6 +263,8 @@ dotnet --version
 dotnet restore ADQuery.sln
 dotnet restore ADQuery.sln --locked-mode
 dotnet build ADQuery.sln -c Release --no-restore --nologo
+dotnet list ADQuery.sln package --vulnerable --include-transitive --format json
+dotnet publish csharp/AdQueryOrchestrator.csproj -c Release --no-restore --nologo
 ```
 
 ### Slice 2 — Add the test host and characterization guards
@@ -410,7 +410,7 @@ Live integration checks must be separate, opt-in commands with explicit prerequi
 - `scripts/verify.ps1` succeeds from the repository root and another working directory.
 - A forced test failure produces a nonzero script exit.
 - TRX and Cobertura files are produced beneath ignored `artifacts/test-results/`.
-- Parsed application-versus-solution audit output reports no vulnerability introduced by test tooling, without treating the package command's zero exit code as proof.
+- Parsed application and solution audit output reports zero vulnerable packages, without treating the package command's zero exit code as proof.
 - `.agents/repo-guidance.md` names `scripts/verify.ps1` as the canonical command.
 - The selected CI workflow runs on Windows and calls the canonical script.
 - A deliberately failing test fails the CI job.
@@ -427,19 +427,19 @@ Each slice is independently reversible with a new revert commit; do not rewrite 
 - Reverting whitespace normalization does not affect tests or build policy but will make the formatting gate fail; revert the gate and normalization together only if the owner explicitly abandons formatting enforcement.
 - Reverting analyzer policy must not retain undocumented suppressions.
 - Reverting the test project removes regression protection and must also restore the prior verification guidance.
-- Runtime or dependency rollback belongs to P03, not this plan.
+- Runtime or dependency rollback uses a new revert commit and must never restore the vulnerable Negotiate graph.
 
 ## Risks and mitigations
 
 - **Windows-only test target limits runner choice.** Use a Windows runner; do not pretend pure unit tests prove Linux support for a Windows-targeted application.
 - **A one-time formatter pass creates a large blame-only diff.** Isolate it in one commit before functional changes and inspect it for mechanical changes only.
 - **Recommended analyzers may expose semantic findings.** Stop and route those findings to their owning plans; do not weaken the gate or mix fixes into the foundation.
-- **SDK pinning can become stale.** P03 owns the near-term .NET 10 update; future SDK changes must update `global.json`, target frameworks, and lock files together.
+- **SDK pinning can become stale.** Future SDK changes must update `global.json`, target frameworks, and lock files together.
 - **Package locks create maintenance work.** Regenerate and audit them only in intentional dependency commits.
 - **Coverage can look authoritative before it is representative.** Publish coverage without a percentage gate; add a threshold only after representative component suites exist.
 - **CI YAML can diverge from local verification.** Keep all commands in `scripts/verify.ps1` and make CI a thin adapter.
 - **External-service tests can become flaky or leak credentials.** Keep them opt-in and outside the default verification path.
-- **The current vulnerability remains visible during P01.** Do not baseline it away; P03 must remove it and make vulnerability detection a hard failure.
+- **The current vulnerability must disappear in Slice 1.** Parse the audit output and fail the slice if any direct or transitive vulnerability remains.
 
 ## Open owner decisions
 
@@ -458,6 +458,14 @@ Choose whether to normalize existing C# whitespace once or enforce formatting on
 Decision: Approved on 2026-07-22. The canonical record is `.agents/decisions.md` under `P01-D2 — Existing-file formatting baseline`.
 
 Result: Slice 4 will perform one isolated whitespace-only normalization commit, and Slice 5 will enable `dotnet format ... --verify-no-changes` after that commit is proven.
+
+### Decision 3 — Direct .NET 10 foundation
+
+Choose whether to commit a transitional .NET 9 foundation before P03 or establish the new solution directly on .NET 10. Recommendation: go directly to patched .NET 10 because the repository is not yet in production and a transitional SDK pin, test target, and lock graph would be immediate throwaway work.
+
+Decision: Approved on 2026-07-22. The canonical record is `.agents/decisions.md` under `P01-D3 — Establish the verification foundation directly on .NET 10`.
+
+Result: Slice 1 establishes the SDK, application, aligned Microsoft packages, and solution directly on patched .NET 10; Slice 2 creates the test project on the same target. No .NET 9 foundation commit or vulnerable-package baseline is permitted.
 
 ## Review history
 
