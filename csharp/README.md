@@ -1,12 +1,12 @@
 # AdQuery Orchestrator (Directory Plan Edition)
 
-This project delivers a pure C# pipeline for answering natural-language questions about Active Directory. Claude generates structured “directory plans” (JSON recipes), and the web API executes those plans entirely with managed LDAP calls—no shell access, no cmdlets, no script blocks.
+This project delivers a pure C# pipeline for answering natural-language questions about Active Directory. The configured LLM generates structured “directory plans” (JSON recipes), and the web API executes those plans entirely with managed LDAP calls—no shell access, no cmdlets, no script blocks.
 
 ## Architecture
 
 | Layer | Purpose |
 |-------|---------|
-| **ClaudeService** | Turns the user’s prompt into a directory plan (JSON). |
+| **ClaudeService** | Legacy-named provider client that turns the user’s prompt into a directory plan (JSON). |
 | **PlanValidator** | Enforces the allow-list of operations, attributes, and filters before anything executes. |
 | **DirectoryPlanExecutor** | Interprets the plan step-by-step and runs it through `IActiveDirectoryService`. |
 | **ActiveDirectoryService** | Uses `System.DirectoryServices` to query LDAP under the IIS application pool identity. |
@@ -102,8 +102,10 @@ This project delivers a pure C# pipeline for answering natural-language question
   "BaseUrl": "https://api.portkey.ai",
   "ApiKey": "<your key>",
   "AuthToken": "portkey",
-  "Model": "@vertexai-global/anthropic.claude-sonnet-4@20250514",
-  "MaxTokens": "4000"
+  "Model": "@integration/provider.model",
+  "AlternateModel": "@alternate-integration/other.model",
+  "MaxTokens": "4000",
+  "SamplingProfiles": []
 },
 "ActiveDirectory": {
   "RootPath": "DC=analog,DC=com",
@@ -117,12 +119,30 @@ This project delivers a pure C# pipeline for answering natural-language question
 }
 ```
 
+`Claude` is the legacy configuration-section name; the configured routes may target any supported provider or gateway. Sampling parameters are omitted by default. If one exact, integration-qualified model route is known to support temperature, opt in only that route:
+
+```json
+{
+  "Claude": {
+    "SamplingProfiles": [
+      {
+        "TargetModel": "@integration/provider.model",
+        "Mode": "Temperature",
+        "Temperature": "0.2"
+      }
+    ]
+  }
+}
+```
+
+Profile matching is exact and case-sensitive. Enabled temperatures must be finite values from `0.0` through `1.0`; blank or duplicate targets, unknown modes, and invalid enabled values fail startup. An `Omit` profile value or legacy global `Claude:Temperature` value is ignored with a startup warning and never enables sampling.
+
 Queries always run under the IIS application pool identity; the optional `ActiveDirectory:RootPath` setting only overrides the default naming context when needed.
 
 ## Result Downloads & Logging
 
 - Query responses preview the first 10 rows while caching the full dataset for on-demand exports.
-- Natural-language limits such as “first 3” or “top 5” are honored by teaching Claude to emit `result_limit`/`size_limit` and applying a server-side cap before caching or downloading results.
+- Natural-language limits such as “first 3” or “top 5” are honored by instructing the configured LLM to emit `result_limit`/`size_limit` and applying a server-side cap before caching or downloading results.
 - Each successful query saves a canonical CSV to `E:\WWWOutput\<SAMAccountName>\adquery_<SAMAccountName>_<timestamp>.csv`; other download formats are streamed without creating extra files.
 - A matching log file (`adquery_<SAMAccountName>_<timestamp>.log`) records the timestamp, request id, success flag, record count, warnings or errors, and any download events.
 
@@ -151,12 +171,12 @@ The deployment script performs:
 ## Health Checks
 
 - `/health` returns overall status with:
-  - Claude connectivity + JSON parse verification
+  - LLM provider connectivity + JSON parse verification
   - Directory plan validation smoke test
 
 ## Extending the System
 
-1. Update the Claude prompt in `ClaudeService` if new operations or attributes are required.
+1. Update the provider prompt in `ClaudeService` if new operations or attributes are required.
 2. Extend `PlanValidator` allow-lists (operations, attributes, filters).
 3. Expand `ActiveDirectoryService` for additional lookup patterns or caching.
 

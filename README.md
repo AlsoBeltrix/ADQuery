@@ -7,7 +7,7 @@ The implementation lives under `csharp\`.
 ## What It Does
 
 - Accepts natural-language Active Directory questions through a browser UI.
-- Generates declarative directory query plans through `ClaudeService`.
+- Generates declarative directory query plans through the legacy-named `ClaudeService`, which calls the configured LLM route.
 - Validates operations, attributes, filters, projections, and recursion controls before execution.
 - Executes read-only LDAP searches, lookups, group expansion, and reporting hierarchy traversal through `System.DirectoryServices`.
 - Supports synchronous queries, async long-running query jobs, CSV enrichment, multi-format downloads, and query feedback.

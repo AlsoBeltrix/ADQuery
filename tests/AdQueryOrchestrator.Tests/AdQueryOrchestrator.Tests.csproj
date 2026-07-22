@@ -28,4 +28,10 @@
     <ProjectReference Include="..\..\csharp\AdQueryOrchestrator.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\..\csharp\appsettings.json"
+          Link="Fixtures\appsettings.json"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

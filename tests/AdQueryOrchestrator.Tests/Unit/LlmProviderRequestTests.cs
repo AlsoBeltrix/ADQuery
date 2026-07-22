@@ -179,7 +179,6 @@ public sealed class LlmProviderRequestTests
             ["Claude:Endpoint"] = "/v1/messages",
             ["Claude:Model"] = BaseModel,
             ["Claude:MaxTokens"] = "1234",
-            ["Claude:Temperature"] = "0",
             ["Claude:PromptTemplate"] = "missing-test-prompt-template.txt",
             ["OrganizationADSchema:NamingConventions:ActiveUsers:DisplayName"] = "Last, First"
         };
