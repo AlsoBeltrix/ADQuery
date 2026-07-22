@@ -1,6 +1,6 @@
 # P04 — CSV Enrichment Authorization and Failure Integrity
 
-**Status:** Approved — P04-D1 selected atomic failure with no partial publication; implementation is authorized. Advisory review was accepted after 2 rounds.
+**Status:** Complete — shared authorization, fail-closed CSV validation, explicit lookup outcomes, atomic operational failure, and the no-publication controller gate are implemented and verified. Advisory review was accepted after 2 rounds.
 
 **Finding:** CSV enrichment executes model-generated Active Directory attributes without the authorization policy used by normal directory plans. It also converts directory exceptions into “not found,” reports success after partial work, and lets the controller write and cache failed results.
 
@@ -322,7 +322,20 @@ No credentialed Active Directory test is required for deterministic completion. 
 - Diagnostic logs do not contain CSV match values.
 - Each slice has recorded red/green guard proof.
 - The canonical automated tests and Release build pass.
-- P04 remains unimplemented until P04-D1 is approved and the plan status becomes `Approved`.
+- P04-D1 was recorded and the plan status became `Approved` before implementation began.
+
+## Implementation evidence
+
+Completed on 2026-07-22 in four independently committed slices:
+
+- `f784beb` — extracted the resolved directory attribute/operator policy and routed normal plan validation through the shared read-only service without changing its accepted policy.
+- `9e82c8c` — added immutable CSV plan validation and typed filter capabilities, rejected unauthorized or unsupported plans before directory access, removed silent plan rewriting, and corrected the model prompt to `all|filtered`.
+- `6c8357d` — separated found, not-found, cancellation, and directory failure; operational failure now stops immediately, withholds partial rows and counters, and logs no row identifiers or exception text.
+- `5edc985` — placed the controller publication gate before result-ID allocation, preview generation, file writing, caching, completion logging, and HTTP success; validation maps to `400`, directory failure to fixed-text `500`, and cancellation remains `408`.
+
+The canonical verifier passed at `5edc985` with SDK `10.0.302`, 147 tests, zero build warnings, successful Production and Development publish/startup checks, and zero direct or transitive vulnerability findings. Focused guards proved their behavior by temporarily removing the shared-policy route, CSV authorization, unknown-operator rejection, prompt contract, explicit lookup outcomes, cancellation checks, controller publication gate, single writer call, and cache write; each targeted test failed, every mutation was restored, and the complete verifier then passed.
+
+No credentialed Active Directory request or production deployment was performed. The plan requires neither for deterministic completion; its controlled-environment checks remain pre-deployment verification work.
 
 ## Risks and controls
 

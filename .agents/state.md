@@ -2,11 +2,11 @@
 
 ## Now
 
-- P04 is approved. P04-D1 requires an all-or-nothing CSV enrichment result: any operational directory failure discards accumulated rows and produces no downloadable result or cache entry.
+- P04 is complete. CSV enrichment now shares the directory authorization policy, rejects invalid plans before directory access, distinguishes absence from failure, propagates cancellation, discards partial results after directory errors, and publishes only successful results.
 
 ## Next
 
-- Implement P04 Slice 1 by extracting the normal-plan directory security policy behind one shared read-only service without changing accepted or rejected plans.
+- Present P05's first unresolved owner decision in plain English; P05 remains reviewed but is not authorized for implementation.
 
 ## Blockers
 
