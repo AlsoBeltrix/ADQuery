@@ -1,6 +1,6 @@
 # P05 — CSV Enrichment Scale and Request Limits
 
-**Status:** Re-review required. Implementation is unauthorized. The owner fixed the required row ceiling at 100,000. All other numeric workload assumptions must pass the evidence gate below before they become defaults. Two of at most three advisory rounds are complete.
+**Status:** Final advisory review completed; round-3 repairs were applied without a fourth review. Implementation is unauthorized. The owner fixed the required row ceiling at 100,000. All other numeric workload assumptions must pass the evidence gate below before they become defaults. Slice 0 evidence-harness approval and D1 remain pending.
 
 ## Finding
 
@@ -47,7 +47,7 @@ Three repeated quote-heavy spine runs varied by less than 0.1% and peaked at 739
 
 Additional control-escaped-input runs at 20, 24, 28, and 32 code units per cell peaked at 1,078,181,888 B, 1,304,272,896 B, 1,383,481,344 B, and 1,447,878,656 B respectively. Those results prove that 16 was not a discovered capacity boundary. The probe also kept a client-side DTO and raw wire buffer alive inside the measured process while omitting the proposed deduplication index, row-index lists, lookup outcomes, directory records, batch correlation, and retry state. No memory envelope or concurrency claim may be derived from it.
 
-The replacement measurement is a separate-client/actual-HTTP benchmark using the implemented request path, deterministic fake directory batches, and every planned retained data structure. Derive `per-request memory budget = (measured process budget - baseline - retained-service reserve) / enforced active CSV count`; do not choose a per-request budget before the active count and process reserve exist. P07 must remove complete CSV/cache copies and the final job/admission owner must cover CSV work before repeated concurrent maximum-size use is advertised.
+The replacement measurement has two explicit modes: a separate client drives the current actual HTTP request path, while benchmark-only components model every planned retained data structure without activating unfinished endpoint behavior. Derive `per-request memory budget = (measured process budget - baseline - retained-service reserve) / enforced active CSV count`; do not choose a per-request budget before the active count and process reserve exist. After Slices 1-6 land on the implementation branch, rerun the same fixture through those production components before activation and lower/revise any limit whose modeled estimate was optimistic. P07 must remove complete CSV/cache copies and the final job/admission owner must cover CSV work before repeated concurrent maximum-size use is advertised.
 
 ### Directory and host measurements
 
@@ -173,7 +173,7 @@ CSV match attributes are the five attributes in that table. P04's broader user-a
 The remaining workload limits are not approved defaults yet. Earn them in this order:
 
 1. Define or obtain a representative 100,000-row input fixture. Record columns, rectangular cells, per-field UTF-8 bytes, total raw bytes, header bytes, and value-length percentiles without recording real values. The repository and historical output directory currently contain no representative enrichment fixture or telemetry.
-2. Run a separate-client actual-HTTP benchmark through the implemented validation, pattern, deduplication, batch-correlation, reconstruction, exporter, and cache/artifact path with a deterministic fake directory. Enforce an active CSV count first, establish the process/baseline/retained-service memory budget, then binary-search grid, input-byte, output-cell, and output-byte boundaries. Repeat boundary shapes enough to derive tolerance from observed variance rather than selecting `10%`.
+2. Run a separate-client actual-HTTP benchmark through the current implemented request path. In the same benchmark project, independently model the planned deduplication index, row-index lists, lookup outcomes, directory records, batch correlation, retry state, reconstruction, exporter, and cache/artifact retention without wiring those future behaviors into the endpoint. Enforce an active CSV count in the harness, establish the process/baseline/retained-service memory budget, then binary-search grid, input-byte, output-cell, and output-byte boundaries. Repeat boundary shapes enough to derive tolerance from observed variance rather than selecting `10%`.
 3. Render the complete provider request, including system guidance, query, headers, and pattern lines, and compare its exact UTF-8 bytes plus the configured output-token reserve with a provider-neutral capability supplied by the selected integration. Derive column/header admission from that complete request; do not guess `500` columns or `16000` header characters.
 4. Serialize the same accepted rows with P07's exact canonical NDJSON and export writers. Derive shared output-column, encoded-cell, canonical-byte, and export-byte limits from those bytes. P05 and P07 cannot advertise different shapes.
 5. Run the controlled indexed-directory timing matrix below. Choose the largest batch that satisfies P06's operation and active-deadline budgets and the verified LDAP request ceiling. Until then, `1000` is only a benchmark candidate, not a checked-in default.
@@ -191,13 +191,13 @@ Use checked `long` arithmetic. Let:
 - `s` be UTF-16 code units across headers and supplied cells;
 - `q` be query UTF-16 code units, currently bounded at 2,000.
 
-For the current compact JSON DTO, the conservative browser-compatible bound is `39 + 6q + 6s + 3n + 2r`. Maximize it over feasible cross-option combinations; never combine mutually impossible independent maxima. Under the unapproved synthetic fixture (`r=100000`, `c=10`, `g=1000000`, `n=1000010`, `s=16016000`, `q=2000`) the exact bound is `99,308,069` bytes. That number is a consequence of the fixture, not a proposed body limit.
+For the current compact JSON DTO, the conservative browser-compatible bound is `39 + 6q + 6s + 3n + 2r`. Maximize it over feasible cross-option combinations; never combine mutually impossible independent maxima. Under the old unapproved limit envelope, `g=1000000` data cells contribute `16000000` code units and ten headers separately contribute up to `16000`, so `s=16016000`; `s` does not mean every one of the `n=1000010` strings is 16 code units. With `r=100000`, `c=10`, and `q=2000`, the exact feasible bound is therefore `99,308,069` bytes. That number is a consequence of the rejected envelope, not a proposed body limit or the short-header probe's measured body.
 
-For strict UTF-8 CSV with an optional BOM, a field of `L` UTF-16 code units is at most `3L + 1` bytes: the extra byte is the worst compatible CSV quote/wrapper case, while a three-byte Unicode code unit and a quote escape cannot occupy the same code unit. Including delimiters and CRLF, the exact bound is `3s + 2n + r + 4`. The same unapproved fixture yields `50,148,024` bytes. P18 owns enforcement of the eventually approved raw-file derivative; the current browser parser is not evidence for it.
+For strict UTF-8 CSV with an optional BOM, a field of `L` UTF-16 code units is at most `3L + 1` bytes: the extra byte is the worst compatible CSV quote/wrapper case, while a three-byte Unicode code unit and a quote escape cannot occupy the same code unit. Including delimiters and CRLF, the exact bound is `3s + 2n + r + 4`. The same feasible old envelope (`16000000` data plus `16000` header code units) yields `50,148,024` bytes. P18 owns enforcement of the eventually approved raw-file derivative; the current browser parser is not evidence for it.
 
 Do not configure either derived byte value separately. Once the underlying workload choices are approved, compute the application body ceiling and raw-file ceiling, lock exact-limit/one-byte-over tests to the serializer/parser, and set the outer IIS ceiling from the application ceiling in the same deployment change. A checked one-byte ordering gap is mechanically sufficient but gives only a one-byte application-owned overflow band; any larger operational gap is a separate explicit policy choice.
 
-For the current LDAP renderer, one UTF-16 code unit produces at most three UTF-8 bytes: an escapable ASCII code unit becomes a three-byte `\\xx` sequence, while a normal Unicode code unit may be three UTF-8 bytes, but those maxima cannot multiply. With benchmark candidate batch `1000`, longest match-attribute name `26`, and UPN limit `1024`, the exact rendered-filter maximum is `47 + 1000 × (3 + 26 + 3 × 1024) = 3,101,047` bytes. Derive this value from the selected batch/schema rather than configuring it independently.
+For the current LDAP renderer, one UTF-16 code unit produces at most three UTF-8 bytes: an escapable ASCII code unit becomes a three-byte `\\xx` sequence, while a normal Unicode code unit may be three UTF-8 bytes, but those maxima cannot multiply. With benchmark candidate batch `1000`, longest CSV match-attribute name `17` (`userPrincipalName`), and its value limit `1024`, the exact rendered-filter maximum is `47 + 1000 × (3 + 17 + 3 × 1024) = 3,092,047` bytes. Derive this value from the selected batch/schema rather than configuring it independently.
 
 Rendered filter bytes are not BER request bytes. The complete conservative request estimator must include base DN, BER tags/lengths, message and search fields, size/time fields, every requested attribute, paging controls and cookie allowance, and fixed security/protocol overhead. Verify it against captured or instrumented wire evidence before calling it exact, and require it to remain strictly below the minimum verified DC `MaxReceiveBuffer`. A single identifier that cannot fit is a configuration/plan failure, never an empty chunk or unbounded fallback.
 
@@ -373,11 +373,11 @@ Each slice is a separate commit. Do not amend, squash, or combine them. All code
 **Commit:** `perf(csv): measure enrichment capacity`
 
 - Add the opt-in separate-client/actual-HTTP benchmark and deterministic fake directory.
-- Measure the complete current path and each planned retained structure without contacting the provider, Active Directory, or production output root.
+- Measure the complete current path, and model each planned retained structure in benchmark-only components, without contacting the provider, Active Directory, or production output root.
 - Measure complete rendered provider-request bytes and the P07 canonical/export encodings with deterministic fixtures.
 - Run the evidence matrix, record raw results and derived variance, and present D1's genuine resource/product choices plus computed consequences.
 
-This slice changes no endpoint behavior and adds no checked-in limit defaults. Slices 1-6 do not begin until D1 is approved from its evidence.
+This slice changes no endpoint behavior and adds no checked-in limit defaults. Slices 1-6 do not begin until D1 is approved from its evidence. Before activation, rerun the approved fixture through the landed production components; an over-budget result forces a lower/revised D1 value and owner approval, never a silent widening.
 
 ### Slice 1 — Typed finite limits
 
@@ -752,5 +752,17 @@ P05 is complete only when:
 
 - Confirmed the ambiguity ownership, bounded result query, terminating bisection, transport-status, filter-feasibility, and output-limit repairs have no remaining material blocker.
 - Fixed the outer IIS default at 11 MiB and documented the saturated bisection work bound and P06 exhaustion behavior.
+
+### Round 3 — 2026-07-22T18:38:17Z
+
+**Reviewer:** Headless Claude Code 2.1.217 / `@gcp-vertexai-us-global-integration/anthropic.claude-opus-4-8` / maximum effort
+
+**Verdict:** Revisions required
+
+- Corrected the exact candidate LDAP filter derivation to use the longest of P05's five match attributes (`userPrincipalName`, 17 characters), producing `3,092,047` bytes rather than the prior 26-character retrieval-attribute bound.
+- Removed a Slice 0 dependency cycle by specifying two benchmark modes: actual HTTP through the current endpoint and benchmark-only models of future retained structures. Added a mandatory rerun through landed production components before activation.
+- Retained the JSON/CSV totals after rejecting the reviewer's arithmetic premise. The old envelope's `s=16016000` is deliberately `16000000` data-cell code units plus a separate `16000` header allowance; it does not assert that all `n=1000010` strings are 16 code units. The plan now makes that feasible construction explicit.
+- The reviewer independently confirmed that unearned values are no longer defaults; provider capacity is integration-supplied rather than model-name inferred; P04/P06/P07/P09/P14/P18 ownership is explicit; and the 10 MiB IIS artifact cannot remain stale.
+- This was the third and final advisory round. The applied repairs were not independently re-reviewed, per the three-round ceiling.
 
 Record no more than three headless Claude review rounds. Each round must identify material findings, the resulting revision or retained disagreement, and the reviewer’s final assessment.

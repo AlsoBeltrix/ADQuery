@@ -6,7 +6,7 @@
 
 ## Next
 
-- Present P05's first unresolved owner decision in plain English; P05 remains reviewed but is not authorized for implementation.
+- Present P05 Slice 0 for owner approval. If approved, build only the non-behavior-changing capacity harness, measure the current HTTP path plus benchmark-mode planned structures/provider/P07 encodings, and return with evidence-derived D1 values before any limit default or endpoint behavior changes.
 
 ## Blockers
 
