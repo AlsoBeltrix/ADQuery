@@ -62,6 +62,8 @@ builder.Services.AddScoped<IActiveDirectoryService, ActiveDirectoryService>();
 builder.Services.AddScoped<IDirectoryPlanExecutor, DirectoryPlanExecutor>();
 builder.Services.AddScoped<IDirectorySecurityPolicy, DirectorySecurityPolicy>();
 builder.Services.AddScoped<IPlanValidator, PlanValidator>();
+builder.Services.AddSingleton<ICsvEnrichmentFilterEvaluator, CsvEnrichmentFilterEvaluator>();
+builder.Services.AddScoped<ICsvEnrichmentPlanValidator, CsvEnrichmentPlanValidator>();
 builder.Services.AddScoped<ICsvEnrichmentService, CsvEnrichmentService>();
 
 // Register job infrastructure (async query support)

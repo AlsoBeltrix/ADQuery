@@ -437,7 +437,7 @@ internal sealed class ClaudeService : IClaudeService
         sb.AppendLine("1. Match CSV rows to AD users (which CSV column contains identifiers, which AD attribute to match)");
         sb.AppendLine("2. What AD attributes to retrieve for each matched user");
         sb.AppendLine("3. Optional: filter criteria to apply to results");
-        sb.AppendLine("4. Output mode: 'all' (include unmatched rows) or 'matched' (only matched rows)");
+        sb.AppendLine("4. Output mode: 'all' (include unmatched rows) or 'filtered' (only filtered rows)");
         sb.AppendLine();
         sb.AppendLine("COMMON IDENTIFIER PATTERNS:");
         sb.AppendLine("- 'email', 'mail', 'e-mail', 'EmailAddress' → match on: userPrincipalName or mail");
@@ -463,7 +463,7 @@ internal sealed class ClaudeService : IClaudeService
         sb.AppendLine("    \"operator\": \"<equals|not_equals|contains|not_contains|starts_with|ends_with>\",");
         sb.AppendLine("    \"value\": \"<filter value>\"");
         sb.AppendLine("  },");
-        sb.AppendLine("  \"output_mode\": \"all|matched\",");
+        sb.AppendLine("  \"output_mode\": \"all|filtered\",");
         sb.AppendLine("  \"description\": \"<human-readable description of what this plan does>\"");
         sb.AppendLine("}");
         sb.AppendLine("```");

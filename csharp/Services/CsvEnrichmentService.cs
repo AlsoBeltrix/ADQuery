@@ -1,4 +1,5 @@
 using AdQuery.Orchestrator.Models;
+using AdQuery.Orchestrator.Security;
 using System.Collections;
 
 namespace AdQuery.Orchestrator.Services;
@@ -9,10 +10,16 @@ namespace AdQuery.Orchestrator.Services;
 public interface ICsvEnrichmentService
 {
     Task<CsvEnrichmentResult> ExecuteAsync(
-        CsvEnrichmentPlan plan,
+        CsvEnrichmentPlan? plan,
         List<string> csvHeaders,
         List<List<string>> csvData,
         CancellationToken cancellationToken);
+}
+
+internal enum CsvEnrichmentFailureKind
+{
+    None,
+    Validation
 }
 
 public class CsvEnrichmentResult
@@ -24,73 +31,49 @@ public class CsvEnrichmentResult
     public int FilteredRows { get; set; }
     public List<string> Warnings { get; set; } = new();
     public List<string> Errors { get; set; } = new();
+    internal CsvEnrichmentFailureKind FailureKind { get; set; }
 }
 
 public class CsvEnrichmentService : ICsvEnrichmentService
 {
     private readonly ILogger<CsvEnrichmentService> _logger;
-    private readonly IConfiguration _configuration;
     private readonly IActiveDirectoryService _adService;
+    private readonly ICsvEnrichmentPlanValidator _planValidator;
+    private readonly ICsvEnrichmentFilterEvaluator _filterEvaluator;
 
     public CsvEnrichmentService(
         ILogger<CsvEnrichmentService> logger,
-        IConfiguration configuration,
-        IActiveDirectoryService adService)
+        IActiveDirectoryService adService,
+        ICsvEnrichmentPlanValidator planValidator,
+        ICsvEnrichmentFilterEvaluator filterEvaluator)
     {
         _logger = logger;
-        _configuration = configuration;
         _adService = adService;
+        _planValidator = planValidator;
+        _filterEvaluator = filterEvaluator;
     }
 
     public async Task<CsvEnrichmentResult> ExecuteAsync(
-        CsvEnrichmentPlan plan,
+        CsvEnrichmentPlan? plan,
         List<string> csvHeaders,
         List<List<string>> csvData,
         CancellationToken cancellationToken)
     {
+        var validation = _planValidator.Validate(plan, csvHeaders);
         var result = new CsvEnrichmentResult
         {
             TotalRows = csvData.Count
         };
 
-        // Find the match column index
-        var matchColumnIndex = csvHeaders
-            .FindIndex(h => h.Equals(plan.MatchColumn, StringComparison.OrdinalIgnoreCase));
-
-        if (matchColumnIndex < 0)
+        if (!validation.IsValid)
         {
-            result.Errors.Add($"Column '{plan.MatchColumn}' not found in CSV headers: {string.Join(", ", csvHeaders)}");
+            result.FailureKind = CsvEnrichmentFailureKind.Validation;
+            result.Errors.AddRange(validation.Errors);
             return result;
         }
 
-        // Validate match attribute
-        var validMatchAttributes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "sAMAccountName", "userPrincipalName", "mail", "displayName", "employeeID"
-        };
-
-        if (!validMatchAttributes.Contains(plan.MatchAttribute))
-        {
-            result.Warnings.Add($"Unusual match attribute '{plan.MatchAttribute}', using sAMAccountName");
-            plan.MatchAttribute = "sAMAccountName";
-        }
-
-        // Build list of attributes to retrieve (always include match attribute for correlation)
-        var attributesToFetch = new List<string>(plan.RetrieveAttributes)
-        {
-            plan.MatchAttribute,
-            "distinguishedName"
-        };
-        attributesToFetch = attributesToFetch.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-
-        // Add filter attribute if specified
-        if (plan.Filter != null && !string.IsNullOrWhiteSpace(plan.Filter.Attribute))
-        {
-            if (!attributesToFetch.Contains(plan.Filter.Attribute, StringComparer.OrdinalIgnoreCase))
-            {
-                attributesToFetch.Add(plan.Filter.Attribute);
-            }
-        }
+        var executionPlan = validation.ExecutionPlan!;
+        var attributesToFetch = executionPlan.AttributesToFetch.ToList();
 
         var notFound = new List<string>();
         var outputRows = new List<Dictionary<string, object?>>();
@@ -101,27 +84,43 @@ public class CsvEnrichmentService : ICsvEnrichmentService
             cancellationToken.ThrowIfCancellationRequested();
 
             var csvRow = csvData[rowIndex];
-            var matchValue = matchColumnIndex < csvRow.Count ? csvRow[matchColumnIndex] : "";
+            var matchValue = executionPlan.MatchColumnIndex < csvRow.Count
+                ? csvRow[executionPlan.MatchColumnIndex]
+                : "";
 
             if (string.IsNullOrWhiteSpace(matchValue))
             {
                 // Empty identifier - include row with empty AD data if output_mode is "all"
-                if (plan.OutputMode.Equals("all", StringComparison.OrdinalIgnoreCase))
+                if (executionPlan.OutputMode == CsvEnrichmentOutputMode.All)
                 {
-                    outputRows.Add(BuildOutputRow(csvHeaders, csvRow, null, plan.RetrieveAttributes, "Empty identifier"));
+                    outputRows.Add(BuildOutputRow(
+                        csvHeaders,
+                        csvRow,
+                        null,
+                        executionPlan.RetrieveAttributes,
+                        "Empty identifier"));
                 }
                 continue;
             }
 
             // Look up user in AD
-            var adUser = await LookupUserAsync(plan.MatchAttribute, matchValue, attributesToFetch, cancellationToken);
+            var adUser = await LookupUserAsync(
+                executionPlan.MatchAttribute,
+                matchValue,
+                attributesToFetch,
+                cancellationToken);
 
             if (adUser == null)
             {
                 notFound.Add(matchValue);
-                if (plan.OutputMode.Equals("all", StringComparison.OrdinalIgnoreCase))
+                if (executionPlan.OutputMode == CsvEnrichmentOutputMode.All)
                 {
-                    outputRows.Add(BuildOutputRow(csvHeaders, csvRow, null, plan.RetrieveAttributes, "Not found"));
+                    outputRows.Add(BuildOutputRow(
+                        csvHeaders,
+                        csvRow,
+                        null,
+                        executionPlan.RetrieveAttributes,
+                        "Not found"));
                 }
                 continue;
             }
@@ -129,21 +128,35 @@ public class CsvEnrichmentService : ICsvEnrichmentService
             result.MatchedRows++;
 
             // Apply filter if specified
-            if (plan.Filter != null && !string.IsNullOrWhiteSpace(plan.Filter.Attribute))
+            if (executionPlan.Filter is not null)
             {
-                var passesFilter = EvaluateFilter(adUser, plan.Filter);
+                var passesFilter = _filterEvaluator.Evaluate(
+                    adUser,
+                    executionPlan.Filter.Attribute,
+                    executionPlan.Filter.Operator,
+                    executionPlan.Filter.Value);
                 if (!passesFilter)
                 {
-                    if (plan.OutputMode.Equals("all", StringComparison.OrdinalIgnoreCase))
+                    if (executionPlan.OutputMode == CsvEnrichmentOutputMode.All)
                     {
-                        outputRows.Add(BuildOutputRow(csvHeaders, csvRow, adUser, plan.RetrieveAttributes, "Filtered out"));
+                        outputRows.Add(BuildOutputRow(
+                            csvHeaders,
+                            csvRow,
+                            adUser,
+                            executionPlan.RetrieveAttributes,
+                            "Filtered out"));
                     }
                     continue;
                 }
             }
 
             result.FilteredRows++;
-            outputRows.Add(BuildOutputRow(csvHeaders, csvRow, adUser, plan.RetrieveAttributes, "Matched"));
+            outputRows.Add(BuildOutputRow(
+                csvHeaders,
+                csvRow,
+                adUser,
+                executionPlan.RetrieveAttributes,
+                "Matched"));
         }
 
         result.Data = outputRows;
@@ -204,7 +217,7 @@ public class CsvEnrichmentService : ICsvEnrichmentService
         List<string> csvHeaders,
         List<string> csvRow,
         Dictionary<string, object?>? adUser,
-        List<string> retrieveAttributes,
+        IReadOnlyList<string> retrieveAttributes,
         string status)
     {
         var output = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
@@ -265,65 +278,6 @@ public class CsvEnrichmentService : ICsvEnrichmentService
         }
 
         return value;
-    }
-
-    private static bool EvaluateFilter(Dictionary<string, object?> adUser, CsvEnrichmentFilter filter)
-    {
-        if (!adUser.TryGetValue(filter.Attribute, out var value))
-        {
-            return false;
-        }
-
-        var candidates = ExtractFilterCandidates(value).ToList();
-        if (candidates.Count == 0)
-        {
-            candidates.Add(string.Empty);
-        }
-
-        var filterValue = filter.Value ?? "";
-        var filterOperator = (filter.Operator ?? "equals").ToLowerInvariant();
-
-        return filterOperator switch
-        {
-            "equals" => candidates.Any(candidate => candidate.Equals(filterValue, StringComparison.OrdinalIgnoreCase)),
-            "not_equals" => candidates.All(candidate => !candidate.Equals(filterValue, StringComparison.OrdinalIgnoreCase)),
-            "contains" => candidates.Any(candidate => candidate.Contains(filterValue, StringComparison.OrdinalIgnoreCase)),
-            "not_contains" => candidates.All(candidate => !candidate.Contains(filterValue, StringComparison.OrdinalIgnoreCase)),
-            "starts_with" => candidates.Any(candidate => candidate.StartsWith(filterValue, StringComparison.OrdinalIgnoreCase)),
-            "ends_with" => candidates.Any(candidate => candidate.EndsWith(filterValue, StringComparison.OrdinalIgnoreCase)),
-            _ => candidates.Any(candidate => candidate.Equals(filterValue, StringComparison.OrdinalIgnoreCase))
-        };
-    }
-
-    private static IEnumerable<string> ExtractFilterCandidates(object? value)
-    {
-        if (value == null)
-        {
-            yield break;
-        }
-
-        if (value is string s)
-        {
-            yield return s;
-            yield break;
-        }
-
-        if (value is byte[] bytes)
-        {
-            yield return Convert.ToBase64String(bytes);
-            yield break;
-        }
-
-        if (value is IEnumerable enumerable)
-        {
-            foreach (var item in enumerable)
-            {
-                yield return item?.ToString() ?? string.Empty;
-            }
-            yield break;
-        }
-
-        yield return value.ToString() ?? string.Empty;
     }
 
     private static string EscapeLdapValue(string value)

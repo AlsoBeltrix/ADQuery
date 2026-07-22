@@ -49,6 +49,14 @@ public sealed class LlmProviderRequestTests
         Assert.True(response.Success);
         var request = Assert.Single(handler.Requests);
         AssertRequiredWireContract(request.Body, BaseModel, "CSV FILE INFO:");
+        var prompt = GetUserMessageContent(request.Body);
+        Assert.Contains("all|filtered", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("all|matched", prompt, StringComparison.Ordinal);
+        Assert.Contains(
+            "Output mode: 'all' (include unmatched rows) or 'filtered' (only filtered rows)",
+            prompt,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("'matched'", prompt, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -256,6 +264,15 @@ public sealed class LlmProviderRequestTests
         var content = message.GetProperty("content");
         Assert.Equal(JsonValueKind.String, content.ValueKind);
         Assert.Contains(expectedPromptContent, content.GetString(), StringComparison.Ordinal);
+    }
+
+    private static string GetUserMessageContent(string body)
+    {
+        using var document = JsonDocument.Parse(body);
+        return document.RootElement
+            .GetProperty("messages")[0]
+            .GetProperty("content")
+            .GetString() ?? string.Empty;
     }
 
     private sealed class RecordingHttpMessageHandler : HttpMessageHandler
