@@ -60,6 +60,7 @@ builder.Services.AddHttpClient<IClaudeService, ClaudeService>(client =>
 builder.Services.AddSingleton<IPlanPreprocessor, PlanPreprocessor>();
 builder.Services.AddScoped<IActiveDirectoryService, ActiveDirectoryService>();
 builder.Services.AddScoped<IDirectoryPlanExecutor, DirectoryPlanExecutor>();
+builder.Services.AddScoped<IDirectorySecurityPolicy, DirectorySecurityPolicy>();
 builder.Services.AddScoped<IPlanValidator, PlanValidator>();
 builder.Services.AddScoped<ICsvEnrichmentService, CsvEnrichmentService>();
 

@@ -1,12 +1,10 @@
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AdQuery.Orchestrator.Models;
 using AdQuery.Orchestrator.Services;
-using Microsoft.AspNetCore.Hosting;
 
 namespace AdQuery.Orchestrator.Security;
 
@@ -23,23 +21,9 @@ public class PlanValidator : IPlanValidator
         "expand_reports"
     };
 
-    private static readonly HashSet<string> AllowedFilterOperators = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "equals",
-        "not_equals",
-        "contains",
-        "not_contains",
-        "starts_with",
-        "not_starts_with",
-        "ends_with",
-        "not_ends_with",
-        "and",
-        "or"
-    };
-
     private readonly ILogger<PlanValidator> _logger;
     private readonly IConfiguration _configuration;
-    private readonly Dictionary<DirectoryObjectType, HashSet<string>> _allowedAttributes;
+    private readonly IDirectorySecurityPolicy _securityPolicy;
     private readonly int _maxStepsPerPlan;
 
     private const int DefaultMaxStepsPerPlan = 10;
@@ -50,11 +34,11 @@ public class PlanValidator : IPlanValidator
     public PlanValidator(
         ILogger<PlanValidator> logger,
         IConfiguration configuration,
-        IWebHostEnvironment environment)
+        IDirectorySecurityPolicy securityPolicy)
     {
         _logger = logger;
         _configuration = configuration;
-        _allowedAttributes = LoadAllowedAttributes(configuration, environment, logger);
+        _securityPolicy = securityPolicy;
         _maxStepsPerPlan = Math.Max(1, _configuration.GetValue<int>("Security:MaxPlanComplexity", DefaultMaxStepsPerPlan));
     }
 
@@ -86,7 +70,7 @@ public class PlanValidator : IPlanValidator
                 result.SecurityErrors.Add($"Step {step.Step} requests too many attributes ({step.Attributes.Count}).");
             }
 
-            if (!_allowedAttributes.TryGetValue(step.TargetType, out var allowedAttributes) || allowedAttributes.Count == 0)
+            if (!_securityPolicy.HasAllowedAttributes(step.TargetType))
             {
                 result.SecurityErrors.Add($"No allow-listed attributes configured for {step.TargetType}.");
                 continue;
@@ -94,13 +78,13 @@ public class PlanValidator : IPlanValidator
 
             foreach (var attribute in step.Attributes)
             {
-                if (!allowedAttributes.Contains(attribute))
+                if (!_securityPolicy.IsAttributeAllowed(step.TargetType, attribute))
                 {
                     result.SecurityErrors.Add($"Step {step.Step} requests attribute '{attribute}' which is not allow-listed for {step.TargetType}.");
                 }
             }
 
-            ValidateFilters(step.Filters, step.TargetType, step.Step, allowedAttributes, result);
+            ValidateFilters(step.Filters, step.TargetType, step.Step, result);
 
             if (!string.IsNullOrWhiteSpace(step.Source) && !seenSteps.Contains(step.Source))
             {
@@ -251,24 +235,24 @@ public class PlanValidator : IPlanValidator
         var operatorValue = string.IsNullOrWhiteSpace(filter.Operator) ? "equals" : filter.Operator;
         filter.Operator = operatorValue;
 
-        if (!AllowedFilterOperators.Contains(operatorValue))
+        if (!_securityPolicy.IsFilterOperatorAllowed(operatorValue))
         {
             result.SecurityErrors.Add($"Projection filter uses unsupported operator '{operatorValue}'.");
         }
 
-        if (!_allowedAttributes.TryGetValue(rowStep.TargetType, out var allowedAttributes) || allowedAttributes.Count == 0)
+        if (!_securityPolicy.HasAllowedAttributes(rowStep.TargetType))
         {
             result.SecurityErrors.Add($"No allow-listed attributes configured for projection row step type {rowStep.TargetType}.");
             return;
         }
 
-        if (!allowedAttributes.Contains(filter.Attribute))
+        if (!_securityPolicy.IsAttributeAllowed(rowStep.TargetType, filter.Attribute))
         {
             result.SecurityErrors.Add($"Projection filter references attribute '{filter.Attribute}' which is not allow-listed for {rowStep.TargetType}.");
         }
     }
 
-    private void ValidateFilters(IEnumerable<DirectoryFilter> filters, DirectoryObjectType targetType, int stepNumber, HashSet<string> allowedAttributes, PlanSecurityResult result)
+    private void ValidateFilters(IEnumerable<DirectoryFilter> filters, DirectoryObjectType targetType, int stepNumber, PlanSecurityResult result)
     {
         if (filters is null)
         {
@@ -290,12 +274,12 @@ public class PlanValidator : IPlanValidator
 
             if (filter.Conditions is { Count: > 0 })
             {
-                if (!AllowedFilterOperators.Contains(operatorValue))
+                if (!_securityPolicy.IsFilterOperatorAllowed(operatorValue))
                 {
                     result.SecurityErrors.Add($"Step {stepNumber} uses unsupported filter operator '{operatorValue}'.");
                 }
 
-                ValidateFilters(filter.Conditions, targetType, stepNumber, allowedAttributes, result);
+                ValidateFilters(filter.Conditions, targetType, stepNumber, result);
                 continue;
             }
 
@@ -308,143 +292,17 @@ public class PlanValidator : IPlanValidator
                 continue;
             }
 
-            if (!allowedAttributes.Contains(attribute))
+            if (!_securityPolicy.IsAttributeAllowed(targetType, attribute))
             {
                 result.SecurityErrors.Add($"Step {stepNumber} filter references attribute '{attribute}' which is not allow-listed.");
             }
 
-            if (!AllowedFilterOperators.Contains(operatorValue))
+            if (!_securityPolicy.IsFilterOperatorAllowed(operatorValue))
             {
                 result.SecurityErrors.Add($"Step {stepNumber} uses unsupported filter operator '{operatorValue}'.");
             }
         }
     }
-    private static Dictionary<DirectoryObjectType, HashSet<string>> LoadAllowedAttributes(
-        IConfiguration configuration,
-        IWebHostEnvironment environment,
-        ILogger logger)
-    {
-        var defaults = GetDefaultAllowLists();
-        var result = new Dictionary<DirectoryObjectType, HashSet<string>>();
-
-        foreach (var (objectType, fallback) in defaults)
-        {
-            var configKey = $"Security:AttributeFiles:{objectType}";
-            var configuredPath = configuration[configKey];
-            HashSet<string> allowedSet;
-
-            if (!string.IsNullOrWhiteSpace(configuredPath))
-            {
-                var resolvedPath = Path.IsPathRooted(configuredPath)
-                    ? configuredPath
-                    : Path.Combine(environment.ContentRootPath, configuredPath);
-
-                try
-                {
-                    if (File.Exists(resolvedPath))
-                    {
-                        var attributes = File.ReadAllLines(resolvedPath)
-                            .Select(line => line?.Trim())
-                            .Where(line => !string.IsNullOrWhiteSpace(line) && !line!.StartsWith("#"))
-                            .Select(line => line!)
-                            .Distinct(StringComparer.OrdinalIgnoreCase)
-                            .ToList();
-
-                        if (attributes.Count == 0)
-                        {
-                            logger.LogWarning("Allow-list file {File} for {ObjectType} is empty. Falling back to defaults.", resolvedPath, objectType);
-                            allowedSet = new HashSet<string>(fallback, StringComparer.OrdinalIgnoreCase);
-                        }
-                        else
-                        {
-                            allowedSet = new HashSet<string>(attributes, StringComparer.OrdinalIgnoreCase);
-                            logger.LogInformation("Loaded {Count} allowed attributes for {ObjectType} from {File}.", allowedSet.Count, objectType, resolvedPath);
-                        }
-                    }
-                    else
-                    {
-                        logger.LogWarning("Allow-list file {File} for {ObjectType} not found. Falling back to defaults.", resolvedPath, objectType);
-                        allowedSet = new HashSet<string>(fallback, StringComparer.OrdinalIgnoreCase);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Failed to load allow-list file {File} for {ObjectType}. Falling back to defaults.", resolvedPath, objectType);
-                    allowedSet = new HashSet<string>(fallback, StringComparer.OrdinalIgnoreCase);
-                }
-            }
-            else
-            {
-                allowedSet = new HashSet<string>(fallback, StringComparer.OrdinalIgnoreCase);
-            }
-
-            result[objectType] = allowedSet;
-        }
-
-        return result;
-    }
-
-    private static Dictionary<DirectoryObjectType, string[]> GetDefaultAllowLists()
-    {
-        return new Dictionary<DirectoryObjectType, string[]>
-        {
-            [DirectoryObjectType.User] = new[]
-            {
-                "distinguishedName",
-                "displayName",
-                "name",
-                "givenName",
-                "sn",
-                "userAccountControl",
-                "mail",
-                "userPrincipalName",
-                "sAMAccountName",
-                "manager",
-                "department",
-                "title",
-                "telephoneNumber",
-                "mobile",
-                "whenCreated",
-                "whenChanged",
-                "accountExpires",
-                "enabled",
-                "memberOf",
-                "lastLogonTimestamp"
-            },
-            [DirectoryObjectType.Group] = new[]
-            {
-                "distinguishedName",
-                "name",
-                "mail",
-                "description",
-                "sAMAccountName",
-                "groupType",
-                "member",
-                "whenCreated",
-                "whenChanged"
-            },
-            [DirectoryObjectType.Computer] = new[]
-            {
-                "distinguishedName",
-                "name",
-                "dnsHostName",
-                "operatingSystem",
-                "operatingSystemVersion",
-                "lastLogonTimestamp",
-                "whenCreated",
-                "whenChanged"
-            },
-            [DirectoryObjectType.OrganizationalUnit] = new[]
-            {
-                "distinguishedName",
-                "name",
-                "description",
-                "whenCreated",
-                "whenChanged"
-            }
-        };
-    }
-
     private PlanSecurityResult ValidateExpandReports(DirectoryPlanStep step)
     {
         var errors = new List<string>();
@@ -533,11 +391,11 @@ public class PlanValidator : IPlanValidator
         }
 
         // Validate fields in allow-list (assume User type for aggregation fields)
-        if (_allowedAttributes.TryGetValue(DirectoryObjectType.User, out var allowedAttributes))
+        if (_securityPolicy.HasAllowedAttributes(DirectoryObjectType.User))
         {
             foreach (var field in agg.GroupBy.Where(f => !string.IsNullOrWhiteSpace(f)))
             {
-                if (!allowedAttributes.Contains(field))
+                if (!_securityPolicy.IsAttributeAllowed(DirectoryObjectType.User, field))
                 {
                     errors.Add($"Aggregation field '{field}' is not in attribute allow-list");
                 }
