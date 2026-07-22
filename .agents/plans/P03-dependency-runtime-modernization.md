@@ -1,6 +1,6 @@
 # P03 — Dependency Security and .NET Runtime Modernization
 
-**Status:** Complete — the .NET 10 foundation, third-party package updates, automated compatibility checks, and hosting-prerequisite documentation have landed. P03-D5 intentionally defers real-server sign-in checks and makes them non-gating; no production installation has been performed.
+**Status:** Complete — the .NET 10 foundation, third-party package updates, automated compatibility checks, and hosting-prerequisite documentation have landed. P03-D5 intentionally defers real-server sign-in checks and makes them non-gating; P03 performed no production deployment.
 
 ## Finding
 
@@ -387,7 +387,7 @@ Completed on 2026-07-22. The implementation consists of these independently veri
 - `fccc8bc` — added isolated in-process authorization tests for approved (`200`), refused (`403`), and anonymous (`401`) identities while preserving both production role gates.
 - `feacf5c` — exercised the real CSV/XLSX formatter, reopened generated workbooks with ClosedXML, and verified worksheet, header, escaping, and row values.
 
-The final canonical verifier passed at `feacf5c` with SDK `10.0.302`, 74 tests, zero build warnings, successful Production and Development publish/startup checks, and zero direct or transitive vulnerability findings. A final current-package audit found no outdated, deprecated, or vulnerable direct dependency. Retained older transitives are owned by their current parent packages: ClosedXML owns OpenXML and `System.IO.Packaging`; Swashbuckle owns Microsoft.OpenApi; Serilog owns its core/configuration graph; and xUnit owns its test-only compatibility graph. No unsupported direct override was added.
+The final canonical verifier passed at `feacf5c` with SDK `10.0.302`, 74 tests, zero build warnings, successful Production and Development publish/startup checks, and zero direct or transitive vulnerability findings. A final current-package audit found no outdated, deprecated, or vulnerable direct dependency. Retained older transitives are owned by their current parent packages: ClosedXML owns OpenXML, `System.IO.Packaging`, and SixLabors.Fonts; Swashbuckle owns Microsoft.OpenApi and Microsoft.Extensions.ApiDescription.Server; Serilog owns its core/configuration graph; and xUnit owns its test-only compatibility graph. No unsupported direct override was added.
 
 Guard proofs temporarily disabled each protected behavior and were fully restored: logging package/version and file-sink checks, published-process startup, Development/Production Swagger isolation, both production authorization gates, and CSV/XLSX row generation all failed their focused checks when removed. For the security gate, temporarily resolving Negotiate `10.0.0` made restore report both high-severity advisories; allowing those warnings only for the negative test let the canonical verifier reach its independent structured audit, which rejected the vulnerable graph. Negotiate `10.0.10`, strict warnings-as-errors, and both lock files were then restored, and the complete verifier passed.
 
