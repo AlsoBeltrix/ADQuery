@@ -1,6 +1,6 @@
 # P16 — Portable Configuration, Storage, and Logging
 
-Status: **Draft — implementation is not authorized**
+Status: **Reviewed — implementation is not authorized**
 
 Owner approval: Pending
 

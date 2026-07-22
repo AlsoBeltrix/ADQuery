@@ -1,6 +1,6 @@
 # P13 — End-to-End Cancellation and Failure Contracts
 
-Status: **Draft — implementation is not authorized**
+Status: **Reviewed — implementation is not authorized**
 
 Owner approval: Pending
 

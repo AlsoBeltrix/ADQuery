@@ -1,6 +1,6 @@
 # P07 — Streaming Results, Exports, and Artifact Caching
 
-Status: **Draft — implementation is not authorized**
+Status: **Reviewed — implementation is not authorized**
 
 Owner approval: Pending
 

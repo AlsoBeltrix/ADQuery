@@ -1,6 +1,6 @@
 # P10 — Cycle-Safe and Bounded Directory Traversal
 
-**Status:** Draft — implementation is unauthorized. Owner decisions are unresolved. All three advisory rounds accepted the technical plan; two optional Round 3 wording/test clarifications were applied after the final review and were not re-reviewed because no fourth round is permitted.
+**Status:** Reviewed — implementation is unauthorized. Owner decisions are unresolved. All three advisory rounds accepted the technical plan; two optional Round 3 wording/test clarifications were applied after the final review and were not re-reviewed because no fourth round is permitted.
 
 ## Finding
 

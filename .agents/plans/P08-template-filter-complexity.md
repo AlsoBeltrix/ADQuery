@@ -1,6 +1,6 @@
 # P08 — Bounded Template Expansion and LDAP Filter Complexity
 
-Status: **Draft — implementation is not authorized**
+Status: **Reviewed — implementation is not authorized**
 
 Owner approval: Pending
 

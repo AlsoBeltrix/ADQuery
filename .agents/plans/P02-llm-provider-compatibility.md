@@ -1,8 +1,8 @@
 # P02: LLM Provider Request Compatibility
 
-**Status**: Draft — implementation is not authorized
-**Review**: Pending; maximum 3 advisory rounds
-**Dependencies**: P01 provides the preferred test harness, but this production-blocking compatibility fix may establish only the focused C# test project if P01 has not landed.
+**Status**: Reviewed — implementation is not authorized
+**Review**: Accepted after 2 advisory rounds
+**Dependencies**: P01's test project and canonical verification command have landed; P02 must extend them rather than create another test host or verifier.
 
 ## Problem
 
@@ -68,7 +68,7 @@ Parse known Anthropic/Portkey error envelopes enough to retain HTTP status, prov
 
 Each slice is one commit and must pass the repository verification command before the next begins.
 
-1. Add focused request-serialization tests using a fake `HttpMessageHandler`. If P01 has not established `tests/AdQueryOrchestrator.Tests`, create only the minimum project and solution wiring needed by these tests, following P01's intended layout.
+1. Add focused request-serialization tests using a fake `HttpMessageHandler` to the existing `tests/AdQueryOrchestrator.Tests` project.
 2. Add and register the typed options, typed messages DTO, validation, and centralized request builder without changing the active call sites.
 3. Route normal plan generation and CSV-enrichment generation through the builder; remove both anonymous request bodies and duplicate temperature parsing.
 4. Change checked-in sampling defaults to omit, add legacy-key warning behavior, and update configuration documentation.

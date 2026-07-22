@@ -1,6 +1,6 @@
 # P14 — Atomic, Bounded Query-Job Orchestration
 
-Status: **Draft — implementation is not authorized**
+Status: **Reviewed — implementation is not authorized**
 
 Owner approval: Pending
 

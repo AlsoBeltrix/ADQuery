@@ -1,6 +1,6 @@
 # P19 — Single-Flight Browser Job Polling
 
-Status: **Draft — implementation is not authorized**
+Status: **Reviewed — implementation is not authorized**
 
 Owner approval: Pending
 

@@ -1,6 +1,6 @@
 # P12 — Authoritative Semantic Plan Compilation
 
-Status: **Draft — implementation is not authorized**
+Status: **Reviewed — implementation is not authorized**
 
 Owner approval: Pending
 

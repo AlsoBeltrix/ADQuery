@@ -1,6 +1,6 @@
 # P20 — Separated Liveness, Readiness, Deployment, and Diagnostics
 
-Status: **Draft — implementation is not authorized**
+Status: **Reviewed — implementation is not authorized**
 
 Owner approval: Pending
 

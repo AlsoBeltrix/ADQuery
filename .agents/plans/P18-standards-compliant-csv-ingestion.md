@@ -1,6 +1,6 @@
 # P18 — Standards-Compliant CSV Ingestion
 
-**Status:** Draft — implementation is unauthorized. Owner decisions and prerequisite contracts are unresolved; advisory review completed in three substantive rounds.
+**Status:** Reviewed — implementation is unauthorized. Owner decisions and prerequisite contracts are unresolved; advisory review completed in three substantive rounds.
 
 ## Finding
 

@@ -1,6 +1,6 @@
 # P17 — Versioned Feedback Storage and Analyzer Contract
 
-Status: **Draft — implementation is not authorized**
+Status: **Reviewed — implementation is not authorized**
 
 Owner approval: Pending
 

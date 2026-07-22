@@ -1,6 +1,6 @@
 # P11 — Indexed Projection and Single-Pass Aggregation
 
-Status: **Draft — implementation is not authorized**
+Status: **Reviewed — implementation is not authorized**
 
 Owner approval: Pending
 

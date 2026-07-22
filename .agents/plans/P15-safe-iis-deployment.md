@@ -1,6 +1,6 @@
 # P15 — Safe, Checked, and Recoverable IIS Deployment
 
-**Status:** Draft — implementation is unauthorized. Owner decisions and prerequisite contracts are unresolved; the three-round advisory review is complete. Round 3 accepted its reviewed snapshot; later P16 terminology plus P14/P20 rollback-admission and package-identity repairs were applied without a fourth round and were not re-reviewed.
+**Status:** Reviewed — implementation is unauthorized. Owner decisions and prerequisite contracts are unresolved; the three-round advisory review is complete. Round 3 accepted its reviewed snapshot; later P16 terminology plus P14/P20 rollback-admission and package-identity repairs were applied without a fourth round and were not re-reviewed.
 
 ## Finding
 
