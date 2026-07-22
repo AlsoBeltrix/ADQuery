@@ -9,6 +9,7 @@ $solutionPath = Join-Path $repositoryRoot 'ADQuery.sln'
 $artifactsRoot = Join-Path $repositoryRoot 'artifacts'
 $testResultsPath = Join-Path $artifactsRoot 'test-results'
 $dependencyAuditPath = Join-Path $artifactsRoot 'dependency-audit'
+$publishPath = Join-Path $artifactsRoot 'publish'
 $utf8WithoutBom = [Text.UTF8Encoding]::new($false)
 
 function Write-Stage {
@@ -135,6 +136,102 @@ function Assert-TestArtifact {
 
     Write-Output "Executed tests: $executedTests"
     Write-Output "TRX files: $($trxFiles.Count); Cobertura files: $($coverageFiles.Count)"
+}
+
+function Assert-PublishedRuntimeContract {
+    $runtimeConfigPath = Join-Path $publishPath 'AdQueryOrchestrator.runtimeconfig.json'
+    $dependenciesPath = Join-Path $publishPath 'AdQueryOrchestrator.deps.json'
+    if (-not (Test-Path -LiteralPath $runtimeConfigPath -PathType Leaf)) {
+        throw "Published runtime contract was not found: $runtimeConfigPath"
+    }
+    if (-not (Test-Path -LiteralPath $dependenciesPath -PathType Leaf)) {
+        throw "Published dependency contract was not found: $dependenciesPath"
+    }
+
+    $runtimeConfig = Get-Content -LiteralPath $runtimeConfigPath -Raw | ConvertFrom-Json
+    if ($runtimeConfig.runtimeOptions.tfm -ne 'net10.0') {
+        throw "Published application must target net10.0; found '$($runtimeConfig.runtimeOptions.tfm)'."
+    }
+
+    $frameworks = @($runtimeConfig.runtimeOptions.frameworks)
+    foreach ($frameworkName in @('Microsoft.NETCore.App', 'Microsoft.AspNetCore.App')) {
+        $framework = @($frameworks | Where-Object { $_.name -eq $frameworkName })
+        if ($framework.Count -ne 1 -or $framework[0].version -notmatch '^10\.0\.\d+$') {
+            throw "Published application does not declare one .NET 10 '$frameworkName' framework."
+        }
+    }
+
+    $dependencies = Get-Content -LiteralPath $dependenciesPath -Raw | ConvertFrom-Json
+    if ($dependencies.runtimeTarget.name -ne '.NETCoreApp,Version=v10.0') {
+        throw "Published dependency graph targets '$($dependencies.runtimeTarget.name)' instead of .NET 10."
+    }
+}
+
+function Invoke-PublishedStartupSmoke {
+    $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+    $listener.Start()
+    $port = ([Net.IPEndPoint]$listener.LocalEndpoint).Port
+    $listener.Stop()
+
+    $standardOutputPath = Join-Path $publishPath 'startup.stdout.log'
+    $standardErrorPath = Join-Path $publishPath 'startup.stderr.log'
+    $priorUrls = $env:ASPNETCORE_URLS
+    $priorEnvironment = $env:ASPNETCORE_ENVIRONMENT
+    $applicationProcess = $null
+
+    try {
+        $env:ASPNETCORE_URLS = "http://127.0.0.1:$port"
+        $env:ASPNETCORE_ENVIRONMENT = 'Production'
+        $applicationProcess = Start-Process `
+            -FilePath 'dotnet' `
+            -ArgumentList @('AdQueryOrchestrator.dll') `
+            -WorkingDirectory $publishPath `
+            -RedirectStandardOutput $standardOutputPath `
+            -RedirectStandardError $standardErrorPath `
+            -WindowStyle Hidden `
+            -PassThru
+
+        $response = $null
+        for ($attempt = 0; $attempt -lt 30; $attempt++) {
+            Start-Sleep -Milliseconds 250
+            $applicationProcess.Refresh()
+            if ($applicationProcess.HasExited) {
+                throw "Published application exited during startup with code $($applicationProcess.ExitCode)."
+            }
+
+            try {
+                $response = Invoke-WebRequest `
+                    -Uri "http://127.0.0.1:$port/api/user/info" `
+                    -SkipHttpErrorCheck `
+                    -TimeoutSec 1
+                break
+            }
+            catch {
+                # The port can refuse connections briefly while Kestrel starts.
+            }
+        }
+
+        if ($null -eq $response) {
+            throw 'Published application did not answer a local startup request.'
+        }
+        if ([int]$response.StatusCode -ne 401) {
+            throw "Published protected endpoint returned $([int]$response.StatusCode) instead of 401."
+        }
+
+        Write-Output 'Published startup smoke passed: protected endpoint returned 401.'
+    }
+    finally {
+        if ($null -ne $applicationProcess) {
+            $applicationProcess.Refresh()
+            if (-not $applicationProcess.HasExited) {
+                Stop-Process -Id $applicationProcess.Id
+                $null = $applicationProcess.WaitForExit(10000)
+            }
+        }
+
+        $env:ASPNETCORE_URLS = $priorUrls
+        $env:ASPNETCORE_ENVIRONMENT = $priorEnvironment
+    }
 }
 
 function Assert-AuditDocument {
@@ -283,6 +380,7 @@ function Invoke-RepositoryVerification {
 
         Reset-ArtifactDirectory -Path $testResultsPath
         Reset-ArtifactDirectory -Path $dependencyAuditPath
+        Reset-ArtifactDirectory -Path $publishPath
 
         Write-Stage 'Restore locked dependencies'
         Invoke-Native -FilePath 'dotnet' -Arguments @(
@@ -316,6 +414,20 @@ function Invoke-RepositoryVerification {
             'XPlat Code Coverage'
         )
         Assert-TestArtifact
+
+        Write-Stage 'Publish and start the Release application'
+        Invoke-Native -FilePath 'dotnet' -Arguments @(
+            'publish',
+            'csharp/AdQueryOrchestrator.csproj',
+            '-c',
+            'Release',
+            '--no-restore',
+            '--nologo',
+            '--output',
+            $publishPath
+        )
+        Assert-PublishedRuntimeContract
+        Invoke-PublishedStartupSmoke
 
         Write-Stage 'Audit direct and transitive dependencies'
         Assert-NoVulnerablePackage `

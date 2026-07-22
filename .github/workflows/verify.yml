@@ -61,5 +61,6 @@ jobs:
           path: |
             artifacts/test-results/
             artifacts/dependency-audit/
+            artifacts/publish/startup.*.log
           if-no-files-found: warn
           retention-days: 14
