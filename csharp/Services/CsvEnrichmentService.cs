@@ -19,7 +19,8 @@ public interface ICsvEnrichmentService
 internal enum CsvEnrichmentFailureKind
 {
     None,
-    Validation
+    Validation,
+    DirectoryOperation
 }
 
 public class CsvEnrichmentResult
@@ -75,7 +76,9 @@ public class CsvEnrichmentService : ICsvEnrichmentService
         var executionPlan = validation.ExecutionPlan!;
         var attributesToFetch = executionPlan.AttributesToFetch.ToList();
 
-        var notFound = new List<string>();
+        var notFoundCount = 0;
+        var matchedRows = 0;
+        var filteredRows = 0;
         var outputRows = new List<Dictionary<string, object?>>();
 
         // Process each CSV row
@@ -104,15 +107,21 @@ public class CsvEnrichmentService : ICsvEnrichmentService
             }
 
             // Look up user in AD
-            var adUser = await LookupUserAsync(
+            var lookup = await LookupUserAsync(
                 executionPlan.MatchAttribute,
                 matchValue,
                 attributesToFetch,
+                rowIndex,
                 cancellationToken);
 
-            if (adUser == null)
+            if (lookup.Status == DirectoryLookupStatus.OperationalFailure)
             {
-                notFound.Add(matchValue);
+                return DirectoryOperationFailure(csvData.Count);
+            }
+
+            if (lookup.Status == DirectoryLookupStatus.NotFound)
+            {
+                notFoundCount++;
                 if (executionPlan.OutputMode == CsvEnrichmentOutputMode.All)
                 {
                     outputRows.Add(BuildOutputRow(
@@ -125,7 +134,8 @@ public class CsvEnrichmentService : ICsvEnrichmentService
                 continue;
             }
 
-            result.MatchedRows++;
+            var adUser = lookup.Attributes!;
+            matchedRows++;
 
             // Apply filter if specified
             if (executionPlan.Filter is not null)
@@ -150,7 +160,7 @@ public class CsvEnrichmentService : ICsvEnrichmentService
                 }
             }
 
-            result.FilteredRows++;
+            filteredRows++;
             outputRows.Add(BuildOutputRow(
                 csvHeaders,
                 csvRow,
@@ -160,11 +170,13 @@ public class CsvEnrichmentService : ICsvEnrichmentService
         }
 
         result.Data = outputRows;
+        result.MatchedRows = matchedRows;
+        result.FilteredRows = filteredRows;
         result.Success = true;
 
-        if (notFound.Count > 0)
+        if (notFoundCount > 0)
         {
-            result.Warnings.Add($"{notFound.Count} of {csvData.Count} users not found in Active Directory");
+            result.Warnings.Add($"{notFoundCount} of {csvData.Count} users not found in Active Directory");
         }
 
         _logger.LogInformation("CSV enrichment completed: {Total} rows, {Matched} matched, {Filtered} in output",
@@ -173,10 +185,11 @@ public class CsvEnrichmentService : ICsvEnrichmentService
         return result;
     }
 
-    private async Task<Dictionary<string, object?>?> LookupUserAsync(
+    private async Task<DirectoryLookupResult> LookupUserAsync(
         string matchAttribute,
         string matchValue,
         List<string> attributes,
+        int rowIndex,
         CancellationToken cancellationToken)
     {
         try
@@ -201,16 +214,37 @@ public class CsvEnrichmentService : ICsvEnrichmentService
             var results = await _adService.SearchAsync(request, cancellationToken);
             var first = results.FirstOrDefault();
 
-            if (first == null) return null;
-
-            // Convert DirectoryRecord to Dictionary
-            return first.Attributes;
+            return first is null
+                ? new DirectoryLookupResult(DirectoryLookupStatus.NotFound, null)
+                : new DirectoryLookupResult(DirectoryLookupStatus.Found, first.Attributes);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to lookup user with {Attribute}={Value}", matchAttribute, matchValue);
-            return null;
+            cancellationToken.ThrowIfCancellationRequested();
+
+            _logger.LogWarning(
+                "CSV enrichment directory lookup failed at row index {RowIndex} using match attribute {MatchAttribute}; exception type {ExceptionType}.",
+                rowIndex,
+                matchAttribute,
+                ex.GetType().FullName ?? ex.GetType().Name);
+
+            return new DirectoryLookupResult(DirectoryLookupStatus.OperationalFailure, null);
         }
+    }
+
+    private static CsvEnrichmentResult DirectoryOperationFailure(int totalRows)
+    {
+        var result = new CsvEnrichmentResult
+        {
+            TotalRows = totalRows,
+            FailureKind = CsvEnrichmentFailureKind.DirectoryOperation
+        };
+        result.Errors.Add("Active Directory lookup failed. Retry the CSV enrichment.");
+        return result;
     }
 
     private static Dictionary<string, object?> BuildOutputRow(
@@ -290,4 +324,15 @@ public class CsvEnrichmentService : ICsvEnrichmentService
             .Replace(")", "\\29")
             .Replace("\0", "\\00");
     }
+
+    private enum DirectoryLookupStatus
+    {
+        Found,
+        NotFound,
+        OperationalFailure
+    }
+
+    private readonly record struct DirectoryLookupResult(
+        DirectoryLookupStatus Status,
+        Dictionary<string, object?>? Attributes);
 }
