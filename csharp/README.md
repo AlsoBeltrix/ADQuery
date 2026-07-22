@@ -137,7 +137,7 @@ This project delivers a pure C# pipeline for answering natural-language question
 
 Profile matching is exact and case-sensitive. Enabled temperatures must be finite values from `0.0` through `1.0`; blank or duplicate targets, unknown modes, and invalid enabled values fail startup. An `Omit` profile value or legacy global `Claude:Temperature` value is ignored with a startup warning and never enables sampling.
 
-Queries always run under the IIS application pool identity; the optional `ActiveDirectory:RootPath` setting only overrides the default naming context when needed.
+When hosted in IIS, queries run under the IIS application pool identity; locally they run under the current process identity. The optional `ActiveDirectory:RootPath` setting only overrides the default naming context when needed.
 
 ## Result Downloads & Logging
 
@@ -148,6 +148,8 @@ Queries always run under the IIS application pool identity; the optional `Active
 
 ## Running Locally
 
+The project targets `net10.0-windows`. Complete the build-machine requirements in the [repository prerequisite checklist](../README.md#prerequisites) first.
+
 ```bash
 cd D:\source\adquery\csharp
 dotnet run
@@ -157,16 +159,15 @@ The SPA is served from `wwwroot/`, and API endpoints live under `/api/query`.
 
 ## Deployment
 
-```shell
-cd D:\source\adquery\csharp
-.\deploy.ps1 -Force   # run from elevated administrative shell (deployment script only)
-```
+Complete the [repository prerequisite checklist](../README.md#prerequisites) first. This is a framework-dependent .NET 10 IIS application using `AspNetCoreModuleV2`; the server Hosting Bundle supplies and services the runtime.
 
-The deployment script performs:
+The legacy deployment script attempts to:
 1. `dotnet publish -c Release`
 2. Mirror to `D:\inetpub\adquery`
 3. App pool recycle (`adquery_pool`)
 4. Basic HTTP reachability check
+
+It does not enforce the prerequisite checklist and can overwrite or remove a deployed `appsettings.json`. Do not use it as an unattended update path for an existing installation; see the root deployment warning.
 
 ## Health Checks
 
