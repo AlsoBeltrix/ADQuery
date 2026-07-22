@@ -1,6 +1,6 @@
 # P03 — Dependency Security and .NET Runtime Modernization
 
-**Status:** Reviewed. P01-D3 authorizes the direct local .NET 10 SDK/runtime/Microsoft-package migration; the remaining P03 package-family, hosting, deployment, and staging work is not part of that authorization.
+**Status:** Reviewed. P01-D3's direct local .NET 10 SDK/runtime/Microsoft-package migration landed in `f97e62e` and `5716462`; the remaining P03 package-family, hosting, deployment, and staging work is not implemented or authorized.
 
 ## Finding
 
@@ -31,7 +31,7 @@ Evidence was verified against commit `0649177` on 2026-07-21.
   - `Serilog.AspNetCore` `8.0.2`
   - `Serilog.Sinks.File` `6.0.0`
   - `Swashbuckle.AspNetCore` `6.4.0`
-- No `global.json` exists at the recorded evidence commit. P01 creates a .NET 9 pin before the runtime migration, so P03 modifies that file rather than adding a second SDK contract. On the inspected machine, `dotnet --info` selects SDK `10.0.302` implicitly.
+- No `global.json` exists at the recorded evidence commit. P01-D3 later created the .NET 10 `10.0.300` feature-band pin directly, so remaining P03 work must preserve that single SDK contract rather than add another. On the inspected machine, `dotnet --info` selected SDK `10.0.302` implicitly.
 - The inspected machine has patched shared frameworks `Microsoft.AspNetCore.App 9.0.18` and `10.0.10`, but deployment-host runtime state is unverified.
 - `csharp/web.config:8-12` launches the application framework-dependently through `dotnet` with IIS in-process hosting.
 - `csharp/deploy.ps1:44` publishes framework-dependently without an explicit target framework or runtime prerequisite check.
@@ -139,11 +139,11 @@ No repository mutation.
 
 Do not implement this stage. P01-D3 supersedes its commit and release instructions and requires the first committed foundation graph to use patched .NET 10 packages instead.
 
-### Stage 2 — Atomically migrate the SDK, application, tests, and Microsoft dependencies
+### Stage 2 — Local migration landed; remaining acceptance evidence retained
 
-**Prerequisite:** Incorporated into P01 Slice 1 by P01-D3.
+**Status:** Landed through P01. Commit `f97e62e` established the pinned SDK, `net10.0-windows` application, aligned Microsoft dependencies, solution, application lock graph, publish proof, and zero-vulnerability graph. Commit `5716462` added the `net10.0-windows` test project and its lock graph.
 
-**Commit:** `build(dotnet): migrate the windows solution to net10`
+Do not repeat the SDK, target-framework, Microsoft-package, solution, or lock-graph edits. The list below remains as a preservation and acceptance checklist; P03 still owns any listed compatibility, documentation, or deployment-host evidence not supplied by P01.
 
 P01 Slice 1 creates the SDK pin and migrates the existing application and its lock graph atomically. P01 Slice 2 creates the previously nonexistent test project directly on `net10.0-windows`, so no incompatible `net9.0-windows` test project is ever committed.
 

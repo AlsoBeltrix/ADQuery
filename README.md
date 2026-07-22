@@ -42,7 +42,7 @@ The implementation lives under `csharp\`.
 dotnet build csharp\AdQueryOrchestrator.csproj
 ```
 
-The project targets `net9.0-windows` because it uses Windows-only directory APIs.
+The project targets `net10.0-windows` because it uses Windows-only directory APIs.
 
 ## Run Locally
 
