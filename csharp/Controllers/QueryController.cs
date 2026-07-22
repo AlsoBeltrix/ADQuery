@@ -245,25 +245,25 @@ public class QueryController : ControllerBase
         var requestId = Guid.NewGuid().ToString();
         _logger.LogDebug("Validating execution plan {RequestId}: {Description}", requestId, plan.Description);
 
-            try
+        try
+        {
+            if (_configuration.GetValue<bool>("Security:EnableHmacValidation"))
             {
-                if (_configuration.GetValue<bool>("Security:EnableHmacValidation"))
+                if (string.IsNullOrWhiteSpace(signature) || !_planValidator.ValidateHmac(plan, signature))
                 {
-                    if (string.IsNullOrWhiteSpace(signature) || !_planValidator.ValidateHmac(plan, signature))
+                    return Unauthorized(new ValidationResponse
                     {
-                        return Unauthorized(new ValidationResponse
-                        {
-                            IsValid = false,
-                            Errors = new List<string> { "Plan signature validation failed." },
-                            Security = new PlanSecurityResult { HmacValid = false },
-                            RequestId = requestId
-                        });
-                    }
+                        IsValid = false,
+                        Errors = new List<string> { "Plan signature validation failed." },
+                        Security = new PlanSecurityResult { HmacValid = false },
+                        RequestId = requestId
+                    });
                 }
+            }
 
-                _planPreprocessor.ApplyCustomMappings(plan);
+            _planPreprocessor.ApplyCustomMappings(plan);
 
-                var validationResult = await _planExecutor.ValidatePlanAsync(plan);
+            var validationResult = await _planExecutor.ValidatePlanAsync(plan);
 
             var response = new ValidationResponse
             {
