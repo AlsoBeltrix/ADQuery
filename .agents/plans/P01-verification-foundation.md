@@ -1,8 +1,8 @@
 # P01 — Verification Foundation and CI
 
-Status: **Reviewed — implementation is not authorized**
+Status: **Approved — implementation is authorized**
 
-Owner approval: P01-D2 approved; P01-D1 and full-plan approval pending
+Owner approval: P01-D1, P01-D2, and the full plan approved on 2026-07-22
 
 Implementation dependency: This foundation should land before behavior-changing plans P02 and P04–P21. The urgent dependency-security work in P03 may land first if necessary, using the existing build and package-audit commands.
 
@@ -447,7 +447,9 @@ Each slice is independently reversible with a new revert commit; do not rewrite 
 
 The repository does not identify which host controls merges or which Windows runner is available. Choose the merge-controlling host and its supported Windows runner for Slice 6. Recommendation: add CI only on that authoritative host and have it call `scripts/verify.ps1`; do not maintain duplicate workflows.
 
-Blocked until decided: Slice 6 and any external required-check configuration.
+Decision: Approved on 2026-07-22. GitHub is the authoritative merge host, and Slice 6 will use GitHub Actions `windows-latest`. The canonical record is `.agents/decisions.md` under `P01-D1 — CI host and Windows runner`.
+
+Result: Add one GitHub workflow that invokes `scripts/verify.ps1`. Add no Gitea CI and make no external required-check, branch-protection, or secret changes without separate authorization.
 
 ### Decision 2 — Existing-file formatting baseline
 
