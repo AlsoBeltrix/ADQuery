@@ -27,7 +27,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddLlmProviderConfiguration(builder.Configuration);
 builder.Services.AddSwaggerGen(c =>
 {
-    c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
+    c.SwaggerDoc("v1", new Microsoft.OpenApi.OpenApiInfo
     {
         Title = "AdQuery Orchestrator API",
         Version = "v1",

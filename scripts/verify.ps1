@@ -165,23 +165,46 @@ function Assert-PublishedRuntimeContract {
     if ($dependencies.runtimeTarget.name -ne '.NETCoreApp,Version=v10.0') {
         throw "Published dependency graph targets '$($dependencies.runtimeTarget.name)' instead of .NET 10."
     }
+
+    $runtimeTarget = @(
+        $dependencies.targets.PSObject.Properties |
+            Where-Object { $_.Name -eq $dependencies.runtimeTarget.name }
+    )
+    if ($runtimeTarget.Count -ne 1) {
+        throw 'Published dependency graph does not contain its selected runtime target.'
+    }
+
+    $swaggerPackages = @(
+        $runtimeTarget[0].Value.PSObject.Properties.Name |
+            Where-Object { $_ -match '^Swashbuckle\.AspNetCore/' }
+    )
+    if ($swaggerPackages.Count -ne 1 -or $swaggerPackages[0] -notmatch '/10\.') {
+        throw "Published application must contain the Swashbuckle 10 family; found '$($swaggerPackages -join ', ')'."
+    }
 }
 
 function Invoke-PublishedStartupSmoke {
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('Production', 'Development')]
+        [string]$EnvironmentName
+    )
+
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
     $listener.Start()
     $port = ([Net.IPEndPoint]$listener.LocalEndpoint).Port
     $listener.Stop()
 
-    $standardOutputPath = Join-Path $publishPath 'startup.stdout.log'
-    $standardErrorPath = Join-Path $publishPath 'startup.stderr.log'
+    $environmentSlug = $EnvironmentName.ToLowerInvariant()
+    $standardOutputPath = Join-Path $publishPath "startup.$environmentSlug.stdout.log"
+    $standardErrorPath = Join-Path $publishPath "startup.$environmentSlug.stderr.log"
     $priorUrls = $env:ASPNETCORE_URLS
     $priorEnvironment = $env:ASPNETCORE_ENVIRONMENT
     $applicationProcess = $null
 
     try {
         $env:ASPNETCORE_URLS = "http://127.0.0.1:$port"
-        $env:ASPNETCORE_ENVIRONMENT = 'Production'
+        $env:ASPNETCORE_ENVIRONMENT = $EnvironmentName
         $applicationProcess = Start-Process `
             -FilePath 'dotnet' `
             -ArgumentList @('AdQueryOrchestrator.dll') `
@@ -191,6 +214,13 @@ function Invoke-PublishedStartupSmoke {
             -WindowStyle Hidden `
             -PassThru
 
+        $probePath = if ($EnvironmentName -eq 'Development') {
+            '/swagger/v1/swagger.json'
+        }
+        else {
+            '/api/user/info'
+        }
+        $expectedStatusCode = if ($EnvironmentName -eq 'Development') { 200 } else { 401 }
         $response = $null
         for ($attempt = 0; $attempt -lt 30; $attempt++) {
             Start-Sleep -Milliseconds 250
@@ -201,7 +231,7 @@ function Invoke-PublishedStartupSmoke {
 
             try {
                 $response = Invoke-WebRequest `
-                    -Uri "http://127.0.0.1:$port/api/user/info" `
+                    -Uri "http://127.0.0.1:$port$probePath" `
                     -SkipHttpErrorCheck `
                     -TimeoutSec 1
                 break
@@ -212,13 +242,58 @@ function Invoke-PublishedStartupSmoke {
         }
 
         if ($null -eq $response) {
-            throw 'Published application did not answer a local startup request.'
+            throw "Published application did not answer the $EnvironmentName startup request."
         }
-        if ([int]$response.StatusCode -ne 401) {
-            throw "Published protected endpoint returned $([int]$response.StatusCode) instead of 401."
+        if ([int]$response.StatusCode -ne $expectedStatusCode) {
+            throw "Published $EnvironmentName probe returned $([int]$response.StatusCode) instead of $expectedStatusCode."
         }
 
-        Write-Output 'Published startup smoke passed: protected endpoint returned 401.'
+        if ($EnvironmentName -eq 'Development') {
+            $swagger = $response.Content | ConvertFrom-Json
+            if ($swagger.openapi -notmatch '^3\.') {
+                throw "Published Swagger document reported unsupported OpenAPI version '$($swagger.openapi)'."
+            }
+            if ($swagger.info.title -ne 'AdQuery Orchestrator API' -or
+                $swagger.info.version -ne 'v1') {
+                throw 'Published Swagger document does not contain the configured API metadata.'
+            }
+
+            $swaggerPaths = @($swagger.paths.PSObject.Properties.Name)
+            if ($swaggerPaths -notcontains '/api/User/info') {
+                throw 'Published Swagger document omitted the known user information route.'
+            }
+
+            $swaggerUi = Invoke-WebRequest `
+                -Uri "http://127.0.0.1:$port/" `
+                -SkipHttpErrorCheck `
+                -TimeoutSec 2
+            if ([int]$swaggerUi.StatusCode -ne 200 -or
+                $swaggerUi.Content -notmatch 'swagger-ui-bundle\.js') {
+                throw 'Published Swagger UI did not load in Development.'
+            }
+
+            Write-Output 'Published Development smoke passed: Swagger JSON and UI loaded.'
+        }
+        else {
+            $productionSwagger = Invoke-WebRequest `
+                -Uri "http://127.0.0.1:$port/swagger/v1/swagger.json" `
+                -SkipHttpErrorCheck `
+                -TimeoutSec 2
+            if ([int]$productionSwagger.StatusCode -ge 200 -and
+                [int]$productionSwagger.StatusCode -lt 300) {
+                throw 'Published Swagger JSON is exposed in Production.'
+            }
+
+            $productionSwaggerUi = Invoke-WebRequest `
+                -Uri "http://127.0.0.1:$port/" `
+                -SkipHttpErrorCheck `
+                -TimeoutSec 2
+            if ($productionSwaggerUi.Content -match 'swagger-ui-bundle\.js') {
+                throw 'Published Swagger UI is exposed in Production.'
+            }
+
+            Write-Output 'Published Production smoke passed: protected endpoint returned 401 and Swagger is hidden.'
+        }
     }
     finally {
         if ($null -ne $applicationProcess) {
@@ -427,7 +502,8 @@ function Invoke-RepositoryVerification {
             $publishPath
         )
         Assert-PublishedRuntimeContract
-        Invoke-PublishedStartupSmoke
+        Invoke-PublishedStartupSmoke -EnvironmentName 'Production'
+        Invoke-PublishedStartupSmoke -EnvironmentName 'Development'
 
         Write-Stage 'Audit direct and transitive dependencies'
         Assert-NoVulnerablePackage `
