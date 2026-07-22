@@ -1,6 +1,6 @@
 # P01 — Verification Foundation and CI
 
-Status: **Evidence pending — local implementation complete; hosted CI evidence outstanding**
+Status: **Complete — implementation and hosted CI red/green evidence accepted**
 
 Owner approval: P01-D1, P01-D2, P01-D3, P01-D4, P01-D5, and the full plan approved on 2026-07-22
 
@@ -404,6 +404,12 @@ Commit intent: `ci: run canonical verification on windows`
 - Do not enable deployment, secrets, or live integration checks.
 
 External branch protection remains blocked until separately authorized.
+
+Hosted evidence recorded on 2026-07-22:
+
+- [Normal `master` run 29922703819](https://github.com/AlsoBeltrix/ADQuery/actions/runs/29922703819) passed at `a6bbfc1`; the canonical verifier and artifact upload both succeeded on `windows-latest`.
+- [Deliberate-failure run 29922897677](https://github.com/AlsoBeltrix/ADQuery/actions/runs/29922897677) failed at temporary proof commit `3201cbe` because `EnsurePlanLimit_AppliesPositiveRequestedLimitToPlan` expected `101` while production returned `100`. The `Verify` step propagated exit code 1 and the always-run artifact upload still succeeded.
+- Commit `6f60f8f` restored the assertion without rewriting history. [Recovery run 29923070596](https://github.com/AlsoBeltrix/ADQuery/actions/runs/29923070596) passed the canonical verifier and artifact upload. The proof branch had zero content difference from `master` after restoration and was then removed locally and remotely.
 
 ## Red/green guard strategy
 
