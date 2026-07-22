@@ -65,6 +65,8 @@ builder.Services.AddScoped<IPlanValidator, PlanValidator>();
 builder.Services.AddSingleton<ICsvEnrichmentFilterEvaluator, CsvEnrichmentFilterEvaluator>();
 builder.Services.AddScoped<ICsvEnrichmentPlanValidator, CsvEnrichmentPlanValidator>();
 builder.Services.AddScoped<ICsvEnrichmentService, CsvEnrichmentService>();
+builder.Services.AddSingleton<ICsvEnrichmentResultWriter, FileSystemCsvEnrichmentResultWriter>();
+builder.Services.AddSingleton<ICsvEnrichmentResultIdGenerator, CsvEnrichmentResultIdGenerator>();
 
 // Register job infrastructure (async query support)
 builder.Services.AddSingleton<IQueryJobStore, InMemoryQueryJobStore>();

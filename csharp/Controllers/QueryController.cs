@@ -44,6 +44,8 @@ public class QueryController : ControllerBase
     private readonly IPlanPreprocessor _planPreprocessor;
     private readonly IPlanValidator _planValidator;
     private readonly ICsvEnrichmentService _csvEnrichmentService;
+    private readonly ICsvEnrichmentResultWriter _csvEnrichmentResultWriter;
+    private readonly ICsvEnrichmentResultIdGenerator _csvEnrichmentResultIdGenerator;
     private readonly string _defaultModelId;
     private readonly string _defaultModelDisplayName;
     private readonly string _alternateModelId;
@@ -58,7 +60,9 @@ public class QueryController : ControllerBase
         IQueryJobManager jobManager,
         IPlanPreprocessor planPreprocessor,
         IPlanValidator planValidator,
-        ICsvEnrichmentService csvEnrichmentService)
+        ICsvEnrichmentService csvEnrichmentService,
+        ICsvEnrichmentResultWriter csvEnrichmentResultWriter,
+        ICsvEnrichmentResultIdGenerator csvEnrichmentResultIdGenerator)
     {
         _logger = logger;
         _claudeService = claudeService;
@@ -69,6 +73,8 @@ public class QueryController : ControllerBase
         _planPreprocessor = planPreprocessor;
         _planValidator = planValidator;
         _csvEnrichmentService = csvEnrichmentService;
+        _csvEnrichmentResultWriter = csvEnrichmentResultWriter;
+        _csvEnrichmentResultIdGenerator = csvEnrichmentResultIdGenerator;
 
         _defaultModelId = configuration.GetValue<string>("Claude:Model", "claude-3-sonnet-20240229")!;
         _defaultModelDisplayName = DeriveModelDisplayName(_defaultModelId);
@@ -1375,10 +1381,7 @@ public class QueryController : ControllerBase
 
         var userName = GetSamAccountName(HttpContext.User);
         var timestampUtc = DateTime.UtcNow;
-        var userDirectory = QueryLogHelper.GetUserDirectory(userName);
-        var baseFileName = QueryLogHelper.BuildFileBaseName(userName, timestampUtc);
-        var logPath = Path.Combine(userDirectory, $"{baseFileName}_csv.log");
-        var outputPath = Path.Combine(userDirectory, $"{baseFileName}_csv.csv");
+        string? logPath = null;
         string? rawModelResponse = null;
         string? modelPlanJson = null;
 
@@ -1407,6 +1410,7 @@ public class QueryController : ControllerBase
                 _logger.LogWarning("Claude failed to generate CSV enrichment plan for {User}: {Error}",
                     userName, planResponse.ErrorMessage);
 
+                logPath = BuildCsvLogPath(userName, timestampUtc);
                 WriteCsvLog(logPath, timestampUtc, userName, request.Query, errorMessage, rawModelResponse, null);
                 return BadRequest(new { error = errorMessage });
             }
@@ -1419,7 +1423,7 @@ public class QueryController : ControllerBase
             });
 
             _logger.LogInformation("Generated CSV enrichment plan: match '{MatchColumn}' on AD '{MatchAttribute}', retrieve: {Attributes}",
-                plan.MatchColumn, plan.MatchAttribute, string.Join(", ", plan.RetrieveAttributes));
+                plan.MatchColumn, plan.MatchAttribute, string.Join(", ", plan.RetrieveAttributes ?? []));
 
             // Step 2: Execute the plan - backend does all the work
             // Iterates through CSV rows, does per-user AD lookups, merges results
@@ -1429,14 +1433,40 @@ public class QueryController : ControllerBase
                 request.CsvData,
                 HttpContext.RequestAborted);
 
-            var requestId = Guid.NewGuid().ToString();
+            if (!enrichmentResult.Success)
+            {
+                _logger.LogWarning(
+                    "CSV enrichment stopped for {User} with failure kind {FailureKind}.",
+                    userName,
+                    enrichmentResult.FailureKind);
+
+                if (enrichmentResult.FailureKind == CsvEnrichmentFailureKind.Validation)
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        error = "CSV enrichment plan is invalid.",
+                        errors = enrichmentResult.Errors
+                    });
+                }
+
+                var errorMessage = enrichmentResult.FailureKind == CsvEnrichmentFailureKind.DirectoryOperation
+                    ? "Active Directory lookup failed. No enrichment result was produced."
+                    : "CSV enrichment failed before producing a result.";
+                return StatusCode(500, new { success = false, error = errorMessage });
+            }
+
+            var requestId = _csvEnrichmentResultIdGenerator.CreateId();
             var previewRowCount = _configuration.GetValue<int>("QueryDefaults:PreviewRowCount", 10);
             var previewRows = enrichmentResult.Data.Take(previewRowCount).ToList();
 
             // Save results to file
             var headers = DetermineHeaders(enrichmentResult.Data);
             var csvContent = GenerateFileContent(enrichmentResult.Data, headers, "csv");
-            System.IO.File.WriteAllBytes(outputPath, csvContent);
+            var outputPath = _csvEnrichmentResultWriter.Write(userName, timestampUtc, csvContent);
+            var successLogPath = Path.ChangeExtension(outputPath, ".log")
+                ?? throw new InvalidOperationException("CSV enrichment result writer returned an invalid output path.");
+            logPath = successLogPath;
 
             // Cache for download
             CacheQueryResult(
@@ -1488,6 +1518,7 @@ public class QueryController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "CSV enrichment failed for user {User}", userName);
+            logPath ??= BuildCsvLogPath(userName, timestampUtc);
             WriteCsvLog(logPath, timestampUtc, userName, request.Query, ex.Message, rawModelResponse, modelPlanJson);
             return StatusCode(500, new { error = "CSV enrichment failed", message = ex.Message });
         }
@@ -1685,6 +1716,13 @@ public class QueryController : ControllerBase
         {
             // Best effort logging
         }
+    }
+
+    private static string BuildCsvLogPath(string userName, DateTime timestampUtc)
+    {
+        var userDirectory = QueryLogHelper.GetUserDirectory(userName);
+        var baseFileName = QueryLogHelper.BuildFileBaseName(userName, timestampUtc);
+        return Path.Combine(userDirectory, $"{baseFileName}_csv.log");
     }
 
     private static string DeriveModelDisplayName(string modelId)
@@ -1946,10 +1984,3 @@ public class CsvEnrichmentRequest
     [Required]
     public List<List<string>> CsvData { get; set; } = new();
 }
-
-
-
-
-
-
-
