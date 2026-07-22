@@ -1,6 +1,6 @@
 # P05 — CSV Enrichment Scale and Request Limits
 
-**Status:** Final advisory review completed; round-3 repairs were applied without a fourth review. Implementation is unauthorized. The owner fixed the required row ceiling at 100,000. All other numeric workload assumptions must pass the evidence gate below before they become defaults. Slice 0 evidence-harness approval and D1 remain pending.
+**Status:** Final advisory review completed; round-3 repairs were applied without a fourth review. The owner fixed the required row ceiling at 100,000. On 2026-07-22 the owner approved **Slice 0 only** (the read-only capacity-evidence harness); it changes no endpoint behavior, adds no checked-in limit defaults, and contacts no live provider, Active Directory, or production output root. Slices 1-6 remain unauthorized until D1 is approved from Slice 0's evidence. All numeric workload assumptions other than the 100,000-row ceiling must still pass the evidence gate below before they become defaults.
 
 ## Finding
 
