@@ -8,7 +8,7 @@
 
 ## Next
 
-- Present plan decisions to the owner one at a time, record approvals durably, and implement only approved plans in their dependency order. Prioritize P02 after its decision and verification prerequisites are approved.
+- Present P01-D1 (the authoritative CI host and Windows runner) to the owner next. After all P01 decisions and full-plan status are approved, implement P01 in dependency order; prioritize P02 after its decision and verification prerequisites are approved.
 
 ## Blockers
 

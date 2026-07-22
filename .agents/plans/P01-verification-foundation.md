@@ -2,7 +2,7 @@
 
 Status: **Reviewed — implementation is not authorized**
 
-Owner approval: Pending
+Owner approval: P01-D2 approved; P01-D1 and full-plan approval pending
 
 Implementation dependency: This foundation should land before behavior-changing plans P02 and P04–P21. The urgent dependency-security work in P03 may land first if necessary, using the existing build and package-audit commands.
 
@@ -453,7 +453,9 @@ Blocked until decided: Slice 6 and any external required-check configuration.
 
 Choose whether to normalize existing C# whitespace once or enforce formatting only after a manually maintained baseline. Recommendation: perform one isolated formatter-only commit before functional fixes because the repository is currently inactive; the cost is a large blame-only diff, while the benefit is a simple deterministic gate.
 
-Blocked until decided: Slice 4 and whitespace enforcement in Slice 5.
+Decision: Approved on 2026-07-22. The canonical record is `.agents/decisions.md` under `P01-D2 — Existing-file formatting baseline`.
+
+Result: Slice 4 will perform one isolated whitespace-only normalization commit, and Slice 5 will enable `dotnet format ... --verify-no-changes` after that commit is proven.
 
 ## Review history
 
