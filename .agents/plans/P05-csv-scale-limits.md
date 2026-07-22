@@ -678,7 +678,8 @@ P05 is complete only when:
 
 ### Round 1 — 2026-07-21T20:27:19Z
 
-**Reviewer:** Headless Claude Code 2.1.216 / configured model / maximum effort  
+**Reviewer:** Headless Claude Code 2.1.216 / configured model / maximum effort
+
 **Verdict:** Revisions required
 
 - Assigned ambiguity classification and output behavior to P05 rather than assuming P04 already supplied it.
@@ -688,7 +689,8 @@ P05 is complete only when:
 
 ### Round 2 — 2026-07-21T20:33:04Z
 
-**Reviewer:** Headless Claude Code 2.1.216 / configured model / maximum effort  
+**Reviewer:** Headless Claude Code 2.1.216 / configured model / maximum effort
+
 **Verdict:** Accepted
 
 - Confirmed the ambiguity ownership, bounded result query, terminating bisection, transport-status, filter-feasibility, and output-limit repairs have no remaining material blocker.

@@ -348,7 +348,8 @@ No credentialed Active Directory test is required for deterministic completion. 
 
 ### Round 1 — 2026-07-21T20:16:34Z
 
-**Reviewer:** Headless Claude Code 2.1.216 / configured model / maximum effort  
+**Reviewer:** Headless Claude Code 2.1.216 / configured model / maximum effort
+
 **Verdict:** Revisions required
 
 - Replaced the unsafe full-policy assumption with a canonical-security-policy intersection and one shared typed CSV evaluator capability contract; removed unknown-operator fallback semantics and added regression guards.
@@ -356,7 +357,8 @@ No credentialed Active Directory test is required for deterministic completion. 
 
 ### Round 2 — 2026-07-21T20:19:22Z
 
-**Reviewer:** Headless Claude Code 2.1.216 / configured model / maximum effort  
+**Reviewer:** Headless Claude Code 2.1.216 / configured model / maximum effort
+
 **Verdict:** Accepted
 
 - Confirmed the operator-capability repair, atomic slices, ordinary-empty semantics, and cross-plan handoffs have no remaining implementation blocker.

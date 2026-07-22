@@ -2,8 +2,10 @@
 
 Status: **Reviewed — implementation is not authorized**
 
-Owner approval: Pending  
-Implementation dependency: This foundation should land before behavior-changing plans P02 and P04–P21. The urgent dependency-security work in P03 may land first if necessary, using the existing build and package-audit commands.  
+Owner approval: Pending
+
+Implementation dependency: This foundation should land before behavior-changing plans P02 and P04–P21. The urgent dependency-security work in P03 may land first if necessary, using the existing build and package-audit commands.
+
 Review status: Accepted after 2 advisory rounds
 
 ## Problem
