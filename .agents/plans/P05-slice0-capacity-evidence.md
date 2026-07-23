@@ -154,6 +154,12 @@ Measured terms at the 100,000-row worst case (workstation GC, to be re-confirmed
 The genuine choices D1 must settle are below. Each is stated with the evidence that bounds it and
 the computed consequence. None is pre-decided here.
 
+### D1 approved caps (owner)
+
+Recorded as each cap is approved, one at a time. Slices 1-6 stay unauthorized until all five land.
+
+- **Maximum input columns: 64** — approved 2026-07-23. Drops the unevidenced 500-column coordinate; covers realistic enrichment inputs with wide margin. The provider request is not the binding constraint at this count (5,087 B at 10 columns, invariant to row content). (Settles choice 2.)
+
 ### D1 choices for owner approval
 
 1. **Enforced active-CSV count (memory resource choice).** With ~155.8 MB retained + up to
