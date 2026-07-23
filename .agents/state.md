@@ -3,13 +3,20 @@
 ## Now
 
 - P04 is complete.
-- **P05 Slice 0 landed** at `43848b1` (`perf(csv): measure enrichment capacity`): the opt-in, env-gated (`ADQUERY_CAPACITY_MATRIX`) capacity harness under `tests/AdQueryOrchestrator.Tests/Benchmarks/` — actual-HTTP mode via `WebApplicationFactory`, benchmark-only planned-structure model, closed-form byte calculators (all cross-checked against real encoders), and the matrix runner. Verification stays inert (matrix skips; 170 tests executed, verify passed). No endpoint behavior change, no checked-in limit defaults, no live provider/AD/output-root access. Evidence and D1 derivation recorded in `.agents/plans/P05-slice0-capacity-evidence.md`.
-- **D1 (initial cap values) awaits owner approval.** Five genuine choices with computed consequences are laid out in the evidence doc's "D1 choices" section: (1) enforced active-CSV count, (2) column/header admission, (3) per-field/body byte budget, (4) retrieval-attribute/output budget, (5) batch-size candidate. Key caveat: all heap/working-set figures are workstation GC on `ASHBIAMWEB1`; deployment uses server GC and must remeasure before any memory-derived cap is finalized. P06/P07 have not landed.
+- **P05 Slice 0 landed** (`43848b1` harness) and was independently code-reviewed: verdict **accepted, guard_confirmed** (codex, owner-run interactive; review records under `.agents/review/`, committed `1a16073`). The reviewer reproduced the byte-model guard proof and ran `verify.ps1` on its own worktree.
+- **D1 caps — four approved, one deferred** (recorded in `.agents/plans/P05-slice0-capacity-evidence.md` "D1 approved caps" section; owner approvals 2026-07-23):
+  - Max columns: **64** (`d6957ac`).
+  - Max rows: **100,000** (`c945d8e`).
+  - Total request body cap: **96 MiB**; per-field cap: **1,024 UTF-16 code units** (`32c48bf`).
+  - Max retrieval attributes: **16** (`b6647a0`) — derived from the output envelope; LDAP response cost unmeasured, relies on the plan's pre-activation rerun gate.
+  - Concurrent active-CSV admission count: **DEFERRED** (`f071d5d`). Owner set a binding precondition — serialize-to-1 is acceptable only if queued users get a reasonable wait time, which needs live-AD per-job timing that Slice 0 cannot produce. Waits on (1) a server-GC memory measurement (deployed app defaults to server GC via Web SDK; harness measured workstation GC) and (2) the deferred P09 live-timing matrix. No interim count adopted.
+- **P05-D0 recorded** (`.agents/decisions.md`, `78b83a9`): the app has never had a real user, so the stale 10 MB UI hint is discarded (not a compat constraint); code enforces the D1 caps and the UI is updated to match.
 
 ## Next
 
-- Present the D1 choices to the owner (one decision at a time, plain English) and record the approved values durably. Slices 1-6 stay unauthorized until D1 is approved.
+- **Slices 1-6 are not blocked by the deferred concurrency cap.** Assessment (from `P05-csv-scale-limits.md:88,129`): the deferred admission gate feeds only the memory equation; Slices 1-3 consume the four approved byte/count caps, Slices 4-6 are LDAP batching/dedup/output-budget — none need the concurrency number. The deferral blocks **P05 final completion** (the active-CSV gate is in scope) but not the start of implementation. NOTE: this sequencing read is mine, not owner-confirmed; the P05 plan status is still not `Approved` for Slices 1-6, and starting them requires that owner go per the plan's own gate (`:369`).
+- The deferred concurrency cap needs: a server-GC harness rerun (a config flag, same machine) + the P09 live-timing matrix, then fresh owner approval before P05 can be marked complete.
 
 ## Blockers
 
-- None. D1 owner approval gates Slices 1-6 but is a normal decision point, not a blocker.
+- None active. The deferred concurrency cap is a parked decision with recorded dependencies, not a blocker on Slices 1-6. Slices 1-6 still require the owner to flip the P05 plan status to `Approved` (plan gate `:369`).
