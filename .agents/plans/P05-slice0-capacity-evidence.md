@@ -160,6 +160,7 @@ Recorded as each cap is approved, one at a time. Slices 1-6 stay unauthorized un
 
 - **Maximum input columns: 64** — approved 2026-07-23. Drops the unevidenced 500-column coordinate; covers realistic enrichment inputs with wide margin. The provider request is not the binding constraint at this count (5,087 B at 10 columns, invariant to row content). (Settles choice 2.)
 - **Maximum rows: 100,000** — approved 2026-07-23. Confirms the plan's stated owner requirement; the entire capacity evidence base (memory, bytes, LDAP calls) is sized to this worst case. Everything downstream — body-byte budget, output budget, admission count — derives from the 100k profile.
+- **Total request body cap: 96 MiB (100,663,296 B); per-field cap: 1,024 UTF-16 code units** — approved 2026-07-23. The body cap sits above the measured worst-case JSON body of 90,700,157 B (~86.5 MB) for the approved 100k × 64 profile under worst-case encoding (quote / three-byte / control-escaped), with headroom; a lower cap would silently reject valid 100k uploads and contradict the approved row cap. This cap sets the Kestrel/IIS and `web.config` ceilings in Slice 2. The per-field cap (fixture uses 16 code units/cell) bounds a single pathological cell without constraining real identifiers/names. GC-independent (byte-count derivation), so not subject to the server-GC re-measurement caveat. (Settles choice 3.)
 
 ### D1 choices for owner approval
 
