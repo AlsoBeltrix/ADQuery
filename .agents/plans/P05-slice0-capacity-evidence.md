@@ -159,6 +159,7 @@ the computed consequence. None is pre-decided here.
 Recorded as each cap is approved, one at a time. Slices 1-6 stay unauthorized until all five land.
 
 - **Maximum input columns: 64** — approved 2026-07-23. Drops the unevidenced 500-column coordinate; covers realistic enrichment inputs with wide margin. The provider request is not the binding constraint at this count (5,087 B at 10 columns, invariant to row content). (Settles choice 2.)
+- **Maximum rows: 100,000** — approved 2026-07-23. Confirms the plan's stated owner requirement; the entire capacity evidence base (memory, bytes, LDAP calls) is sized to this worst case. Everything downstream — body-byte budget, output budget, admission count — derives from the 100k profile.
 
 ### D1 choices for owner approval
 
