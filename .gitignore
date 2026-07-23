@@ -34,3 +34,6 @@ Thumbs.db
 /patch.diff
 /SECURITY_RESTRICTIONS.md
 /csharp/IMPLEMENTATION_SUMMARY.md
+
+# codereview machine-local harness cache and dispatch transcripts
+.agents/review/*.local.*
