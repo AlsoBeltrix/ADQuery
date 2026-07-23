@@ -197,6 +197,28 @@ Recorded as each cap is approved, one at a time. Slices 1-6 stay unauthorized un
    automated tests never query AD). **Choice: carry 500 or 1,000 as the benchmark candidate**
    pending that timing check; it is not a checked-in default yet.
 
+## Server-GC re-measurement (2026-07-23)
+
+The process-budget and retained-structure matrices were re-run under server GC
+(`DOTNET_gcServer=1`, `DOTNET_gcConcurrent=1`, `ADQUERY_CAPACITY_MATRIX=1`), the mode the
+deployed app uses (Web SDK default). The run's artifact records `ServerGc: true`, confirming the
+mode. Same host (`ASHBIAMWEB1`), Release, 3 repeats. This closes dependency (1) of the deferred
+concurrency cap; dependency (2), live-AD per-job timing (P09), remains and is owner-run.
+
+| Rows | Retained heap (server) | vs workstation | Peak working set max (server) | vs workstation |
+|---:|---:|---|---:|---|
+| 10,000 | 15.4 MB | ~16.2 MB (≈) | 714.0 MB | 448.9 MB (+59%) |
+| 50,000 | 76.5 MB | ~80.2 MB (≈) | 714.0 MB | 448.9 MB (+59%) |
+| 100,000 | 148.6 MB | ~155.8 MB (≈) | 714.0 MB | 596.6 MB (+20%) |
+
+Retained managed heap is materially unchanged between GC modes (within the ~11% run-to-run
+spread). **Peak working set is higher under server GC** — ~714 MB across all row counts, +20% at
+100k over the workstation figure. Server GC's per-core heaps and lazier collection commit more
+memory. The concurrency cap is bound on peak working set, so the workstation figure (596.6 MB)
+was optimistic; the correct worst-case commit per 100k request is ~714 MB. Any active-CSV count
+must be derived from ~714 MB, not the earlier number. Retained-structure figures under server GC:
+100k/0% dup 83.0 MB (was 87.0), 100k/90% dup 28.2 MB (was 29.4) — also essentially unchanged.
+
 ## Caveats and gaps
 
 - **Server GC not measured.** All heap/working-set figures are workstation GC; re-confirm on a
