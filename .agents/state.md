@@ -15,7 +15,7 @@
 ## Next
 
 - **Slices 1-6 are not blocked by the deferred concurrency cap.** Assessment (from `P05-csv-scale-limits.md:88,129`): the deferred admission gate feeds only the memory equation; Slices 1-3 consume the four approved byte/count caps, Slices 4-6 are LDAP batching/dedup/output-budget — none need the concurrency number. The deferral blocks **P05 final completion** (the active-CSV gate is in scope) but not the start of implementation. NOTE: this sequencing read is mine, not owner-confirmed; the P05 plan status is still not `Approved` for Slices 1-6, and starting them requires that owner go per the plan's own gate (`:369`).
-- The deferred concurrency cap needs: a server-GC harness rerun (a config flag, same machine) + the P09 live-timing matrix, then fresh owner approval before P05 can be marked complete.
+- The deferred concurrency cap: dependency (1) server-GC memory is DONE (`b9152d0`; worst-case peak working set ~714 MB per 100k request, +20% over the optimistic workstation figure). Dependency (2) live-AD per-job timing is **declined by the owner** (2026-07-23) — not important enough; unreviewed tool not run against live AD. Tool `tools/ldap-timing.ps1` exists but is unrun (`44d3202`). Concurrency cap stays deferred with no timeline; do not re-raise unless the owner reopens. P05 cannot be marked complete while it is deferred, but nothing is actively pending.
 
 ## Blockers
 

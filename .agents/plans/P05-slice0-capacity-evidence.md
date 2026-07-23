@@ -219,6 +219,14 @@ was optimistic; the correct worst-case commit per 100k request is ~714 MB. Any a
 must be derived from ~714 MB, not the earlier number. Retained-structure figures under server GC:
 100k/0% dup 83.0 MB (was 87.0), 100k/90% dup 28.2 MB (was 29.4) — also essentially unchanged.
 
+**Live-AD timing dependency: declined by owner (2026-07-23).** The second dependency of the
+concurrency cap — live-directory per-job timing — was declined; the owner judged it not important
+enough to run and did not want to run the unreviewed tool against live AD. A read-only timing
+tool exists (`tools/ldap-timing.ps1`, mirrors the production search path, synthetic keys by
+default) but has NOT been run. The concurrency cap therefore remains deferred with no timeline and
+no per-job wait-time evidence. Do not re-raise this unless the owner reopens it. The four approved
+byte/count caps and the server-GC memory figure are unaffected.
+
 ## Caveats and gaps
 
 - **Server GC not measured.** All heap/working-set figures are workstation GC; re-confirm on a
