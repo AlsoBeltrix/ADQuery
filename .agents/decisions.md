@@ -1,5 +1,14 @@
 # Settled Decisions
 
+## P05-D0 — No legacy-limit constraint; UI reflects enforced code limits
+
+- Status: Approved
+- Date: 2026-07-23
+- Authority: Repository owner
+- Decision: The application has never had a real user, so no existing user-facing CSV limit is a compatibility constraint. The stale "Maximum upload size: 10 MB" UI hint (`csharp/wwwroot/index.html`) is discarded, not preserved. The code enforces the proper evidence-derived CSV limits (the D1 caps), and the UI is updated to state exactly what the code enforces.
+- Constraints: The UI's stated limits must match the enforced code limits, not aspirational or stale values. This resolves the flagged conflict between the shipped 10 MB hint and P05's 100,000-row / ~90.7 MB worst-case design target: the design target governs, the 10 MB hint is removed.
+- Consequence: D1 cap selection is unconstrained by the old 10 MB label. Whatever body/row/column caps D1 settles become both the enforced values and the displayed guidance.
+
 ## P04-D1 — Fail CSV enrichment atomically
 
 - Status: Approved
