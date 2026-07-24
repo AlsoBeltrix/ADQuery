@@ -46,6 +46,7 @@ public class QueryController : ControllerBase
     private readonly ICsvEnrichmentService _csvEnrichmentService;
     private readonly ICsvEnrichmentResultWriter _csvEnrichmentResultWriter;
     private readonly ICsvEnrichmentResultIdGenerator _csvEnrichmentResultIdGenerator;
+    private readonly ICsvEnrichmentRequestValidator _csvEnrichmentRequestValidator;
     private readonly string _defaultModelId;
     private readonly string _defaultModelDisplayName;
     private readonly string _alternateModelId;
@@ -62,7 +63,8 @@ public class QueryController : ControllerBase
         IPlanValidator planValidator,
         ICsvEnrichmentService csvEnrichmentService,
         ICsvEnrichmentResultWriter csvEnrichmentResultWriter,
-        ICsvEnrichmentResultIdGenerator csvEnrichmentResultIdGenerator)
+        ICsvEnrichmentResultIdGenerator csvEnrichmentResultIdGenerator,
+        ICsvEnrichmentRequestValidator csvEnrichmentRequestValidator)
     {
         _logger = logger;
         _claudeService = claudeService;
@@ -75,6 +77,7 @@ public class QueryController : ControllerBase
         _csvEnrichmentService = csvEnrichmentService;
         _csvEnrichmentResultWriter = csvEnrichmentResultWriter;
         _csvEnrichmentResultIdGenerator = csvEnrichmentResultIdGenerator;
+        _csvEnrichmentRequestValidator = csvEnrichmentRequestValidator;
 
         _defaultModelId = configuration.GetValue<string>("Claude:Model", "claude-3-sonnet-20240229")!;
         _defaultModelDisplayName = DeriveModelDisplayName(_defaultModelId);
@@ -1369,14 +1372,14 @@ public class QueryController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        if (request.CsvHeaders == null || !request.CsvHeaders.Any())
+        // P05 Slice 2: validate the parsed request shape before any file-path
+        // creation, column-pattern detection, LLM call, LDAP call, output
+        // allocation, or cache mutation. The transport body cap (configured on
+        // IIS/Kestrel) has already stopped oversized bodies before model binding.
+        var shapeValidation = _csvEnrichmentRequestValidator.Validate(request);
+        if (!shapeValidation.IsValid)
         {
-            return BadRequest(new { error = "No CSV headers provided" });
-        }
-
-        if (request.CsvData == null || !request.CsvData.Any())
-        {
-            return BadRequest(new { error = "No CSV data provided" });
+            return CsvEnrichmentRejection(shapeValidation);
         }
 
         var userName = GetSamAccountName(HttpContext.User);
@@ -1522,6 +1525,36 @@ public class QueryController : ControllerBase
             WriteCsvLog(logPath, timestampUtc, userName, request.Query, ex.Message, rawModelResponse, modelPlanJson);
             return StatusCode(500, new { error = "CSV enrichment failed", message = ex.Message });
         }
+    }
+
+    /// <summary>
+    /// Builds an RFC 9457-style problem-details response for a rejected CSV
+    /// enrichment request. Carries the stable machine code and, when it does not
+    /// expose content, the applicable limit and observed count. Never includes a
+    /// cell value, identifier, or row.
+    /// </summary>
+    private ObjectResult CsvEnrichmentRejection(CsvEnrichmentRequestValidationResult validation)
+    {
+        var problem = new ProblemDetails
+        {
+            Status = validation.StatusCode,
+            Title = validation.Title,
+            Type = $"https://adquery.invalid/problems/{validation.Code}",
+        };
+        problem.Extensions["code"] = validation.Code;
+        if (validation.Limit is { } limit)
+        {
+            problem.Extensions["limit"] = limit;
+        }
+        if (validation.Observed is { } observed)
+        {
+            problem.Extensions["observed"] = observed;
+        }
+
+        return new ObjectResult(problem)
+        {
+            StatusCode = validation.StatusCode,
+        };
     }
 
     /// <summary>

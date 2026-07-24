@@ -42,7 +42,6 @@
         csvHeaders: [],
         csvData: []
     };
-    const MAX_CSV_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 
     initTheme();
 
@@ -133,14 +132,6 @@
         if (!file.name.toLowerCase().endsWith('.csv')) {
             fileStatus.textContent = 'Please select a CSV file';
             fileStatus.classList.add('error');
-            resetCsvForm();
-            return;
-        }
-
-        if (file.size > MAX_CSV_UPLOAD_BYTES) {
-            fileStatus.textContent = 'File is too large. Maximum upload size is 10 MB.';
-            fileStatus.classList.add('error');
-            event.target.value = '';
             resetCsvForm();
             return;
         }

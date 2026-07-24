@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using AdQuery.Orchestrator.Controllers;
 using AdQuery.Orchestrator.Models;
+using AdQuery.Orchestrator.Security;
 using AdQuery.Orchestrator.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -170,6 +171,62 @@ public sealed class CsvEnrichmentControllerTests
         Assert.True(File.Exists(Path.ChangeExtension(outputPath, ".log")));
     }
 
+    [Fact]
+    public async Task CsvEnrich_OversizedRequestRejectedBeforeAnyDownstreamWork()
+    {
+        // A ClaudeService that fails the test if the controller ever calls the LLM
+        // for a request that should have been rejected at shape validation.
+        var claude = new ThrowingClaudeService();
+        var enrichment = new StubCsvEnrichmentService(new CsvEnrichmentResult { Success = true });
+        using var cache = new RecordingMemoryCache();
+        var writer = new RecordingResultWriter(
+            Path.Combine(Path.GetTempPath(), "unused-oversized.csv"),
+            throwOnWrite: true);
+        var idGenerator = new RecordingResultIdGenerator();
+        var logger = new CapturingLogger<QueryController>();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["QueryDefaults:PreviewRowCount"] = "1" })
+            .Build();
+        var validator = new CsvEnrichmentRequestValidator(
+            Microsoft.Extensions.Options.Options.Create(
+                new AdQuery.Orchestrator.Configuration.CsvEnrichmentLimitsOptions { MaxColumns = 1 }));
+        var controller = new QueryController(
+            logger, claude, null!, cache, configuration, null!, null!, null!,
+            enrichment, writer, idGenerator, validator)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(
+                        [new Claim(ClaimTypes.Name, "ANALOG\\csv-owner")], "Test"))
+                }
+            }
+        };
+
+        var request = new CsvEnrichmentRequest
+        {
+            Query = "enrich",
+            CsvHeaders = ["a", "b"],
+            CsvData = [["1", "2"]]
+        };
+
+        var action = await controller.CsvEnrich(request);
+
+        var response = Assert.IsType<ObjectResult>(action.Result);
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, response.StatusCode);
+        var problem = Assert.IsType<ProblemDetails>(response.Value);
+        Assert.Equal("csv_column_limit_exceeded", problem.Extensions["code"]?.ToString());
+
+        // No downstream dependency was touched.
+        Assert.Equal(0, claude.Calls);
+        Assert.Equal(0, enrichment.Calls);
+        Assert.Empty(writer.Calls);
+        Assert.Equal(0, idGenerator.Calls);
+        Assert.Empty(cache.CreatedKeys);
+        AssertNoCompletionLog(logger);
+    }
+
     private static QueryController CreateController(
         CsvEnrichmentPlan plan,
         StubCsvEnrichmentService enrichment,
@@ -195,7 +252,9 @@ public sealed class CsvEnrichmentControllerTests
             null!,
             enrichment,
             writer,
-            idGenerator)
+            idGenerator,
+            new CsvEnrichmentRequestValidator(
+                Microsoft.Extensions.Options.Options.Create(new AdQuery.Orchestrator.Configuration.CsvEnrichmentLimitsOptions())))
         {
             ControllerContext = new ControllerContext
             {
@@ -300,6 +359,38 @@ public sealed class CsvEnrichmentControllerTests
                 Success = true,
                 Plan = plan
             });
+        }
+
+        public Task<ClaudeHealthResult> CheckHealthAsync(CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+    }
+
+    private sealed class ThrowingClaudeService : IClaudeService
+    {
+        public int Calls { get; private set; }
+
+        public Task<ClaudeResponse> GenerateExecutionPlanAsync(
+            string userQuery,
+            string? context = null,
+            int? requestedResultLimit = null,
+            CancellationToken cancellationToken = default,
+            string? modelOverride = null)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<CsvEnrichmentPlanResponse> GenerateCsvEnrichmentPlanAsync(
+            string userQuery,
+            List<string> csvHeaders,
+            int rowCount,
+            CancellationToken cancellationToken = default,
+            Dictionary<string, string>? columnPatterns = null)
+        {
+            Calls++;
+            throw new InvalidOperationException(
+                "The LLM must not be called for a request rejected at shape validation.");
         }
 
         public Task<ClaudeHealthResult> CheckHealthAsync(CancellationToken cancellationToken = default)

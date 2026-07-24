@@ -26,6 +26,18 @@ builder.Services.AddControllers()
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddLlmProviderConfiguration(builder.Configuration);
 builder.Services.AddCsvEnrichmentConfiguration(builder.Configuration);
+
+// P05 Slice 2: configure the transport body cap from the one authoritative CSV
+// application body limit so no second value can drift. Under the current IIS
+// in-process hosting model IISServerOptions is authoritative; the Kestrel limit
+// protects a future direct/Kestrel host but is inert in-process.
+var csvBodyCap = builder.Configuration.GetValue<long?>(
+    $"{CsvEnrichmentLimitsOptions.SectionName}:MaxRequestBodyBytes")
+    ?? new CsvEnrichmentLimitsOptions().MaxRequestBodyBytes;
+builder.Services.Configure<Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerOptions>(
+    options => options.Limits.MaxRequestBodySize = csvBodyCap);
+builder.Services.Configure<Microsoft.AspNetCore.Builder.IISServerOptions>(
+    options => options.MaxRequestBodySize = csvBodyCap);
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new Microsoft.OpenApi.OpenApiInfo
@@ -65,6 +77,7 @@ builder.Services.AddScoped<IDirectorySecurityPolicy, DirectorySecurityPolicy>();
 builder.Services.AddScoped<IPlanValidator, PlanValidator>();
 builder.Services.AddSingleton<ICsvEnrichmentFilterEvaluator, CsvEnrichmentFilterEvaluator>();
 builder.Services.AddScoped<ICsvEnrichmentPlanValidator, CsvEnrichmentPlanValidator>();
+builder.Services.AddScoped<ICsvEnrichmentRequestValidator, CsvEnrichmentRequestValidator>();
 builder.Services.AddScoped<ICsvEnrichmentService, CsvEnrichmentService>();
 builder.Services.AddSingleton<ICsvEnrichmentResultWriter, FileSystemCsvEnrichmentResultWriter>();
 builder.Services.AddSingleton<ICsvEnrichmentResultIdGenerator, CsvEnrichmentResultIdGenerator>();
