@@ -1,6 +1,6 @@
 # P05 — CSV Enrichment Scale and Request Limits
 
-**Status:** Final advisory review completed; round-3 repairs were applied without a fourth review. The owner fixed the required row ceiling at 100,000. On 2026-07-22 the owner approved **Slice 0 only** (the read-only capacity-evidence harness); it changes no endpoint behavior, adds no checked-in limit defaults, and contacts no live provider, Active Directory, or production output root. Slices 1-6 remain unauthorized until D1 is approved from Slice 0's evidence. All numeric workload assumptions other than the 100,000-row ceiling must still pass the evidence gate below before they become defaults.
+**Status: Approved.** Final advisory review completed; round-3 repairs were applied without a fourth review. The owner fixed the required row ceiling at 100,000. On 2026-07-22 the owner approved **Slice 0 only** (the read-only capacity-evidence harness); it changes no endpoint behavior, adds no checked-in limit defaults, and contacts no live provider, Active Directory, or production output root. On 2026-07-24 the owner approved the four settled D1 caps and gave an explicit go to implement Slices 1-6 (the concurrent active-CSV admission count remains deferred per `.agents/plans/P05-slice0-capacity-evidence.md`; its absence does not block Slices 1-6). All numeric workload assumptions other than the 100,000-row ceiling and the four settled D1 caps must still pass the evidence gate below before they become defaults.
 
 ## Finding
 
@@ -729,7 +729,7 @@ P05 is complete only when:
 - Every new behavioral guard has documented revert-fails/restore-passes proof.
 - The canonical verification command passes.
 - The advisory review is resolved within three rounds.
-- The plan status is explicitly changed to `Approved` before implementation begins.
+- The plan status is explicitly changed to `Approved` before implementation begins. *(Done 2026-07-24; owner go recorded in the status line above and in `.agents/state.md`.)*
 
 ## Advisory Review
 

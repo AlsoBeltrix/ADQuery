@@ -2,7 +2,8 @@
 
 ## Now
 
-- **Entry point (2026-07-23):** P05 Slice 0 (capacity evidence) is landed, reviewed-accepted, and its D1 caps are settled except the concurrency cap, which is parked indefinitely by owner decision. No work is actively in flight. Slices 1-6 have NOT started and require the owner to flip the P05 plan status to `Approved` (plan gate `P05-csv-scale-limits.md:369`) — which the owner declined to give this session ("no"). Nothing is pending an action from me.
+- **Entry point (2026-07-24):** Owner gave an explicit go to implement P05 Slices 1-6. Plan status flipped to `Approved` (`P05-csv-scale-limits.md` status line). Implementation is in flight, slice by slice, each a separate commit on `master` with red→green guard proof and `scripts/verify.ps1` before commit. The concurrent active-CSV admission count stays DEFERRED and does not block Slices 1-6.
+- **Prior entry (2026-07-23):** P05 Slice 0 (capacity evidence) is landed, reviewed-accepted, and its D1 caps are settled except the concurrency cap, which is parked indefinitely by owner decision.
 - P04 is complete.
 - **P05 Slice 0 landed** (`43848b1` harness) and was independently code-reviewed: verdict **accepted, guard_confirmed** (codex, owner-run interactive; review records under `.agents/review/`, committed `1a16073`). The reviewer reproduced the byte-model guard proof and ran `verify.ps1` on its own worktree.
 - **D1 caps — four approved, one deferred** (recorded in `.agents/plans/P05-slice0-capacity-evidence.md` "D1 approved caps" section; owner approvals 2026-07-23):
