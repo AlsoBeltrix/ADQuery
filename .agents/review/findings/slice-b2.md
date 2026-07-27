@@ -1,7 +1,7 @@
 # slice-b2: F01 Slice B2 — main-window headline rendering
 
 **Severity**: MEDIUM — a broken render branch or misapplied theme would ship a wrong or unreadable headline answer to every user, the first thing they see. Front-end only; no product code under `csharp/` outside `wwwroot/`, no server or data-path change. The authoritative download and full data table are untouched.
-**Status**: Reopened — reviewer found an incomplete theme migration; repaired at `08cb19b`, pending repair-delta redispatch
+**Status**: Verified — round 1 reopened (incomplete theme migration), repaired `08cb19b`, round 2 accepted/guard_confirmed (awaiting owner-gated merge)
 **Branch**: (none — committed directly to master, this repo's non-branch policy for F01 slices; reviewed post-hoc over a pinned SHA range because history rewrite is forbidden)
 **Commit**: `54d7930` (feat(ui): render plain-language headline per kind (F01 Slice B2))
 
@@ -60,4 +60,16 @@ Root cause: `#feedbackComment` and `.btn-cancel:hover` read `var(--input-bg, <li
 
 Defined `--input-bg: var(--field)` and `--hover-bg: var(--panel-2)` in both `html[data-theme]` blocks and deleted the two inert `.theme-dark` selectors. Added regression guard `DarkTheme_FeedbackTextarea_UsesContractFieldBackground`, which reveals the textarea via the real negative-feedback flow and asserts the contract dark field background (`rgb(11, 13, 16)` = `#0b0d10`). Proven non-vacuous: removing `--input-bg` from the dark block fails it (falls back to white `rgb(255,255,255)`); restoring passes. Full `scripts/verify.ps1`: 218 passed, 1 skipped, publish smoke + vuln audit clean.
 
-Repair-delta redispatch pending (base `54d7930`, head `08cb19b`, escalates one tier per T5).
+### Round 2 — accepted (2026-07-27, repair-delta redispatch)
+
+T5 note: a reopen escalates one tier on redispatch, but this machine has no owner-confirmed frontier tier→pair (`harnesses.local.json` `"tiers": {}`). Per the playbook fail-closed rule the frontier dispatch was surfaced to the owner, who authorized re-checking the repair on the available standard-tier codex reviewer (owner ruling 2026-07-27, one-line y/n ask). Recorded as a standard-tier repair-delta redispatch, not a satisfied T5 escalation.
+
+Reviewer: codex/@azure-openai-eus2-global/gpt-5.5-dzs/xhigh/standard (`--profile review`, danger-full-access, owner-authorized). Repair-delta re-review of `54d7930..08cb19b` (base = pre-repair head, head = post-repair), mandate narrowed to closing the reopened defect + no adjacent regression.
+
+Verdict: **accepted**, `guard_confirmed: true`. Envelope validated fail-closed: exit 0, single schema-valid JSON, `verdict` in enum, `reviewed_sha`==`08cb19b`, `base_sha`==`54d7930`.
+
+Reviewer's own worktree guard proof (detached worktree at `08cb19b`): removing dark `--input-bg` → focused test FAILED with `rgb(255, 255, 255)`; restore → PASSED; `scripts/verify.ps1` PASSED (218 passed, 1 skipped). Matches the coder's repair non-vacuity result.
+
+Confirming comments (no defects): dark `--input-bg`←`--field` (#0b0d10) and `--hover-bg`←`--panel-2` (#171a1e) close the white fallback; light theme resolves both tokens to light values; `var(--input-bg)`/`var(--hover-bg)` consumed only by `#feedbackComment`/`.btn-cancel:hover` (no adjacent regression); no `.theme-dark`/`.theme-light` selector remains in `styles.css`; the regression guard is non-vacuous and asserts `rgb(11, 13, 16)` via the real feedback flow.
+
+Merge remains owner-gated (accepted ≠ merge authority).
