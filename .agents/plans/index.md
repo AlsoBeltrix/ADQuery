@@ -19,7 +19,7 @@ Feature plans (the `F` namespace) capture net-new product direction, not finding
 
 | ID | Plan | Status |
 |---|---|---|
-| F01 | Conversational query experience (headline answer, follow-up chat, park CSV in UI) | Draft |
+| F01 | Conversational query experience (headline answer, follow-up chat, park CSV in UI) | In review |
 
 ## Plans
 
