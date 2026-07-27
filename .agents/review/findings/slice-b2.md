@@ -1,7 +1,7 @@
 # slice-b2: F01 Slice B2 — main-window headline rendering
 
 **Severity**: MEDIUM — a broken render branch or misapplied theme would ship a wrong or unreadable headline answer to every user, the first thing they see. Front-end only; no product code under `csharp/` outside `wwwroot/`, no server or data-path change. The authoritative download and full data table are untouched.
-**Status**: In progress (pending reviewer dispatch)
+**Status**: Reopened — reviewer found an incomplete theme migration; repaired at `08cb19b`, pending repair-delta redispatch
 **Branch**: (none — committed directly to master, this repo's non-branch policy for F01 slices; reviewed post-hoc over a pinned SHA range because history rewrite is forbidden)
 **Commit**: `54d7930` (feat(ui): render plain-language headline per kind (F01 Slice B2))
 
@@ -42,4 +42,22 @@ None.
 
 ## Reviewer comments
 
-(pending dispatch)
+### Round 1 — reopened (2026-07-27)
+
+Reviewer: codex/@azure-openai-eus2-global/gpt-5.5-dzs/xhigh/standard (`--profile review`, danger-full-access, owner-authorized 2026-07-27). Dispatched headless one-shot from the agent's own tool (no owner `!` relay). Reviewed `3554a13..54d7930`.
+
+Verdict: **reopened**, `guard_confirmed: true`. Envelope validated fail-closed: exit 0, single schema-valid JSON, `verdict` in enum, `reviewed_sha`==`54d7930`, `base_sha`==`3554a13`. (Post-run `codex_login` token-refresh ERROR lines are noise after `turn.completed`.)
+
+Reviewer's own worktree guard proof (isolated worktree at `54d7930`): early return before the kind dispatch → `Browser.HeadlineRenderingTests` FAILED (Failed:4, Passed:1); restore → PASSED (5/5); `scripts/verify.ps1` PASSED (217 passed, 1 skipped, publish smoke + vuln audit clean). Matches the coder's recorded non-vacuity result exactly.
+
+Material defect (accepted — the finding was mine, the reviewer is right):
+- `styles.css:578` — `.theme-dark #feedbackComment` is inert after the migration to `html[data-theme]`; the dark-mode feedback textarea fell back to `background: white` (from `#feedbackComment` line 574) while the page used dark text — an unreadable control.
+- `styles.css:621` — `.theme-dark .btn-cancel:hover` is likewise a dead class-based theme path left after the contract migration.
+
+Root cause: `#feedbackComment` and `.btn-cancel:hover` read `var(--input-bg, <light-literal>)` / `var(--hover-bg, <light-literal>)`, tokens never defined in the theme blocks, so the now-dead `.theme-dark` selectors were the only dark path.
+
+### Repair (coder, 2026-07-27) — commit `08cb19b`
+
+Defined `--input-bg: var(--field)` and `--hover-bg: var(--panel-2)` in both `html[data-theme]` blocks and deleted the two inert `.theme-dark` selectors. Added regression guard `DarkTheme_FeedbackTextarea_UsesContractFieldBackground`, which reveals the textarea via the real negative-feedback flow and asserts the contract dark field background (`rgb(11, 13, 16)` = `#0b0d10`). Proven non-vacuous: removing `--input-bg` from the dark block fails it (falls back to white `rgb(255,255,255)`); restoring passes. Full `scripts/verify.ps1`: 218 passed, 1 skipped, publish smoke + vuln audit clean.
+
+Repair-delta redispatch pending (base `54d7930`, head `08cb19b`, escalates one tier per T5).
