@@ -1,7 +1,7 @@
 # slice-c1: F01 Slice C1 — follow-up context byte cap + server-side enforcement
 
 **Severity**: MEDIUM — a mis-sized or unenforced cap would let over-limit follow-up context be persisted, logged, and transmitted to the model, or (via a wrong drop order / code-point split) ship a corrupt or oversized context fragment. Server-side data-path change (persistence/logging/transmission input); no auth, crypto, schema, migration, or wire-format path touched.
-**Status**: In progress — round 1 reopened (retry enqueue path unenforced), repaired `8549ecc`, round 2 pending redispatch
+**Status**: Verified — round 1 reopened (retry enqueue path unenforced), repaired `8549ecc`, round 2 accepted/guard_confirmed (awaiting owner-gated merge)
 **Branch**: (none — committed directly to master, this repo's non-branch policy for F01 slices; reviewed post-hoc over a pinned SHA range because history rewrite is forbidden)
 **Commit**: `8b716b5` (feat(followup): enforce server-side context byte cap (F01 Slice C1))
 
@@ -69,6 +69,16 @@ Additional defect found during repair (coder): `EnqueueJobAsync` appended the di
 
 `EnqueueJobAsync` now strips any prior `FORCE_MODEL` directive, bounds the user context via `EnforceStored` (fail-closed: dropped whole if over cap), then appends one fresh directive after enforcement. The directive regex is centralized in a single compiled static (`ForceModelDirective`) shared by the append and consume sites. Added three guards to `QueryJobManagerContextEnforcementTests`: `EnqueueJobAsync_OverCapContext_DropsUserContext_KeepsDirective`, `EnqueueJobAsync_InBoundsContext_BoundsAndAppendsDirective`, `EnqueueJobAsync_RepeatedRetry_DoesNotChainDirectives`. Proven non-vacuous: bypassing strip+enforce fails the over-cap-drop and no-chain tests (over-cap persists the raw "xxx…"); restoring passes. Full `scripts/verify.ps1`: 240 passed, 1 skipped, 0 warnings, publish smoke + vuln audit clean (up from 237).
 
-### Round 2 — pending redispatch
+### Round 2 — accepted (2026-07-27, repair-delta redispatch)
 
-A reopen escalates one tier (T5), but this machine has no owner-confirmed frontier tier→pair (`harnesses.local.json` `"tiers": {}`), so the frontier dispatch fails closed and is surfaced to the owner. Awaiting owner ruling on a standard-tier repair-delta re-check (as with B2 R2).
+T5 note: a reopen escalates one tier on redispatch, but this machine has no owner-confirmed frontier tier→pair (`harnesses.local.json` `"tiers": {}`). Per the playbook fail-closed rule the frontier dispatch was surfaced to the owner, who authorized re-checking the repair on the available standard-tier codex reviewer (owner ruling 2026-07-27, one-line y/n ask). Recorded as a standard-tier repair-delta redispatch, not a satisfied T5 escalation.
+
+Reviewer: codex/@azure-openai-eus2-global/gpt-5.5-dzs/xhigh/standard (`--profile review`, danger-full-access, owner-authorized). Repair-delta re-review of `8b716b5..8549ecc` (base = pre-repair head, head = post-repair), mandate narrowed to closing the reopened defect + no adjacent regression.
+
+Verdict: **accepted**, `guard_confirmed: true`. Envelope validated fail-closed: exit 0, single schema-valid JSON, `verdict` in enum, `reviewed_sha`==`8549ecc`, `base_sha`==`8b716b5`.
+
+Reviewer's own worktree guard proof (detached worktree at `8549ecc`): shipped `QueryJobManagerContextEnforcementTests` passed 6/6; replacing the `EnqueueJobAsync` fix with `job.Context` failed the over-cap and repeated-retry guards; restore → 6/6; `scripts/verify.ps1` passed (240 passed, 1 skipped, 0 warnings, publish smoke + vuln audit clean). Matches the coder's repair non-vacuity result.
+
+Confirming comments (no defects): `QueryJobManager.cs:115` closes the retry over-cap path and repeated-retry directive chaining; `QueryJobManager.cs:253` consume site uses the same regex shape, still strips the directive before `GenerateExecutionPlanAsync`, and append-after-enforcement ordering is correct because the directive is server-generated control metadata.
+
+Merge remains owner-gated (accepted ≠ merge authority).
