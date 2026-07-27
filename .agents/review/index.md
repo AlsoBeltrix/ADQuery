@@ -15,4 +15,4 @@ Per-finding detail: see `.agents/review/findings/<id>.md`.
 | ID     | Severity | Impact (one line)                                        | Status | Branch | Reviewer |
 |--------|----------|----------------------------------------------------------|--------|--------|----------|
 | slice0  | MEDIUM   | Wrong capacity harness → wrong D1 caps (evidence only)   | `[x]`  | —      | codex (owner-run interactive, default model+effort, workspace-write) — accepted, guard_confirmed |
-| slice-a | LOW      | CSV UI surface survives parking, or endpoint removed with it | `[~]`  | —      | codex dispatch 1 FAILED (write-sandbox denial; not auth) — pending working reviewer path |
+| slice-a | LOW      | CSV UI surface survives parking, or endpoint removed with it | `[x]`  | —      | codex/@azure-openai-eus2-global/gpt-5.5-dzs/xhigh/standard (bypass-sandbox, owner-authorized) — accepted, guard_confirmed |
