@@ -1,6 +1,6 @@
 # F01 — Conversational Query Experience
 
-**Status: In review.** First *feature* plan (the `F` namespace), distinct from the `P01`–`P21` remediation plans from the 2026-07-21 codebase review. Captures the owner's redirect: make the app answer the tedious, routine AD questions colleagues currently bring to the team in person, without weakening the compliance/safety posture the `P` plans established. Implementation is blocked until the owner flips this status line to `Approved`; no code lands before that.
+**Status: Approved (owner, 2026-07-27).** Approved whole after one advisory review round and resolution of all three would-be gates. Implement safest-first (A, B1, B2, C1, C2, C3) plus the SYNC-D1 endpoint retirement, each a separate commit with a red→green guard and `scripts/verify.ps1`, `/codereview` per slice. First *feature* plan (the `F` namespace), distinct from the `P01`–`P21` remediation plans from the 2026-07-21 codebase review. Captures the owner's redirect: make the app answer the tedious, routine AD questions colleagues currently bring to the team in person, without weakening the compliance/safety posture the `P` plans established. Implementation is blocked until the owner flips this status line to `Approved`; no code lands before that.
 
 This plan is self-contained. It carries its own design tokens and DTO contracts so a cold, less-capable agent can implement it without the originating conversation or the git-ignored mockup.
 
