@@ -1073,6 +1073,7 @@ public class QueryController : ControllerBase
             {
                 totalRows = job.TotalRows,
                 aggregation = BuildAggregationSummary(job),
+                headline = BuildHeadline(job),
                 warnings = job.Warnings.Any() ? job.Warnings : null,
                 downloadUrl = $"/api/query/download-async/{job.JobId}"
             } : null,
@@ -1783,6 +1784,28 @@ public class QueryController : ControllerBase
         }
 
         return string.IsNullOrWhiteSpace(baseName) ? "alternate-model" : baseName;
+    }
+
+    /// <summary>
+    /// Builds the deterministic, plan-shape-derived headline for a completed job
+    /// (F01 Slice B1). The single-record kind needs the first result row, which
+    /// lives in the results cache (as with <see cref="GetJobPreview"/>); it is
+    /// read only when a single non-expansion row makes that kind possible.
+    /// </summary>
+    private HeadlineResult BuildHeadline(QueryJob job)
+    {
+        var totalRows = job.TotalRows ?? 0;
+
+        IReadOnlyDictionary<string, object?>? firstRow = null;
+        if (totalRows == 1 &&
+            !string.IsNullOrWhiteSpace(job.ResultsCacheKey) &&
+            _cache.TryGetValue(job.ResultsCacheKey, out PlanExecutionResult? result) &&
+            result?.Data.Count > 0)
+        {
+            firstRow = result.Data[0];
+        }
+
+        return HeadlineClassifier.Classify(job.Plan, totalRows, job.Aggregation, firstRow);
     }
 
     private object? BuildAggregationSummary(QueryJob job)
