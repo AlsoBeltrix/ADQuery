@@ -1,5 +1,14 @@
 # Settled Decisions
 
+## TEST-D1 — F01 front-end slices are guarded by an automated browser test harness
+
+- Status: Approved
+- Date: 2026-07-27
+- Authority: Repository owner
+- Decision: The F01 front-end slices (headline rendering B2, follow-up chat UI C3, and any other browser-visible F01 change) are verified by an automated headless-browser test harness that drives the real page, not by hand-written manual smoke notes. The owner declined the manual-only option.
+- Constraints: Introducing the harness is a code/dependency change and goes through the normal plan gate before any of it lands. It becomes its own F01 slice, sequenced before B2, and carries the standard red→green guard (a test that fails when the rendering it guards is broken) and passes `scripts/verify.ps1`. Wire it into the canonical verification so the browser checks run on every change, not on memory.
+- Consequence: Front-end regressions are caught automatically rather than depending on someone remembering to look. B2 does not start until the harness slice is planned and landed.
+
 ## FONT-D1 — UI uses the Windows-installed Candara font; no web-font hosting
 
 - Status: Approved
