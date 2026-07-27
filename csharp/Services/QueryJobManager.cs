@@ -25,6 +25,12 @@ public class QueryJobManager : IQueryJobManager
     private readonly IFollowUpContextEnforcer _followUpContextEnforcer;
     private readonly int _maxJobsPerUser;
 
+    // Server-generated internal control directive appended to a job's context to force a
+    // model on the retry-with-alternate-model path; stripped before model transmission
+    // and re-stripped before re-append so repeated retries do not chain directives.
+    private static readonly System.Text.RegularExpressions.Regex ForceModelDirective =
+        new(@"\[FORCE_MODEL:\s*([^\]]+)\]", System.Text.RegularExpressions.RegexOptions.Compiled);
+
     public QueryJobManager(
         IQueryJobStore store,
         IQueryJobQueue queue,
@@ -98,11 +104,25 @@ public class QueryJobManager : IQueryJobManager
             }
         }
 
-        // Store model override in job context if provided
+        // F01 Slice C1 (FOLLOWUP-D1): this is the second client-reachable persistence
+        // path (the retry-with-alternate-model endpoint), so it enforces the same
+        // authoritative byte cap as CreateJobAsync. First strip any prior FORCE_MODEL
+        // directive so repeated retries neither chain directives (unbounded growth) nor
+        // let a stale directive count toward the cap; then bound the user context
+        // (fail-closed: dropped whole if over cap). The FORCE_MODEL directive is
+        // server-generated internal control metadata (stripped before model transmission
+        // in ExecuteJobWithServicesAsync), so it is appended after enforcement.
+        var boundedContext = _followUpContextEnforcer.EnforceStored(StripForceModelDirective(job.Context));
+
         if (!string.IsNullOrWhiteSpace(forceModel))
         {
-            job.Context = (job.Context ?? "") + $"\n[FORCE_MODEL: {forceModel}]";
+            var directive = $"[FORCE_MODEL: {forceModel}]";
+            boundedContext = string.IsNullOrEmpty(boundedContext)
+                ? directive
+                : boundedContext + "\n" + directive;
         }
+
+        job.Context = boundedContext;
 
         _store.StoreJob(job);
         await _queue.EnqueueAsync(job.JobId);
@@ -111,6 +131,19 @@ public class QueryJobManager : IQueryJobManager
             job.JobId,
             job.UserName,
             string.IsNullOrWhiteSpace(forceModel) ? "" : $"with model {forceModel}");
+    }
+
+    // Removes any FORCE_MODEL directive (and surrounding whitespace) from a context so the
+    // append path never chains directives and a stale directive never counts toward the cap.
+    private static string? StripForceModelDirective(string? context)
+    {
+        if (string.IsNullOrEmpty(context))
+        {
+            return context;
+        }
+
+        var stripped = ForceModelDirective.Replace(context, "").Trim();
+        return stripped.Length == 0 ? null : stripped;
     }
 
     public QueryJob? GetJob(string jobId)
@@ -217,9 +250,7 @@ public class QueryJobManager : IQueryJobManager
             var contextToUse = job.Context;
             if (!string.IsNullOrWhiteSpace(contextToUse))
             {
-                var forceModelMatch = System.Text.RegularExpressions.Regex.Match(
-                    contextToUse,
-                    @"\[FORCE_MODEL:\s*([^\]]+)\]");
+                var forceModelMatch = ForceModelDirective.Match(contextToUse);
                 if (forceModelMatch.Success)
                 {
                     modelOverride = forceModelMatch.Groups[1].Value.Trim();

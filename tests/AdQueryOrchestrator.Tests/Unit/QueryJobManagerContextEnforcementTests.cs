@@ -1,5 +1,6 @@
 using System.Text;
 using AdQuery.Orchestrator.Configuration;
+using AdQuery.Orchestrator.Models;
 using AdQuery.Orchestrator.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -71,5 +72,68 @@ public sealed class QueryJobManagerContextEnforcementTests
             "user", "who is jane", context: null, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Null(store.GetJob(jobId)!.Context);
+    }
+
+    [Fact]
+    public async Task EnqueueJobAsync_OverCapContext_DropsUserContext_KeepsDirective()
+    {
+        // The retry-with-alternate-model path is a second client-reachable persistence
+        // path; it must enforce the same byte cap. An over-cap user context is dropped
+        // whole, leaving only the server-generated FORCE_MODEL directive.
+        var manager = CreateManager(maxBytes: 8, out var store);
+        var job = new QueryJob
+        {
+            JobId = "job-1",
+            UserName = "user",
+            Query = "who is jane",
+            Context = new string('x', 100),
+            Status = JobStatus.Queued,
+        };
+
+        await manager.EnqueueJobAsync(job, forceModel: "opus");
+
+        var stored = store.GetJob("job-1")!;
+        Assert.Equal("[FORCE_MODEL: opus]", stored.Context);
+    }
+
+    [Fact]
+    public async Task EnqueueJobAsync_InBoundsContext_BoundsAndAppendsDirective()
+    {
+        var manager = CreateManager(maxBytes: 2000, out var store);
+        var job = new QueryJob
+        {
+            JobId = "job-2",
+            UserName = "user",
+            Query = "who is jane",
+            Context = "prior: who is in group X",
+            Status = JobStatus.Queued,
+        };
+
+        await manager.EnqueueJobAsync(job, forceModel: "opus");
+
+        var stored = store.GetJob("job-2")!;
+        Assert.Equal("prior: who is in group X\n[FORCE_MODEL: opus]", stored.Context);
+    }
+
+    [Fact]
+    public async Task EnqueueJobAsync_RepeatedRetry_DoesNotChainDirectives()
+    {
+        // A retry of a retry re-enters this path with a context that already carries a
+        // FORCE_MODEL directive. The prior directive must be stripped before re-append so
+        // directives never accumulate (unbounded growth) and never count toward the cap.
+        var manager = CreateManager(maxBytes: 2000, out var store);
+        var job = new QueryJob
+        {
+            JobId = "job-3",
+            UserName = "user",
+            Query = "who is jane",
+            Context = "prior: who is in group X\n[FORCE_MODEL: sonnet]",
+            Status = JobStatus.Queued,
+        };
+
+        await manager.EnqueueJobAsync(job, forceModel: "opus");
+
+        var stored = store.GetJob("job-3")!;
+        Assert.Equal("prior: who is in group X\n[FORCE_MODEL: opus]", stored.Context);
     }
 }
