@@ -10,7 +10,7 @@ This project delivers a pure C# pipeline for answering natural-language question
 | **PlanValidator** | Enforces the allow-list of operations, attributes, and filters before anything executes. |
 | **DirectoryPlanExecutor** | Interprets the plan step-by-step and runs it through `IActiveDirectoryService`. |
 | **ActiveDirectoryService** | Uses `System.DirectoryServices` to query LDAP under the IIS application pool identity. |
-| **QueryController** | REST surface consumed by the SPA front-end (`/api/query/execute`, `/api/query/validate`, `/api/query/health`). |
+| **QueryController** | REST surface consumed by the SPA front-end (`/api/query/execute-async`, `/api/query/validate`, `/api/query/health`). |
 
 ## Directory Plan Schema
 
