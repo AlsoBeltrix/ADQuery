@@ -1,7 +1,7 @@
 # slice-c2: F01 Slice C2 — server-resolved last-turn follow-up context
 
 **Severity**: MEDIUM — a follow-up that trusted client-asserted provenance or context could (a) leak another user's last turn into this query's context by referencing a foreign job id, or (b) let the client inject an unbounded/multi-turn transcript, defeating FOLLOWUP-D2 and the C1 byte cap. Server-side data-path change (resolution, ownership check, context assembly → persistence/logging/transmission input); no auth, crypto, schema, migration, or wire-format path touched.
-**Status**: In progress — pending reviewer dispatch
+**Status**: Verified (awaiting owner-gated merge/push)
 **Branch**: (none — committed directly to master, this repo's non-branch policy for F01 slices; reviewed post-hoc over a pinned SHA range because history rewrite is forbidden)
 **Commit**: `6c53a0d` (feat(query): server-resolved last-turn follow-up context (F01 Slice C2))
 
@@ -54,4 +54,48 @@ None.
 
 ## Reviewer comments
 
-_(pending dispatch)_
+`Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard (inline, session-only)`
+— no escalation (T1 no sensitive-path match; T2 severity MEDIUM). Dispatch: codex CLI
+`--profile review` (owner-authorized unsandboxed, standing 2026-07-27), headless one-shot
+`codex exec … --json --output-last-message`. Transcript-sourced from the JSONL stream
+(`item.completed` agent_message) and confirmed byte-identical to the `--output-last-message`
+file. No owner-confirmed durable tier mapping exists on this machine (`"tiers": {}`), so the
+model+effort pair is recorded inline/session-only, mirroring slices a–c1.
+
+- **Reviewer harness + version**: codex-cli 0.145.0 on ASHBIAMWEB1.
+- **Reviewed head SHA**: `6c53a0dc9d098c23f82d5cb437c645782e9ede1f` (== dispatched head).
+- **Base SHA**: `051059a72990045537f41ab6f404576ed41446e0` (== dispatched base).
+- **guard_confirmed**: `true` — reviewer independently ran all four guard proofs
+  (revert→FAIL, restore→PASS) in its own `git worktree` at head, plus full
+  `scripts/verify.ps1` (251 passed, 1 skipped).
+- **Verdict**: **accepted**.
+- **Timestamp**: 2026-07-27T22:23:20Z (turn.completed).
+
+Orchestrator acceptance (computed by the coder, not the reviewer): exit 0; single
+schema-valid JSON envelope; `verdict` in enum; `reviewed_sha` == dispatched head;
+`base_sha` == dispatched base; `guard_confirmed` literally `true` → **accepted**. No
+parse miss, no re-prompt needed.
+
+Comments (all confirmations, no defects):
+- `csharp/Controllers/QueryController.cs:1021` — ExecuteQueryAsync inits server context to
+  null, resolves previousJobId, rejects foreign owners with Forbid before the builder call,
+  passes only the resolved server context into CreateJobAsync.
+- `csharp/Controllers/QueryController.cs:1041` — completed prior jobs use FollowUpContextBuilder;
+  request.Context is ignored by async execution, so client-supplied context is not persisted
+  or forwarded.
+- `csharp/Services/FollowUpContextBuilder.cs:50` — BuildFromPreviousTurn composes only prior
+  question, plan summary, and grouped value slice via IFollowUpContextEnforcer.Compose and
+  never reads previousJob.Context.
+- `csharp/Services/FollowUpContextBuilder.cs:91` — grouped_counts are ordered and capped with
+  QueryDefaults:SummaryRowCount before the composed context goes through the C1 byte bound.
+- `csharp/wwwroot/js/app.js:266` — browser follow-up payload sends query plus previousJobId
+  only; no client-built context property is constructed or transmitted.
+- `tests/…/Unit/QueryControllerFollowUpProvenanceTests.cs:33` — guard proof observed disabling
+  Forbid red, then restore green; sourcing request.Context red, then restore green.
+- `tests/…/Unit/FollowUpContextBuilderTests.cs:113` — guard proof observed raising Take past
+  SummaryRowCount red, then restore green.
+- `tests/…/Browser/FollowUpContextTransmissionTests.cs:23` — guard proof observed omitting
+  previousJobId red, then restore green; full scripts/verify.ps1 passed at head (251 passed,
+  1 skipped).
+
+This record is committed as part of the verification history.
