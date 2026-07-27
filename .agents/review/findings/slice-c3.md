@@ -1,7 +1,7 @@
 # slice-c3: F01 Slice C3 — floating conversational chat surface
 
 **Severity**: MEDIUM — a chat surface that either (a) transmitted its display-only exchange log would defeat FOLLOWUP-D2's no-accumulated-transcript rule and the C1 byte cap, or (b) rendered without the current/past delineation or resize clamp would misrepresent which turn is live and break the Design contract. Client-side UI + request-shaping change; no auth, crypto, schema, migration, or server data-path touched.
-**Status**: In progress
+**Status**: Verified (awaiting owner-gated merge/push)
 **Branch**: (none — committed directly to master, this repo's non-branch policy for F01 slices; reviewed post-hoc over a pinned SHA range because history rewrite is forbidden)
 **Commit**: `06776ff` (feat(ui): floating conversational chat surface (F01 Slice C3))
 
@@ -46,4 +46,47 @@ None.
 - The chat drives queries by mirroring the question into `#queryText` and calling the shared `runQuery`; this is the deliberate single-transmission-path design that makes the display-only log structurally non-transmittable, not an incidental coupling.
 
 ## Reviewer comments
-(pending reviewer dispatch)
+
+`Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard (inline, session-only)`
+— no escalation (T1 no sensitive-path match — front-end css/html/js + test only; T2
+severity MEDIUM). Dispatch: codex CLI `--profile review` (owner-authorized unsandboxed,
+standing 2026-07-27), headless one-shot `codex exec … --json --output-last-message`.
+Transcript-sourced from the JSONL stream (`artifacts/review/slice-c3-stream.jsonl`,
+`turn.completed`) and the `--output-last-message` file, confirmed byte-identical. No
+owner-confirmed durable tier mapping exists on this machine (`"tiers": {}`), so the
+model+effort pair is recorded inline/session-only, mirroring slices a–c2.
+
+- **Reviewer harness + version**: codex-cli 0.145.0 on ASHBIAMWEB1.
+- **Reviewed head SHA**: `06776ffe8e7a58a67759ec182798d4311e49e82e` (== dispatched head).
+- **Base SHA**: `1b54bd155814e8a8e198ce8483f0cd7a025c3af8` (== dispatched base).
+- **guard_confirmed**: `true` — reviewer independently reproduced all three guard proofs
+  (revert→FAIL, restore→PASS) in its own detached `git worktree` at head: resize break
+  failed at 1690px vs the 600px cap; delineation break failed with two `.current`
+  exchanges; transmission break failed on the unexpected `context` field. Full browser
+  test filter passed 11/11, covering the adjacent B2/C2 guards.
+- **Verdict**: **accepted**.
+- **Timestamp**: 2026-07-27T22:59:21Z.
+
+Orchestrator acceptance (computed by the coder, not the reviewer): exit 0; single
+schema-valid JSON envelope; `verdict` in enum; `reviewed_sha` == dispatched head;
+`base_sha` == dispatched base; `guard_confirmed` literally `true` → **accepted**. No
+parse miss, no re-prompt needed.
+
+Comments (all confirmations, no defects):
+- `csharp/wwwroot/js/app.js:259` — runQuery remains the sole execute-async request
+  builder; the payload contains query plus only previousJobId when
+  state.lastCompletedJobId exists, with no chat-log/context field.
+- `csharp/wwwroot/js/app.js:1078` — submitChatQuery mirrors chat text into #queryText and
+  calls runQuery, so the floating chat uses the same request path as the main form.
+- `csharp/wwwroot/index.html:28` — #queryForm is preserved for the existing bootstrap
+  contract; the chat markup is additive at index.html:166 before app.js loads.
+- `csharp/wwwroot/js/app.js:1100` — appendChatExchange demotes prior .exchange.current
+  nodes to .past before appending the new current exchange; styles.css provides
+  current/past delineation and the Q/A hairline.
+- `csharp/wwwroot/js/app.js:1234` — resize uses the 50vw/100vh Math.min clamp, backed by
+  CSS max-width:50vw and max-height:100vh.
+- `tests/AdQueryOrchestrator.Tests/Browser/ChatSurfaceTests.cs:29` — guard proof
+  reproduced in a detached worktree (all three breaks red→green); full browser filter
+  passed 11/11, covering adjacent B2/C2 guards.
+
+This record is committed as part of the verification history.
