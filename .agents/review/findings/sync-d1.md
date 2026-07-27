@@ -43,4 +43,48 @@ None.
 
 ## Reviewer comments
 
-(pending reviewer dispatch)
+`Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard (inline, session-only)`
+— no escalation (T1 no sensitive-path match — the diff touches `csharp/Controllers/QueryController.cs`,
+`csharp/README.md`, and a unit test, none matching the default sensitive-path globs; T2 severity
+MEDIUM; T3 guard proof valid; first round so no T4/T5). Dispatch: codex CLI `--profile review`
+(owner-authorized unsandboxed, standing 2026-07-27), headless one-shot `codex exec … --json
+--output-last-message`. Transcript-sourced from the JSONL stream
+(`artifacts/review/sync-d1-stream.jsonl`, `agent_message` item_84 + `turn.completed`) and the
+`--output-last-message` file (`artifacts/review/sync-d1-verdict.txt`), confirmed byte-identical. No
+owner-confirmed durable tier mapping exists on this machine (`"tiers": {}`), so the model+effort pair
+is recorded inline/session-only, mirroring slices a–c3.
+
+- **Reviewer harness + version**: codex-cli 0.145.0 on ASHBIAMWEB1.
+- **Reviewed head SHA**: `6836c11abd892a7dc1315a7375686f051d36ca8d` (== dispatched head).
+- **Base SHA**: `14480253aa4d77c043899cc245ad5e6641dece5e` (== dispatched base).
+- **guard_confirmed**: `true` — reviewer independently reproduced both guard proofs (revert→FAIL,
+  restore→PASS) in its own detached `git worktree` at head: reintroducing a temporary
+  `[HttpPost("execute")]` action made `SyncExecuteRoute_IsNotMappedOnController` fail, restore passed;
+  renaming the `execute-async` template made `AsyncExecuteRoute_SurvivesRetirement` fail, restore
+  passed. Canonical `scripts/verify.ps1` passed at head (Release 0 warnings/0 errors, 256 passed/1
+  skipped, publish smoke + vuln audit clean).
+- **Verdict**: **accepted**.
+- **Timestamp**: 2026-07-27T23:22:18Z.
+
+Orchestrator acceptance (computed by the coder, not the reviewer): exit 0; single schema-valid JSON
+envelope; `verdict` in enum; `reviewed_sha` == dispatched head; `base_sha` == dispatched base;
+`guard_confirmed` literally `true` → **accepted**. No parse miss, no re-prompt needed.
+
+Comments (all confirmations, no defects):
+- `csharp/Controllers/QueryController.cs:853` — `[HttpPost("execute-async")]` remains on
+  `ExecuteQueryAsync`; no `[HttpPost("execute")]` route remains in `QueryController`.
+- `tests/AdQueryOrchestrator.Tests/Unit/SyncExecuteEndpointRetiredTests.cs:22` — reintroducing a
+  temporary `[HttpPost("execute")]` action made `SyncExecuteRoute_IsNotMappedOnController` fail;
+  restoring `QueryController` made the two-test filter pass.
+- `tests/AdQueryOrchestrator.Tests/Unit/SyncExecuteEndpointRetiredTests.cs:30` — renaming the
+  `execute-async` template made `AsyncExecuteRoute_SurvivesRetirement` fail; restoring the template
+  made the two-test filter pass.
+- `csharp/Controllers/QueryController.cs:270` — `CacheQueryResult` remains defined and called by
+  csv-enrich; `GetSamAccountName`, `DetermineHeaders`, `GenerateFileContent`, and `CloneDictionary`
+  also remain referenced by the surviving download/async/csv paths.
+- `csharp/wwwroot/js/app.js:284` — shipped browser posts to `./api/query/execute-async`; repo scan
+  found no shipped caller of `api/query/execute` and no remaining `QueryResponse` symbol.
+- `scripts/verify.ps1` — canonical verification passed at `6836c11`: Release build 0 warnings/0
+  errors, 256 tests passed/1 skipped, publish smoke passed, vulnerability audit passed.
+
+This record is committed as part of the verification history.
