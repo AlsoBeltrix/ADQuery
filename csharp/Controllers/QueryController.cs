@@ -42,6 +42,7 @@ public class QueryController : ControllerBase
     private readonly IMemoryCache _cache;
     private readonly IConfiguration _configuration;
     private readonly IQueryJobManager _jobManager;
+    private readonly IFollowUpContextBuilder _followUpContextBuilder;
     private readonly IPlanPreprocessor _planPreprocessor;
     private readonly IPlanValidator _planValidator;
     private readonly ICsvEnrichmentService _csvEnrichmentService;
@@ -60,6 +61,7 @@ public class QueryController : ControllerBase
         IMemoryCache cache,
         IConfiguration configuration,
         IQueryJobManager jobManager,
+        IFollowUpContextBuilder followUpContextBuilder,
         IPlanPreprocessor planPreprocessor,
         IPlanValidator planValidator,
         ICsvEnrichmentService csvEnrichmentService,
@@ -73,6 +75,7 @@ public class QueryController : ControllerBase
         _cache = cache;
         _configuration = configuration;
         _jobManager = jobManager;
+        _followUpContextBuilder = followUpContextBuilder;
         _planPreprocessor = planPreprocessor;
         _planValidator = planValidator;
         _csvEnrichmentService = csvEnrichmentService;
@@ -1009,7 +1012,35 @@ public class QueryController : ControllerBase
         var userName = GetSamAccountName(HttpContext.User);
         var maxResults = _configuration.GetValue<int>("QueryDefaults:MaxResults", 0);
         var requestedLimit = maxResults > 0 ? (int?)maxResults : null;
-        var context = request.Context;
+
+        // F01 Slice C2 (FOLLOWUP-D2): follow-up context is assembled server-side from the
+        // prior turn, not accepted from the client. Last-turn provenance is therefore
+        // server-verified: the client asserts only a previousJobId, which is resolved and
+        // ownership-checked here. Any client-supplied request.Context is ignored (it would
+        // be a client-asserted, unbounded, potentially multi-turn transcript).
+        string? context = null;
+        if (!string.IsNullOrWhiteSpace(request.PreviousJobId))
+        {
+            var previousJob = _jobManager.GetJob(request.PreviousJobId);
+            if (previousJob != null &&
+                !previousJob.UserName.Equals(userName, StringComparison.OrdinalIgnoreCase))
+            {
+                // Forged/foreign previousJobId: reject rather than leak another user's
+                // last turn into this query's context.
+                _logger.LogWarning(
+                    "User {UserName} referenced previousJobId {PreviousJobId} owned by another user",
+                    userName, request.PreviousJobId);
+                return Forbid();
+            }
+
+            // A not-found/expired previous job is a benign outcome: the follow-up proceeds
+            // with no prior-turn context rather than failing. Only a completed job carries
+            // summarizable material.
+            if (previousJob is { Status: JobStatus.Completed })
+            {
+                context = _followUpContextBuilder.BuildFromPreviousTurn(previousJob);
+            }
+        }
 
         try
         {
@@ -1861,10 +1892,23 @@ public class QueryRequest
     public string Query { get; set; } = string.Empty;
 
     /// <summary>
-    /// Optional context about the AD environment
+    /// Optional context about the AD environment.
     /// </summary>
+    /// <remarks>
+    /// F01 Slice C2 (FOLLOWUP-D2): follow-up context is assembled server-side from the
+    /// prior turn (see <see cref="PreviousJobId"/>); a client-supplied value is ignored by
+    /// <c>ExecuteQueryAsync</c>. The <c>[StringLength(2000)]</c> transport guard is retained
+    /// so the C1 byte cap can never be pre-empted by binding-time rejection.
+    /// </remarks>
     [StringLength(2000)]
     public string? Context { get; set; }
+
+    /// <summary>
+    /// Optional identifier of the immediately preceding completed job this query follows up
+    /// on (F01 Slice C2). The server resolves and ownership-checks it, then assembles the
+    /// bounded last-turn context; last-turn provenance is server-verified, not client-asserted.
+    /// </summary>
+    public string? PreviousJobId { get; set; }
 
     /// <summary>
     /// Optional HMAC signature for security validation

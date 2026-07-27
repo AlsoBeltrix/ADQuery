@@ -87,6 +87,7 @@ builder.Services.AddSingleton<ICsvEnrichmentResultIdGenerator, CsvEnrichmentResu
 builder.Services.AddSingleton<IQueryJobStore, InMemoryQueryJobStore>();
 builder.Services.AddSingleton<IQueryJobQueue, InMemoryQueryJobQueue>();
 builder.Services.AddSingleton<IFollowUpContextEnforcer, FollowUpContextEnforcer>();
+builder.Services.AddSingleton<IFollowUpContextBuilder, FollowUpContextBuilder>();
 builder.Services.AddSingleton<IQueryJobManager, QueryJobManager>();
 builder.Services.AddHostedService<QueryJobExecutorHostedService>();
 

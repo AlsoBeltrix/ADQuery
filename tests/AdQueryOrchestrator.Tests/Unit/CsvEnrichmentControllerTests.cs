@@ -191,7 +191,7 @@ public sealed class CsvEnrichmentControllerTests
             Microsoft.Extensions.Options.Options.Create(
                 new AdQuery.Orchestrator.Configuration.CsvEnrichmentLimitsOptions { MaxColumns = 1 }));
         var controller = new QueryController(
-            logger, claude, null!, cache, configuration, null!, null!, null!,
+            logger, claude, null!, cache, configuration, null!, null!, null!, null!,
             enrichment, writer, idGenerator, validator)
         {
             ControllerContext = new ControllerContext
@@ -247,6 +247,7 @@ public sealed class CsvEnrichmentControllerTests
             null!,
             cache,
             configuration,
+            null!,
             null!,
             null!,
             null!,

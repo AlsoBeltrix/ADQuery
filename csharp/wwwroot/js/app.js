@@ -30,6 +30,11 @@
         formLocked: false,
         currentRequestId: null,
         currentJobId: null,
+        // F01 Slice C2 (FOLLOWUP-D2): the last completed job id, kept separate from the
+        // in-flight currentJobId that hideResults/runQuery clear each run. A follow-up
+        // sends only this id as previousJobId; the server resolves it (ownership-checked)
+        // into the bounded last-turn context. No client-side context material is sent.
+        lastCompletedJobId: null,
         pollInterval: null,
         recordCount: 0,
         summaryRowCount: 20,  // Default, will be loaded from config API
@@ -255,10 +260,13 @@
         stopPolling();
 
         try {
-            const payload = {
-                query,
-                context: buildContextHint(query)
-            };
+            // FOLLOWUP-D2: send only a reference to the prior completed turn; the server
+            // assembles and byte-bounds the last-turn context from it. No client-built
+            // context (transcript, prior values) is transmitted.
+            const payload = { query };
+            if (state.lastCompletedJobId) {
+                payload.previousJobId = state.lastCompletedJobId;
+            }
 
             const response = await fetch('./api/query/execute-async', {
                 method: 'POST',
@@ -400,6 +408,9 @@
         }
 
         state.currentJobId = job.jobId;
+        // A completed job becomes the last turn a follow-up can reference. Set after the
+        // in-flight reset (hideResults clears currentJobId) so it survives the next run.
+        state.lastCompletedJobId = job.jobId;
         state.recordCount = job.result.totalRows || 0;
 
         renderHeadline(job.result.headline);
@@ -701,20 +712,6 @@
         }
 
         return message;
-    }
-
-    function buildContextHint(query) {
-        const match = query.match(/\b(first|top)\s+(\d+)/i);
-        if (!match) {
-            return null;
-        }
-
-        const limit = Number.parseInt(match[2], 10);
-        if (Number.isNaN(limit) || limit <= 0) {
-            return null;
-        }
-
-        return `Limit results to approximately ${limit} entries.`;
     }
 
     function renderResults(result) {
