@@ -1,7 +1,7 @@
 # slice-c1: F01 Slice C1 — follow-up context byte cap + server-side enforcement
 
 **Severity**: MEDIUM — a mis-sized or unenforced cap would let over-limit follow-up context be persisted, logged, and transmitted to the model, or (via a wrong drop order / code-point split) ship a corrupt or oversized context fragment. Server-side data-path change (persistence/logging/transmission input); no auth, crypto, schema, migration, or wire-format path touched.
-**Status**: In progress — pending review
+**Status**: In progress — round 1 reopened (retry enqueue path unenforced), repaired `8549ecc`, round 2 pending redispatch
 **Branch**: (none — committed directly to master, this repo's non-branch policy for F01 slices; reviewed post-hoc over a pinned SHA range because history rewrite is forbidden)
 **Commit**: `8b716b5` (feat(followup): enforce server-side context byte cap (F01 Slice C1))
 
@@ -53,4 +53,22 @@ None.
 - `Compose` is not yet wired into a caller — C2 introduces the last-turn builder that consumes it. C1 ships and guards it as the byte-bound primitive so C2 depends on reviewed code.
 
 ## Reviewer comments
-_(pending dispatch)_
+
+### Round 1 — reopened (2026-07-27)
+
+Reviewer: codex/@azure-openai-eus2-global/gpt-5.5-dzs/xhigh/standard (`--profile review`, danger-full-access, owner-authorized 2026-07-27). Dispatched headless one-shot from the agent's own tool (no owner `!` relay). Reviewed `95bb721..8b716b5`.
+
+Verdict: **reopened**, `guard_confirmed: true`. Envelope validated fail-closed: exit 0, single schema-valid JSON, `verdict` in enum, `reviewed_sha`==`8b716b5`, `base_sha`==`95bb721`. (Post-run `codex_login` token-refresh ERROR lines are the documented Portkey noise after `turn.completed`, not an auth failure.)
+
+Material defect (accepted — the reviewer is right; my finding wrongly filed this as an out-of-scope "known gap"):
+- `csharp/Controllers/QueryController.cs:1324` + `csharp/Services/QueryJobManager.cs:104,107` — the retry-with-alternate-model endpoint is a **second client-reachable persistence path**. It builds a `QueryJob` directly from `originalJob.Context` and calls `EnqueueJobAsync`, which appended `[FORCE_MODEL: …]` to `job.Context` and stored it **without** `EnforceStored`. An authenticated owner of an in-cap job can retry it and persist/log context exceeding `FollowUp:MaxContextBytes`. Observable failure: the retry job's `Context` UTF-8 byte count exceeds the cap and the job log writes the over-cap context.
+
+Additional defect found during repair (coder): `EnqueueJobAsync` appended the directive without stripping any prior one, so retry-of-a-retry **chained** `[FORCE_MODEL: …]` directives — unbounded context growth across repeated retries, independent of the cap breach.
+
+### Repair (coder, 2026-07-27) — commit `8549ecc`
+
+`EnqueueJobAsync` now strips any prior `FORCE_MODEL` directive, bounds the user context via `EnforceStored` (fail-closed: dropped whole if over cap), then appends one fresh directive after enforcement. The directive regex is centralized in a single compiled static (`ForceModelDirective`) shared by the append and consume sites. Added three guards to `QueryJobManagerContextEnforcementTests`: `EnqueueJobAsync_OverCapContext_DropsUserContext_KeepsDirective`, `EnqueueJobAsync_InBoundsContext_BoundsAndAppendsDirective`, `EnqueueJobAsync_RepeatedRetry_DoesNotChainDirectives`. Proven non-vacuous: bypassing strip+enforce fails the over-cap-drop and no-chain tests (over-cap persists the raw "xxx…"); restoring passes. Full `scripts/verify.ps1`: 240 passed, 1 skipped, 0 warnings, publish smoke + vuln audit clean (up from 237).
+
+### Round 2 — pending redispatch
+
+A reopen escalates one tier (T5), but this machine has no owner-confirmed frontier tier→pair (`harnesses.local.json` `"tiers": {}`), so the frontier dispatch fails closed and is surfaced to the owner. Awaiting owner ruling on a standard-tier repair-delta re-check (as with B2 R2).
