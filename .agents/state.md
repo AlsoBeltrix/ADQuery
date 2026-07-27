@@ -1,5 +1,7 @@
 # Current State
 
+- Active review loop: see `.agents/review/index.md` (slice-c2 pending dispatch).
+
 ## Now
 
 - **Entry point (2026-07-27) — new product direction.** Owner redirected the app toward answering the tedious, basic AD questions people bring to the team in person, rather than being a bulk-export tool. Captured as the first *feature* plan, `.agents/plans/F01-conversational-query.md` (the `F` namespace, distinct from the P01-P21 review-remediation plans). F01 has six slices, safest-first: A (park CSV in UI, server path intact), B1/B2 (plan-shape headline: backend contract, then rendering), C1/C2/C3 (follow-up: byte-cap enforcement, last-turn context construction, then floating chat UI). **F01 status is `In review` — not approved; no code lands until the owner flips its status line to `Approved`.** Supporting decisions in `.agents/decisions.md`: DATA-D1 (amended 2026-07-27 — route-clearance restriction dropped; values may go to any configured route), SYNC-D1 (retire the unused sync `execute` endpoint), HEADLINE-D1, FOLLOWUP-D1, FOLLOWUP-D2, FONT-D1. The binding design tokens are tracked *inside* the plan's "Design contract" section (the mockup `artifacts/mockups/qa-ui.html` is git-ignored and disposable). One advisory plan-review round completed (codex), findings folded in. **The three would-be owner gates the review raised are all now resolved** (owner rulings 2026-07-27): route clearance dropped, sync endpoint retired, logging unrestricted — see the plan's "Resolved decisions" section. Nothing blocks approval on open questions now.
