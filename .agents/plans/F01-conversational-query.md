@@ -1,6 +1,6 @@
 # F01 — Conversational Query Experience
 
-**Status: Approved (owner, 2026-07-27).** Approved whole after one advisory review round and resolution of all three would-be gates. Implement safest-first (A, B1, B2, C1, C2, C3) plus the SYNC-D1 endpoint retirement, each a separate commit with a red→green guard and `scripts/verify.ps1`, `/codereview` per slice. First *feature* plan (the `F` namespace), distinct from the `P01`–`P21` remediation plans from the 2026-07-21 codebase review. Captures the owner's redirect: make the app answer the tedious, routine AD questions colleagues currently bring to the team in person, without weakening the compliance/safety posture the `P` plans established. Implementation is blocked until the owner flips this status line to `Approved`; no code lands before that.
+**Status: Approved (owner, 2026-07-27).** Approved whole after one advisory review round and resolution of all three would-be gates. Implement safest-first (A, B1, then T1 — the automated browser harness added by TEST-D1, 2026-07-27 — B2, C1, C2, C3) plus the SYNC-D1 endpoint retirement, each a separate commit with a red→green guard and `scripts/verify.ps1`, `/codereview` per slice. First *feature* plan (the `F` namespace), distinct from the `P01`–`P21` remediation plans from the 2026-07-21 codebase review. Captures the owner's redirect: make the app answer the tedious, routine AD questions colleagues currently bring to the team in person, without weakening the compliance/safety posture the `P` plans established. Implementation is blocked until the owner flips this status line to `Approved`; no code lands before that.
 
 This plan is self-contained. It carries its own design tokens and DTO contracts so a cold, less-capable agent can implement it without the originating conversation or the git-ignored mockup.
 
@@ -85,7 +85,7 @@ Re-verified against the working tree at the branch this plan is implemented from
 
 ## Slices
 
-Six slices, safest-first, one concern each, each its own commit with a provable red→green guard and `scripts/verify.ps1` before commit. A later slice does not start before the earlier one is committed. Backend contracts, client behavior, and UI presentation are split so each is independently guardable.
+Slices, safest-first, one concern each, each its own commit with a provable red→green guard and `scripts/verify.ps1` before commit. A later slice does not start before the earlier one is committed. Backend contracts, client behavior, and UI presentation are split so each is independently guardable. Slice T1 (the automated browser harness, TEST-D1) is inserted before B2 because the front-end rendering slices depend on it.
 
 ### Slice A — Park CSV enrichment in the UI
 
@@ -111,13 +111,23 @@ Backend-only; establishes the classifier and DTO before any UI consumes it. No n
 - Scope is the **async path only** (the sync `execute` endpoint is retired per SYNC-D1; there is no sync `QueryResponse` aggregation gap to close).
 - **Guard:** table-driven test feeding one plan+result per kind (including empty and distinct-list) asserting the exact kind and payload; prove it fails when the classifier is forced to a single branch.
 
+### Slice T1 — Automated browser test harness (TEST-D1)
+
+Infrastructure only; establishes the automated rendering guard the front-end slices (B2, C3) depend on. Sequenced **before B2** — B2 does not start until T1 is committed. TEST-D1 (owner, 2026-07-27) settled that F01 front-end slices are guarded by an automated headless-browser harness, not manual smoke notes.
+
+- **Technology:** Playwright for .NET (`Microsoft.Playwright`) driving headless Chromium, added to the existing `tests/AdQueryOrchestrator.Tests` project. Rationale: the sole verification gate is `.NET` (`scripts/verify.ps1`, one `dotnet test` stage, `--locked-mode` restore); a Node/npm harness would fork verification into a second toolchain and lock file. jsdom is rejected — it does no layout/CSS, so it cannot verify the theme palette or the resize-clamp geometry the design contract requires ("looks right").
+- **Server under test:** a minimal self-hosted Kestrel static site serving `csharp/wwwroot` on a dynamic loopback port (an `IAsyncLifetime` fixture). F01 headline/chat rendering is pure client-side JS over injected payloads, so the harness needs only the static assets served with `/api/query/*` responses stubbed via Playwright route interception — no live AD, DB, or auth. The repo root (and thus `csharp/wwwroot`) is located at runtime by walking up from the test assembly to the directory containing `ADQuery.sln`.
+- **Browser provisioning:** `verify.ps1` gains a stage, after the Release build and before `dotnet test`, that installs Chromium via the Playwright bootstrapper emitted into the test build output (`playwright.ps1 install chromium`). This is a network operation; if it fails offline, that is a real environmental blocker to surface, not to bypass.
+- **Guard (this slice's own red→green):** one harness smoke test that launches the static server, opens `/` in real Chromium, and asserts the `#queryForm` bootstrap element is present (proving the real page loaded and `app.js` did not crash on bootstrap). Prove it fails when the served web root is wrong (element absent), passes when correct. This test is the proof the harness actually drives the real page; the per-kind rendering assertions land in B2/C3.
+- **Scope discipline:** no product-code change; only the test project (package + fixtures + smoke test), its lock files, and the `verify.ps1` browser-install stage. The unit suite stays green.
+
 ### Slice B2 — Main-window headline rendering
 
 UI presentation of the B1 contract; the three layouts + theme + fonts from the design contract.
 
 - Render the headline block in the main window per kind: value hero (`count`), person record `.kv` grid (`record`), grouped list, or count-plus-table (`multi-row`/`count` with rows). Table and download offer remain beneath; the headline never replaces the authoritative download.
 - Apply the tracked design contract: palette (both themes), Candara fonts (FONT-D1), block geometry, theme toggle on `html[data-theme]`.
-- **Guard:** DOM-free assertion is not possible for rendering; add a lightweight rendering check appropriate to the harness (or, if none is introduced, a documented manual smoke checklist covering each kind + both themes) and state explicitly that automated coverage is manual for this slice.
+- **Guard:** the Slice T1 browser harness renders each headline kind (feed a stubbed B1 headline payload per kind, assert the rendered DOM/text and both themes via `html[data-theme]`); prove it fails when a kind's rendering branch is broken. TEST-D1 makes this automated coverage, not a manual checklist.
 
 ### Slice C1 — Byte cap knob and server-side enforcement
 
@@ -145,7 +155,7 @@ UI presentation of the follow-up flow; the resizable chat + exchange delineation
 - Build the floating resizable chat (geometry, resize clamp, no shadow) driving initial query and follow-ups; render exchanges with the delineation in the design contract.
 - **Display history vs model context:** the chat may keep **display-only** past exchanges visible on the client (the design contract requires past exchanges to remain visible); this does not violate FOLLOWUP-D2, which forbids accumulated context reaching the model/server. Define reset behavior explicitly: display history is client-only, ephemeral, never sent, cleared on reload; only last-turn material (C2) is ever transmitted.
 - Preserve or deliberately replace the `#queryForm` bootstrap contract (`csharp/wwwroot/js/app.js:2`).
-- **Guard:** as B2 — lightweight rendering/interaction check if the harness allows, else a documented manual smoke checklist (resize clamp to 50vw×100vh, exchange delineation, display-history-not-transmitted); state coverage explicitly.
+- **Guard:** the Slice T1 browser harness drives the interaction (resize clamp to 50vw×100vh, exchange delineation, display-history-not-transmitted via stubbed network); prove it fails when the relevant behavior is broken. TEST-D1 makes this automated coverage.
 
 ## Non-goals (F01)
 
@@ -158,4 +168,4 @@ UI presentation of the follow-up flow; the resizable chat + exchange delineation
 ## Open items to confirm at implementation time
 
 - Exact `FollowUp:MaxContextBytes` default — sized from the real preview+plan-summary payload, not an assumed "typical" turn.
-- Whether to introduce a JS/DOM test harness (none exists) or accept documented manual smoke coverage for B2/C3 rendering slices — decide before B2.
+- ~~Whether to introduce a JS/DOM test harness or accept documented manual smoke coverage for B2/C3 rendering slices — decide before B2.~~ **Resolved: TEST-D1 (owner, 2026-07-27) — introduce the automated browser harness; see Slice T1.**
