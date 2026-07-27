@@ -26,6 +26,7 @@ builder.Services.AddControllers()
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddLlmProviderConfiguration(builder.Configuration);
 builder.Services.AddCsvEnrichmentConfiguration(builder.Configuration);
+builder.Services.AddFollowUpConfiguration(builder.Configuration);
 
 // P05 Slice 2: configure the transport body cap from the one authoritative CSV
 // application body limit so no second value can drift. Under the current IIS
@@ -85,6 +86,7 @@ builder.Services.AddSingleton<ICsvEnrichmentResultIdGenerator, CsvEnrichmentResu
 // Register job infrastructure (async query support)
 builder.Services.AddSingleton<IQueryJobStore, InMemoryQueryJobStore>();
 builder.Services.AddSingleton<IQueryJobQueue, InMemoryQueryJobQueue>();
+builder.Services.AddSingleton<IFollowUpContextEnforcer, FollowUpContextEnforcer>();
 builder.Services.AddSingleton<IQueryJobManager, QueryJobManager>();
 builder.Services.AddHostedService<QueryJobExecutorHostedService>();
 

@@ -22,6 +22,7 @@ public class QueryJobManager : IQueryJobManager
     private readonly IQueryJobQueue _queue;
     private readonly ILogger<QueryJobManager> _logger;
     private readonly IPlanPreprocessor _planPreprocessor;
+    private readonly IFollowUpContextEnforcer _followUpContextEnforcer;
     private readonly int _maxJobsPerUser;
 
     public QueryJobManager(
@@ -29,12 +30,14 @@ public class QueryJobManager : IQueryJobManager
         IQueryJobQueue queue,
         ILogger<QueryJobManager> logger,
         IPlanPreprocessor planPreprocessor,
+        IFollowUpContextEnforcer followUpContextEnforcer,
         IConfiguration configuration)
     {
         _store = store;
         _queue = queue;
         _logger = logger;
         _planPreprocessor = planPreprocessor;
+        _followUpContextEnforcer = followUpContextEnforcer;
         _maxJobsPerUser = Math.Max(0, configuration.GetValue<int>("Jobs:MaxJobsPerUser", 0));
     }
 
@@ -56,13 +59,19 @@ public class QueryJobManager : IQueryJobManager
             }
         }
 
+        // F01 Slice C1 (FOLLOWUP-D1): the authoritative follow-up-context bound, applied
+        // before the job is persisted, logged, or handed to model transmission. An
+        // over-cap opaque context is dropped whole (fail-closed) — never sent as a
+        // fragment — regardless of what the client supplied.
+        var boundedContext = _followUpContextEnforcer.EnforceStored(context);
+
         var jobId = Guid.NewGuid().ToString();
         var job = new QueryJob
         {
             JobId = jobId,
             UserName = userName,
             Query = query,
-            Context = context,
+            Context = boundedContext,
             RequestedResultLimit = requestedResultLimit,
             Status = JobStatus.Queued,
             CreatedAt = DateTime.UtcNow

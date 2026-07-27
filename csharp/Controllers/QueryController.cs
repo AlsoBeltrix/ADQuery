@@ -1,3 +1,4 @@
+using AdQuery.Orchestrator.Configuration;
 using AdQuery.Orchestrator.Models;
 using AdQuery.Orchestrator.Security;
 using AdQuery.Orchestrator.Services;
@@ -401,6 +402,12 @@ public class QueryController : ControllerBase
         {
             previewRowCount = _configuration.GetValue<int>("QueryDefaults:PreviewRowCount", 10),
             summaryRowCount = _configuration.GetValue<int>("QueryDefaults:SummaryRowCount", 20),
+            // F01 Slice C1: advisory copy of the follow-up byte cap for client-side
+            // pre-truncation UX; the server value enforced in QueryJobManager is
+            // authoritative. Default mirrors FollowUpOptions.MaxContextBytes.
+            followUpMaxContextBytes = _configuration.GetValue<int>(
+                $"{FollowUpOptions.SectionName}:MaxContextBytes",
+                FollowUpOptions.ContextTransportCodeUnitLimit),
             defaultModelId = _defaultModelId,
             defaultModelDisplayName = _defaultModelDisplayName,
             alternateModelId = _alternateModelId,
