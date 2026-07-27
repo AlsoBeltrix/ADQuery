@@ -194,20 +194,17 @@
     }
 
     function handleThemeToggle() {
-        const current = document.body.classList.contains(`theme-${THEMES.LIGHT}`) ? THEMES.LIGHT : THEMES.DARK;
+        const current = document.documentElement.getAttribute('data-theme') === THEMES.LIGHT
+            ? THEMES.LIGHT
+            : THEMES.DARK;
         const next = current === THEMES.DARK ? THEMES.LIGHT : THEMES.DARK;
         applyTheme(next);
     }
 
     function applyTheme(theme) {
-        const body = document.body;
-        if (!body) {
-            return;
-        }
-
+        // F01 design contract: the theme lives on html[data-theme].
         const resolved = theme === THEMES.LIGHT ? THEMES.LIGHT : THEMES.DARK;
-        body.classList.remove(`theme-${THEMES.DARK}`, `theme-${THEMES.LIGHT}`);
-        body.classList.add(`theme-${resolved}`);
+        document.documentElement.setAttribute('data-theme', resolved);
         setStoredTheme(resolved);
         updateThemeToggleLabel(resolved);
     }
@@ -405,6 +402,7 @@
         state.currentJobId = job.jobId;
         state.recordCount = job.result.totalRows || 0;
 
+        renderHeadline(job.result.headline);
         renderWarnings(job.result.warnings);
         renderAggregation(job.result.aggregation);
 
@@ -452,6 +450,131 @@
             job.result.totalRows || 0,
             job.responseTimeMs || 0
         );
+    }
+
+    /**
+     * F01 Slice B2: renders the plain-language headline answer (the B1
+     * server-side contract) at the top of the result panel, per kind. It never
+     * replaces the authoritative download or the full data table beneath.
+     *
+     * Kinds (see Models/HeadlineResult.cs / HeadlineKind):
+     *   - "count"   → value hero (a single emphasised number)
+     *   - "record"  → person record .kv grid (single projected row)
+     *   - "grouped" → bounded grouped-count list
+     *   - "none"/absent → the headline block stays hidden
+     */
+    function renderHeadline(headline) {
+        const container = document.getElementById('headline');
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML = '';
+        container.hidden = true;
+
+        const kind = headline && typeof headline.kind === 'string' ? headline.kind : 'none';
+
+        if (kind === 'count') {
+            renderHeadlineCount(container, headline);
+        } else if (kind === 'record') {
+            renderHeadlineRecord(container, headline);
+        } else if (kind === 'grouped') {
+            renderHeadlineGrouped(container, headline);
+        } else {
+            // "none" or an unknown kind: no value payload to lead with.
+            return;
+        }
+
+        container.hidden = false;
+    }
+
+    function appendHeadlineLabel(container, text) {
+        const label = document.createElement('p');
+        label.className = 'headline-label';
+        label.textContent = text;
+        container.appendChild(label);
+    }
+
+    function renderHeadlineCount(container, headline) {
+        const count = typeof headline.count === 'number' ? headline.count : 0;
+        appendHeadlineLabel(container, count === 1 ? 'Match found' : 'Matches found');
+
+        const value = document.createElement('span');
+        value.className = 'headline-value';
+        value.textContent = count.toLocaleString();
+        container.appendChild(value);
+    }
+
+    function renderHeadlineRecord(container, headline) {
+        const record = headline.record && typeof headline.record === 'object'
+            ? headline.record
+            : {};
+        const entries = Object.entries(record);
+
+        appendHeadlineLabel(container, 'Record found');
+
+        // The record's display name leads; the remaining fields form the grid.
+        const nameKey = pickRecordNameKey(record);
+        if (nameKey) {
+            const name = document.createElement('div');
+            name.className = 'headline-name';
+            name.textContent = formatCellValue(record[nameKey]);
+            container.appendChild(name);
+        }
+
+        const grid = document.createElement('dl');
+        grid.className = 'kv';
+        entries
+            .filter(([key]) => key !== nameKey)
+            .forEach(([key, value]) => {
+                const pair = document.createElement('div');
+                const dt = document.createElement('dt');
+                dt.textContent = formatColumnName(key);
+                const dd = document.createElement('dd');
+                dd.textContent = formatCellValue(value);
+                pair.appendChild(dt);
+                pair.appendChild(dd);
+                grid.appendChild(pair);
+            });
+        container.appendChild(grid);
+    }
+
+    function pickRecordNameKey(record) {
+        const preferred = ['displayName', 'name', 'cn', 'DisplayName', 'Name', 'CN'];
+        for (const key of preferred) {
+            if (key in record && record[key] !== null && record[key] !== undefined
+                && String(record[key]).trim().length > 0) {
+                return key;
+            }
+        }
+        return null;
+    }
+
+    function renderHeadlineGrouped(container, headline) {
+        const groups = Array.isArray(headline.groups) ? headline.groups : [];
+        const total = typeof headline.count === 'number' ? headline.count : null;
+
+        appendHeadlineLabel(
+            container,
+            total !== null ? `${total.toLocaleString()} matches, grouped` : 'Grouped matches');
+
+        const list = document.createElement('ul');
+        list.className = 'headline-groups';
+        groups.forEach(group => {
+            const li = document.createElement('li');
+            const key = document.createElement('span');
+            key.className = 'group-key';
+            const rawKey = group && typeof group.key === 'string' ? group.key : '';
+            key.textContent = rawKey.length > 0 ? rawKey : '(empty)';
+            const count = document.createElement('span');
+            count.className = 'group-count';
+            const rawCount = group && typeof group.count === 'number' ? group.count : 0;
+            count.textContent = rawCount.toLocaleString();
+            li.appendChild(key);
+            li.appendChild(count);
+            list.appendChild(li);
+        });
+        container.appendChild(list);
     }
 
     function renderAggregation(aggregation) {

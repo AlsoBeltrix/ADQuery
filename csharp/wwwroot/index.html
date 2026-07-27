@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Active Directory Query Tool</title>
     <link rel="stylesheet" href="css/styles.css" />
 </head>
-<body class="theme-dark">
+<body>
     <div class="container">
         <header>
             <h1>Active Directory Search</h1>
@@ -49,6 +49,9 @@
             </div>
 
             <div id="results" class="results-section" hidden>
+                <!-- F01 Slice B2: plain-language headline answer, leads the results -->
+                <div id="headline" class="headline" hidden></div>
+
                 <div class="results-header">
                     <h3>Search Results</h3>
                     <div class="results-info" id="resultsInfo"></div>

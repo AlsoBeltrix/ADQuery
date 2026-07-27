@@ -1,5 +1,8 @@
 :root {
-    --font-family: "Segoe UI", Roboto, sans-serif;
+    /* F01 design contract fonts (FONT-D1) */
+    --sans: "Candara", "Optima", "Segoe UI", system-ui, sans-serif;
+    --mono: "Consolas", "Cascadia Mono", ui-monospace, monospace;
+    --font-family: var(--sans);
     --shadow-elevated: 0 18px 40px rgba(15, 23, 42, 0.14);
 }
 
@@ -7,47 +10,86 @@ body {
     margin: 0;
     min-height: 100vh;
     font-family: var(--font-family);
+    font-weight: var(--body-weight, 400);
     background: var(--background-gradient);
     color: var(--text-primary);
     transition: background 0.25s ease, color 0.25s ease;
 }
 
-body.theme-dark {
+/*
+ * F01 design contract palette. The theme lives on html[data-theme]; the
+ * contract tokens (--bg, --panel, --accent, ...) are defined here and the
+ * pre-existing legacy variable names are aliased to them so the rest of the
+ * stylesheet inherits the contract palette without a full rewrite.
+ */
+html[data-theme="dark"] {
     color-scheme: dark;
-    --bg-primary: #1e2127;
-    --bg-secondary: #151820;
-    --card-bg: #262a33;
-    --accent: #61afef;
-    --accent-hover: #528fc3;
-    --accent-contrast: #0b1624;
-    --text-primary: #f8fafd;
-    --text-muted: #9ea7b8;
-    --border-color: #3b4048;
+    /* Contract — dark (default, OLED) */
+    --bg: #000000;
+    --panel: #101215;
+    --panel-2: #171a1e;
+    --rule: #23272d;
+    --rule-strong: #333840;
+    --text: #e7eaee;
+    --dim: #8b929c;
+    --dimmer: #565d67;
+    --accent: #7fb2ad;
+    --accent-soft: rgba(127, 178, 173, 0.12);
+    --pop: #e7eaee;
+    --pop-mark: #a6c4c0;
+    --cyan: #90a7c0;
+    --field: #0b0d10;
+    --body-weight: 400;
+    /* Legacy aliases */
+    --bg-primary: var(--bg);
+    --bg-secondary: var(--panel);
+    --card-bg: var(--panel);
+    --accent-hover: #6fa19c;
+    --accent-contrast: var(--field);
+    --text-primary: var(--text);
+    --text-muted: var(--dim);
+    --border-color: var(--rule);
     --success: #98c379;
     --warning: #e5c07b;
     --danger: #e06c75;
-    --table-header-bg: rgba(97, 175, 239, 0.18);
-    --table-cell-bg: rgba(56, 61, 69, 0.55);
-    --background-gradient: radial-gradient(circle at top, rgba(97, 175, 239, 0.12), transparent 55%), linear-gradient(160deg, var(--bg-primary), var(--bg-secondary));
+    --table-header-bg: var(--accent-soft);
+    --table-cell-bg: var(--panel-2);
+    --background-gradient: var(--bg);
 }
 
-body.theme-light {
+html[data-theme="light"] {
     color-scheme: light;
-    --bg-primary: #f6f8fa;
-    --bg-secondary: #e9edf3;
-    --card-bg: #ffffff;
-    --accent: #0969da;
-    --accent-hover: #0757b3;
-    --accent-contrast: #ffffff;
-    --text-primary: #1f2328;
-    --text-muted: #57606a;
-    --border-color: #d0d7de;
+    /* Contract — light (warm oat); body weight 500 so thin strokes hold up */
+    --bg: #d4d2ca;
+    --panel: #eae8e1;
+    --panel-2: #e1dfd7;
+    --rule: #cbc9bf;
+    --rule-strong: #adaba0;
+    --text: #16181b;
+    --dim: #4c5056;
+    --dimmer: #86867e;
+    --accent: #326b64;
+    --accent-soft: rgba(50, 107, 100, 0.12);
+    --pop: #16181b;
+    --pop-mark: #326b64;
+    --cyan: #3c556f;
+    --field: #f3f1ea;
+    --body-weight: 500;
+    /* Legacy aliases */
+    --bg-primary: var(--bg);
+    --bg-secondary: var(--panel);
+    --card-bg: var(--panel);
+    --accent-hover: #275650;
+    --accent-contrast: var(--field);
+    --text-primary: var(--text);
+    --text-muted: var(--dim);
+    --border-color: var(--rule);
     --success: #1a7f37;
     --warning: #9a6700;
     --danger: #d1242f;
-    --table-header-bg: #dce3f0;
-    --table-cell-bg: #f7f9fc;
-    --background-gradient: linear-gradient(160deg, var(--bg-primary), var(--bg-secondary));
+    --table-header-bg: var(--accent-soft);
+    --table-cell-bg: var(--panel-2);
+    --background-gradient: var(--bg);
 }
 
 * {
@@ -55,9 +97,9 @@ body.theme-light {
 }
 
 .container {
-    max-width: 1100px;
+    max-width: 980px;
     margin: 0 auto;
-    padding: 2rem 1.5rem 3rem;
+    padding: 3rem 2.5rem 9rem;
 }
 
 header {
@@ -622,3 +664,106 @@ footer li {
 }
 
 /* ==================== END FEEDBACK SYSTEM STYLES ==================== */
+
+/* ==================== F01 SLICE B2 — HEADLINE BLOCK ==================== */
+/*
+ * The plain-language answer that leads the result panel. Rendered per kind by
+ * app.js renderHeadline(): value hero (count), person record (.kv grid),
+ * grouped list, and count-plus-table. It never replaces the authoritative
+ * download or the full data table beneath it.
+ */
+.headline {
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 16px;
+    padding: 1.6rem 1.8rem;
+    margin-bottom: 1.4rem;
+}
+
+.headline .headline-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--dim);
+    margin: 0 0 0.6rem;
+    text-transform: none;
+}
+
+/* Value hero + count kind: emphasis is size/weight, never colour. */
+.headline .headline-value {
+    font-size: 2.6rem;
+    font-weight: 700;
+    color: var(--pop);
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    margin: 0;
+    background: var(--pop-mark);
+    background: linear-gradient(transparent 62%, var(--accent-soft) 62%);
+    display: inline;
+}
+
+/* Person record kind. */
+.headline .headline-name {
+    font-size: 1.9rem;
+    font-weight: 700;
+    color: var(--pop);
+    margin: 0 0 0.8rem;
+}
+
+.headline .kv {
+    display: grid;
+    grid-template-columns: minmax(9rem, auto) 1fr;
+    gap: 0.1rem 1.2rem;
+}
+
+.headline .kv > div {
+    display: contents;
+}
+
+.headline .kv dt,
+.headline .kv dd {
+    padding: 0.45rem 0;
+    border-bottom: 1px solid var(--rule);
+    margin: 0;
+}
+
+.headline .kv dt {
+    color: var(--dim);
+    font-size: 0.9rem;
+}
+
+.headline .kv dd {
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.95rem;
+}
+
+/* Grouped list kind. */
+.headline .headline-groups {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.headline .headline-groups li {
+    display: flex;
+    justify-content: space-between;
+    gap: 1.2rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--rule);
+}
+
+.headline .headline-groups li:last-child {
+    border-bottom: none;
+}
+
+.headline .headline-groups .group-key {
+    color: var(--text);
+}
+
+.headline .headline-groups .group-count {
+    color: var(--pop);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ==================== END F01 SLICE B2 ==================== */
