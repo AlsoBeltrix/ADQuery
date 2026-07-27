@@ -18,3 +18,4 @@ Per-finding detail: see `.agents/review/findings/<id>.md`.
 | slice-a | LOW      | CSV UI surface survives parking, or endpoint removed with it | `[x]`  | —      | codex/@azure-openai-eus2-global/gpt-5.5-dzs/xhigh/standard (bypass-sandbox, owner-authorized) — accepted, guard_confirmed |
 | slice-b1 | MEDIUM  | Miswired headline classifier → wrong/misleading answer or DATA-D1 breach | `[x]`  | —      | codex/@azure-openai-eus2-global/gpt-5.5-dzs/xhigh/standard (`--profile review`, owner-authorized) — accepted, guard_confirmed |
 | slice-t1 | MEDIUM  | Vacuous browser harness → false green for every downstream front-end slice | `[x]`  | —      | codex/@azure-openai-eus2-global/gpt-5.5-dzs/xhigh/standard (`--profile review`, owner-authorized) — accepted, guard_confirmed |
+| slice-b2 | MEDIUM  | Broken render branch or misapplied theme → wrong/unreadable headline answer | `[~]`  | —      | (pending dispatch — codex `--profile review`, standard) |
