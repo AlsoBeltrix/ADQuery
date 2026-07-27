@@ -147,6 +147,33 @@ public sealed class HeadlineRenderingTests
         }
     }
 
+    [Fact]
+    public async Task DarkTheme_FeedbackTextarea_UsesContractFieldBackground()
+    {
+        // Regression guard (B2 reopen): the theme migration to html[data-theme]
+        // left the feedback textarea's dark background on a dead .theme-dark
+        // class selector, so it fell back to white while the page was dark. The
+        // dark field background must resolve from the contract token (#0b0d10).
+        var page = await RunQueryWithHeadlineAsync(
+            headlineJson: """{"kind":"count","count":3}""",
+            totalRows: 3,
+            previewRowsJson: "[]");
+        try
+        {
+            await Assertions.Expect(page.Locator("html")).ToHaveAttributeAsync("data-theme", "dark");
+
+            // Reveal the negative-feedback options so the textarea is rendered.
+            await page.ClickAsync(".btn-negative");
+            var textarea = page.Locator("#feedbackComment");
+            await Assertions.Expect(textarea).ToBeVisibleAsync();
+            await Assertions.Expect(textarea).ToHaveCSSAsync("background-color", "rgb(11, 13, 16)");
+        }
+        finally
+        {
+            await page.CloseAsync();
+        }
+    }
+
     /// <summary>
     /// Opens the real page with the <c>/api</c> async-query flow stubbed to a
     /// single completed job carrying the given headline, then submits the form so
