@@ -22,13 +22,13 @@ Recorded in `.agents/decisions.md` (canonical); restated here only as constraint
 - **HEADLINE-D1** — the headline is derived from plan shape, not user-selected.
 - **FONT-D1** — the UI uses Candara (Windows-installed); no web-font hosting/CDN.
 
-## Owner gates (must be ruled before the relevant slice is approved)
+## Resolved decisions that shaped this plan
 
-These are genuine owner decisions the plan cannot settle by default. Each is written to be ruled cold.
+The advisory review surfaced three would-be gates. All three were ruled by the owner on 2026-07-27 and are settled; they are recorded here as context and canonically in `.agents/decisions.md`.
 
-- **GATE-1 (route clearance on the model path) — blocks Slice C.** DATA-D1 clears only the Portkey/Bedrock route for AD values. The checked-in alternate model is Azure OpenAI (`csharp/appsettings.json:45`, `AlternateModel: @azure-openai-eus2-global/...`), `Claude:BaseUrl` is freely configurable (`csharp/Program.cs:65`), and the "retry with alternate model" path copies the original value-bearing `Context` into the new job (`csharp/Controllers/QueryController.cs:1320-1321`). Today an unmodified deploy could therefore send AD values to an uncleared route. **Question:** is the Azure OpenAI alternate route also cleared for AD values, or must value-bearing context be sent only to the primary Portkey/Bedrock route and stripped/blocked on any other? **Under "primary only":** follow-up construction and retry must fail closed (send no values) whenever the effective route is not the cleared one, which needs a route-clearance check in code. **Under "alternate also cleared":** record that clearance in DATA-D1 and no code guard is added. **Stays blocked:** Slice C cannot ship a value-bearing follow-up until this is ruled; a wrong default is a compliance breach, not a bug.
-- **GATE-2 (sync `ExecuteQuery` retain-or-retire) — blocks Slice B's aggregation scope.** `POST api/query/execute` (`csharp/Controllers/QueryController.cs:93`) is a live, HTTP-mapped endpoint; the executor already computes `executionResult.Aggregation` (`csharp/Services/DirectoryPlanExecutor.cs:221-222`) but `ExecuteQuery` never copies it onto `QueryResponse` (`:168`, and `QueryResponse` has no aggregation member, `:1848`). The shipped browser uses only the async path, so no in-repo caller exercises the sync path — but "no caller" ≠ "unreachable" for a mapped endpoint. **Question:** keep the sync endpoint (then Slice B fixes it to carry aggregation, with a guard) or retire it (remove the action, then Slice B ignores it)? **Recommended:** retain-and-fix — it is one field on an existing DTO and the executor already produces the data; retiring is a larger, separately-justified change. **Stays blocked:** Slice B's aggregation scope is ambiguous until ruled.
-- **GATE-3 (follow-up value persistence in logs) — blocks Slice C.** Context and raw model material are written durably today: `QueryJobManager` logs `job.Context` and raw/model plan material (`csharp/Services/QueryJobManager.cs:167`), and `QueryLogHelper` writes context and raw model response to disk (`csharp/Services/QueryLogHelper.cs:74`, `:89`). Once follow-up context carries AD values (DATA-D1), those values are duplicated into logs — a retention/leakage surface. **Question:** redact AD values from these logs, cap their retention, or explicitly accept the on-disk duplication as within DATA-D1's clearance? **Recommended:** explicitly accept (the logs already live on the same cleared, access-controlled server as the source data) and record that acceptance as a decision, adding no redaction code — unless the owner wants redaction. **Stays blocked:** Slice C should not durably write value-bearing follow-up context until this is ruled and recorded.
+- **Model-route clearance (was GATE-1) — resolved.** DATA-D1's "only the Portkey/Bedrock route is cleared" restriction is dropped (DATA-D1 amendment, 2026-07-27). The model needs the context to answer reliably and the routes are being updated anyway. Bounded AD values may be sent as steering context to whatever configured route answers — primary or alternate (the Azure OpenAI alternate, `csharp/appsettings.json:45`, included). No route-clearance guard is added; the "retry with alternate" path copying context (`csharp/Controllers/QueryController.cs:1320-1321`) is fine as-is.
+- **Sync `execute` endpoint (was GATE-2) — resolved: retire it.** SYNC-D1 (2026-07-27). `POST api/query/execute` (`csharp/Controllers/QueryController.cs:93`) is unused by the shipped browser (async-only), so it is removed rather than fixed. There is therefore no sync `QueryResponse` aggregation gap to close; Slice B targets the async path only. Removal is a code change with its own guard/verification (either the first F01 code slice or an independent cleanup slice), gated on confirming no caller.
+- **Logging AD values (was GATE-3) — resolved: log everything.** On-disk logging on the application's own locked-down server is unrelated to model-transmission minimization; it is unrestricted. `QueryJobManager`/`QueryLogHelper` continue to write context and raw model material as they do today (`csharp/Services/QueryJobManager.cs:167`, `csharp/Services/QueryLogHelper.cs:74`, `:89`). No redaction, no retention cap, no code change.
 
 ## Design contract (tracked; source-of-truth for the UI)
 
@@ -108,7 +108,7 @@ Backend-only; establishes the classifier and DTO before any UI consumes it. No n
   6. **multi-row** — otherwise: kind=`count`, payload = total row count (table shown beneath).
 - Expose this via a **new explicit DTO** on the async status (or a dedicated `jobs/{jobId}/headline` endpoint), never by shipping raw `job.Plan` to the browser: `{ kind, count?, record?, groups? }` where `groups` is already bounded. `record`/`groups` values are subject to the DATA-D1 bound (B-note).
 - **B-note (DATA-D1 bounding):** the payload must apply an independent server-enforced ceiling on rows/categories with deterministic ordering, not rely on the unbounded `PreviewRowCount`. Fold the DATA-D1 ≤10-row ceiling into a hard server cap here.
-- **GATE-2** governs whether this slice also adds the aggregation field to the sync `QueryResponse`.
+- Scope is the **async path only** (the sync `execute` endpoint is retired per SYNC-D1; there is no sync `QueryResponse` aggregation gap to close).
 - **Guard:** table-driven test feeding one plan+result per kind (including empty and distinct-list) asserting the exact kind and payload; prove it fails when the classifier is forced to a single branch.
 
 ### Slice B2 — Main-window headline rendering
@@ -124,10 +124,10 @@ UI presentation of the B1 contract; the three layouts + theme + fonts from the d
 Backend-only; the authoritative minimal-leakage bound. Must land before any value-bearing follow-up UI.
 
 - Add `FollowUp:MaxContextBytes` with startup validation (finite, positive, ≤ the UTF-16 transport guard's byte-equivalent). Expose it via `/config` (`GetConfig`, `csharp/Controllers/QueryController.cs:397`) so the client can pre-truncate for UX; the server value is authoritative.
-- Enforce the cap **on both query paths before persistence, logging, or model transmission**: sync `ExecuteQuery` (`:119`) and async via `QueryJobManager` before it stores/logs context (`csharp/Services/QueryJobManager.cs:60-65`, `:167`). Define one shared enforcement helper so both paths use identical logic.
+- Enforce the cap **before persistence, logging, or model transmission** on the async path via `QueryJobManager` before it stores/logs context (`csharp/Services/QueryJobManager.cs:60-65`, `:167`). (The sync path is retired per SYNC-D1, so there is one enforcement point, not two.)
 - **Cap mechanics (must be specified, not left open):** measure UTF-8 bytes; on over-cap, **truncate deterministically** by dropping whole context components in a fixed order (values first, then plan summary, then prior question) and never split a UTF-8 code point; if even the minimal component exceeds the cap, drop context entirely rather than send a fragment. Reconcile with `[StringLength(2000)]`: the byte cap must be ≤ the byte-equivalent the string length permits so binding-time rejection cannot pre-empt the byte handler for in-bounds input; if a larger context is ever needed, widen the attribute deliberately with rationale.
-- **GATE-1** governs route clearance; **GATE-3** governs log persistence. C1 fails closed (sends/persists no values) on any route that GATE-1 rules uncleared.
-- **Guard:** tests proving over-cap context is bounded to `FollowUp:MaxContextBytes` server-side regardless of client input, on both paths, with deterministic component-drop order and no split code points; prove each fails when enforcement is disabled.
+- The cap is the *only* bound on follow-up context. There is no route-clearance gate (DATA-D1 amendment: context may go to any configured route) and no log-redaction requirement (logging is unrestricted; values are logged as normal).
+- **Guard:** tests proving over-cap context is bounded to `FollowUp:MaxContextBytes` server-side regardless of client input, with deterministic component-drop order and no split code points; prove it fails when enforcement is disabled.
 
 ### Slice C2 — Last-turn context construction (client + provenance)
 
@@ -153,7 +153,7 @@ UI presentation of the follow-up flow; the resizable chat + exchange delineation
 - No full result set or download sent to the model; downloads stay server-side (DATA-D1).
 - No removal or behavioral change of the CSV enrichment server path — parked in the UI only.
 - No web-font hosting/CDN; Candara only (FONT-D1).
-- No new model route; only routes cleared under DATA-D1/GATE-1 carry values.
+- No new model route (existing configured routes carry values per the DATA-D1 amendment; the cap is the only bound).
 
 ## Open items to confirm at implementation time
 

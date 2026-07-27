@@ -36,14 +36,24 @@
 - Constraints: The headline is presentation over data the async path already returns (`aggregation` on job status, `rows`/`totalRows` on preview); it introduces no new value exposure to the model and never replaces the authoritative server-side download.
 - Consequence: Terse questions get a terse answer without the user reading a grid, while the full table and download remain available beneath.
 
+## SYNC-D1 — Retire the unused synchronous `execute` endpoint
+
+- Status: Approved
+- Date: 2026-07-27
+- Authority: Repository owner
+- Decision: The synchronous `POST api/query/execute` endpoint (`QueryController.ExecuteQuery`) is retired. The shipped browser uses only the async path (`execute-async` + job polling); nothing calls the sync endpoint. Rather than fix its latent aggregation gap (it computes but never returns aggregation), remove it.
+- Constraints: Confirm no in-repo or shipped caller invokes it before removal. Remove the action and any now-dead helpers unique to it; do not disturb the async path or shared helpers. This is a code change requiring the normal red→green guard and verification once F01 implementation begins (or as an independent cleanup slice).
+- Consequence: Removes the former F01 "GATE-2." F01 Slice B targets only the async headline path; there is no sync `QueryResponse` aggregation gap to close.
+
 ## DATA-D1 — Relaxed data-minimization: bounded AD values may be sent to the model
 
 - Status: Approved
 - Date: 2026-07-24
 - Authority: Repository owner
 - Decision: The original strict no-CUI posture (send column *patterns*/format descriptions to the model, never actual attribute values — e.g. `QueryController.DetectColumnPatterns`, and the CSV path's "never row cell values" rule) was built before the AD data's classification was clarified. The models served through the Portkey/Bedrock route are cleared for information up to and including Confidential, and the AD data's classification falls within that clearance. Sending a minimal amount of real AD attribute values back to the model as steering context is therefore permitted.
-- Constraints: Remain privacy-focused and minimal. Send the smallest slice that steers effectively — the on-screen preview slice (≤10 rows, `QueryDefaults:PreviewRowCount`) or, for aggregation queries, the group-by summary, never the full result set and never 10k rows. Only the Portkey/Bedrock cleared route is covered; this decision does not authorize sending values to any other model route. Full download results stay server-side and are never sent to the model.
+- Constraints: Remain privacy-focused and minimal. Send the smallest slice that steers effectively — the on-screen preview slice (≤10 rows, `QueryDefaults:PreviewRowCount`) or, for aggregation queries, the group-by summary, never the full result set and never 10k rows. Full download results stay server-side and are never sent to the model.
 - Consequence: Enables value-based follow-up/refinement (feeding the prior turn's question, plan, and preview values back as context) rather than pattern-only re-guessing. The value-minimization in the current code becomes a deliberate "keep minimal" bound rather than an absolute prohibition. A per-turn context cap (reuse the preview cap or a dedicated small knob) enforces the minimal-leakage bound in code.
+- Amendment (2026-07-27, repository owner): the original "only the Portkey/Bedrock cleared route is covered" restriction is dropped. The model needs the context to answer reliably, and the model routes are being updated regardless; withholding context to satisfy a route-clearance rule would make the app less useful for no real benefit. Bounded AD values may be sent as steering context to whatever configured model route answers the query, primary or alternate. The remaining constraints (minimal slice, never the full set, downloads stay server-side) still hold. This removes the basis for the former F01 "GATE-1" and for treating the alternate (Azure OpenAI) retry route as a leakage risk. Note this scope is model-transmission only; on-disk logging of AD values on the application's own locked-down server is unrelated to data-minimization and is unrestricted — the app logs everything as normal.
 
 ## P05-D0 — No legacy-limit constraint; UI reflects enforced code limits
 
