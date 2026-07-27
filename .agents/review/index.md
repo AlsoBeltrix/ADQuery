@@ -14,4 +14,5 @@ Per-finding detail: see `.agents/review/findings/<id>.md`.
 
 | ID     | Severity | Impact (one line)                                        | Status | Branch | Reviewer |
 |--------|----------|----------------------------------------------------------|--------|--------|----------|
-| slice0 | MEDIUM   | Wrong capacity harness → wrong D1 caps (evidence only)   | `[x]`  | —      | codex (owner-run interactive, default model+effort, workspace-write) — accepted, guard_confirmed |
+| slice0  | MEDIUM   | Wrong capacity harness → wrong D1 caps (evidence only)   | `[x]`  | —      | codex (owner-run interactive, default model+effort, workspace-write) — accepted, guard_confirmed |
+| slice-a | LOW      | CSV UI surface survives parking, or endpoint removed with it | `[~]`  | —      | codex dispatch 1 FAILED (auth expired + write-sandbox denial) — pending working reviewer path |
