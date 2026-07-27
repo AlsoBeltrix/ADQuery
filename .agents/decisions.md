@@ -1,5 +1,50 @@
 # Settled Decisions
 
+## FONT-D1 — UI uses the Windows-installed Candara font; no web-font hosting
+
+- Status: Approved
+- Date: 2026-07-27
+- Authority: Repository owner
+- Decision: The conversational-query UI (F01) uses Candara, which ships with every supported Windows client, as its display font. No `@font-face`, CDN link, or self-hosted font file is introduced.
+- Constraints: Candara is Windows-only; a non-Windows client falls back through the declared stack. Cross-platform or self-hosted fonts are out of scope for F01 and remain a later decision if a non-Windows client ever matters.
+- Consequence: The approved mockup (`artifacts/mockups/qa-ui.html`) already satisfies this; porting its palette/typography into `css/styles.css` needs no font-delivery infrastructure.
+
+## FOLLOWUP-D1 — Follow-up context is byte-capped by its own knob
+
+- Status: Approved
+- Date: 2026-07-27
+- Authority: Repository owner
+- Decision: The context slice a follow-up turn sends back to the model is capped by bytes, and that cap is its own configuration knob (`FollowUp:MaxContextBytes`), separate from the on-screen preview-row cap (`QueryDefaults:PreviewRowCount`).
+- Constraints: The byte cap is enforced server-side as the authoritative minimal-leakage bound (DATA-D1); the client must not be trusted to have truncated. The knob's default is evidence-derived from the actual preview+plan-summary payload, not an assumed typical turn.
+- Consequence: The preview cap governs display; the follow-up cap governs model exposure. Tuning one never silently moves the other.
+
+## FOLLOWUP-D2 — Follow-up carries the last turn only
+
+- Status: Approved
+- Date: 2026-07-27
+- Authority: Repository owner
+- Decision: A follow-up turn sends the immediately preceding turn's material (its question, executed-plan summary, and DATA-D1 minimal value slice) and nothing earlier. No accumulated multi-turn transcript is sent to the model or retained server-side for follow-up purposes.
+- Constraints: Each follow-up re-validates through the existing P04 security policy and plan validation exactly as a fresh query; it is not a privileged path.
+- Consequence: Context stays bounded and stateless per turn; there is no growing conversation buffer to leak or manage.
+
+## HEADLINE-D1 — Headline answer is derived from plan shape, not user-selected
+
+- Status: Approved
+- Date: 2026-07-27
+- Authority: Repository owner
+- Decision: The main-window headline answer is derived from the generated plan's shape — count/aggregation plans yield a number/grouped-count headline, single-record plans yield a record headline, multi-row plans yield a count-plus-table headline. The user does not pick the format from a selector.
+- Constraints: The headline is presentation over data the async path already returns (`aggregation` on job status, `rows`/`totalRows` on preview); it introduces no new value exposure to the model and never replaces the authoritative server-side download.
+- Consequence: Terse questions get a terse answer without the user reading a grid, while the full table and download remain available beneath.
+
+## DATA-D1 — Relaxed data-minimization: bounded AD values may be sent to the model
+
+- Status: Approved
+- Date: 2026-07-24
+- Authority: Repository owner
+- Decision: The original strict no-CUI posture (send column *patterns*/format descriptions to the model, never actual attribute values — e.g. `QueryController.DetectColumnPatterns`, and the CSV path's "never row cell values" rule) was built before the AD data's classification was clarified. The models served through the Portkey/Bedrock route are cleared for information up to and including Confidential, and the AD data's classification falls within that clearance. Sending a minimal amount of real AD attribute values back to the model as steering context is therefore permitted.
+- Constraints: Remain privacy-focused and minimal. Send the smallest slice that steers effectively — the on-screen preview slice (≤10 rows, `QueryDefaults:PreviewRowCount`) or, for aggregation queries, the group-by summary, never the full result set and never 10k rows. Only the Portkey/Bedrock cleared route is covered; this decision does not authorize sending values to any other model route. Full download results stay server-side and are never sent to the model.
+- Consequence: Enables value-based follow-up/refinement (feeding the prior turn's question, plan, and preview values back as context) rather than pattern-only re-guessing. The value-minimization in the current code becomes a deliberate "keep minimal" bound rather than an absolute prohibition. A per-turn context cap (reuse the preview cap or a dedicated small knob) enforces the minimal-leakage bound in code.
+
 ## P05-D0 — No legacy-limit constraint; UI reflects enforced code limits
 
 - Status: Approved

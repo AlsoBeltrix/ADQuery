@@ -13,6 +13,14 @@ Plan reviews are advisory reviews of plan quality, performed headlessly with the
 - `Evidence pending`: checked-in implementation is complete, but required external acceptance evidence has not yet been collected.
 - `Complete`: implementation and all required acceptance evidence are complete.
 
+## Feature plans
+
+Feature plans (the `F` namespace) capture net-new product direction, not findings from the 2026-07-21 review. They follow the same status vocabulary and self-contained/committed-separately rules.
+
+| ID | Plan | Status |
+|---|---|---|
+| F01 | Conversational query experience (headline answer, follow-up chat, park CSV in UI) | Draft |
+
 ## Plans
 
 | ID | Plan | Status | Review rounds |
