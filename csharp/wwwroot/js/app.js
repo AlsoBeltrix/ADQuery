@@ -19,6 +19,17 @@
     const welcomeMessage = document.getElementById('welcomeMessage');
     const themeToggle = document.getElementById('themeToggle');
 
+    // F01 Slice C3 — floating chat surface. See initChat() for wiring.
+    const chatPanel = document.getElementById('chat');
+    const chatLog = document.getElementById('chatLog');
+    const chatForm = document.getElementById('chatForm');
+    const chatInput = document.getElementById('chatInput');
+    const chatSend = document.getElementById('chatSend');
+    const chatReset = document.getElementById('chatReset');
+    const chatMinimize = document.getElementById('chatMinimize');
+    const chatResize = document.getElementById('chatResize');
+    const chatRefine = chatForm ? chatForm.querySelector('.refine') : null;
+
     const THEMES = {
         DARK: 'dark',
         LIGHT: 'light'
@@ -61,6 +72,8 @@
     });
 
     themeToggle?.addEventListener('click', handleThemeToggle);
+
+    initChat();
 
     loadUserInfo();
     loadConfig();
@@ -461,6 +474,11 @@
             job.result.totalRows || 0,
             job.responseTimeMs || 0
         );
+
+        // F01 Slice C3: settle the chat's pending answer (if this query came from
+        // the chat) and refresh the "refining last question" affordance now that a
+        // completed turn exists to follow up on.
+        resolveChatAnswer(job);
     }
 
     /**
@@ -996,6 +1014,8 @@
         if (errorSection) {
             errorSection.hidden = false;
         }
+        // F01 Slice C3: settle any in-flight chat answer with the error text.
+        failChatAnswer(message);
         hideResults();
     }
 
@@ -1025,6 +1045,220 @@
         updateDownloadButtons();
         hideFeedback();
     }
+
+    // ==================== F01 SLICE C3 — FLOATING CHAT ====================
+    /*
+     * The chat drives initial queries and follow-ups through the SAME request
+     * path as the main form (runQuery → execute-async). It keeps a display-only
+     * log of past exchanges (FOLLOWUP-D2): that log lives only in the DOM, is
+     * never transmitted, and is cleared on reload. The ONLY thing a follow-up
+     * sends is C2's previousJobId (state.lastCompletedJobId), wired in runQuery.
+     */
+    const chatState = {
+        // The current exchange's answer bubble, awaiting the job result. Non-null
+        // only while a chat-originated query is in flight.
+        pendingAnswer: null
+    };
+
+    function initChat() {
+        if (!chatPanel || !chatForm || !chatInput) {
+            return;
+        }
+
+        chatForm.addEventListener('submit', event => {
+            event.preventDefault();
+            submitChatQuery();
+        });
+        chatReset?.addEventListener('click', resetChatConversation);
+        chatMinimize?.addEventListener('click', toggleChatMinimized);
+        initChatResize();
+        updateChatRefineVisibility();
+    }
+
+    function submitChatQuery() {
+        const query = chatInput.value.trim();
+        if (!query || state.isLoading) {
+            return;
+        }
+
+        // Drive the existing query path. runQuery reads the main form input, so
+        // mirror the question into it; the response resolves in the main panel.
+        if (queryInput) {
+            queryInput.value = query;
+        }
+
+        appendChatExchange(query);
+        chatInput.value = '';
+        runQuery();
+    }
+
+    function appendChatExchange(query) {
+        if (!chatLog) {
+            return;
+        }
+
+        // Demote prior exchanges to the dimmed "past" display state. This is a
+        // visual distinction only; nothing about past turns is transmitted.
+        chatLog.querySelectorAll('.exchange.current').forEach(el => {
+            el.classList.remove('current');
+            el.classList.add('past');
+        });
+
+        const exchange = document.createElement('div');
+        exchange.className = 'exchange current';
+
+        const you = document.createElement('div');
+        you.className = 'turn you';
+        you.textContent = query;
+
+        const rule = document.createElement('hr');
+        rule.className = 'qa-rule';
+
+        const bot = document.createElement('div');
+        bot.className = 'turn bot pending';
+        bot.textContent = 'Searching…';
+
+        exchange.appendChild(you);
+        exchange.appendChild(rule);
+        exchange.appendChild(bot);
+        chatLog.appendChild(exchange);
+        chatLog.scrollTop = chatLog.scrollHeight;
+
+        chatState.pendingAnswer = bot;
+        updateChatRefineVisibility();
+    }
+
+    function resolveChatAnswer(job) {
+        if (!chatState.pendingAnswer) {
+            return;
+        }
+        chatState.pendingAnswer.classList.remove('pending');
+        chatState.pendingAnswer.textContent = summariseJobForChat(job);
+        chatState.pendingAnswer = null;
+        updateChatRefineVisibility();
+        if (chatLog) {
+            chatLog.scrollTop = chatLog.scrollHeight;
+        }
+    }
+
+    function failChatAnswer(message) {
+        if (!chatState.pendingAnswer) {
+            return;
+        }
+        chatState.pendingAnswer.classList.remove('pending');
+        chatState.pendingAnswer.textContent = message || 'Something went wrong. See the result panel.';
+        chatState.pendingAnswer = null;
+        updateChatRefineVisibility();
+    }
+
+    // A short plain-language answer echoed in the chat log, derived from the same
+    // headline contract the main panel renders. The panel remains authoritative.
+    function summariseJobForChat(job) {
+        const result = job && job.result ? job.result : null;
+        const headline = result ? result.headline : null;
+        const kind = headline && typeof headline.kind === 'string' ? headline.kind : 'none';
+
+        if (kind === 'count') {
+            const count = typeof headline.count === 'number' ? headline.count : 0;
+            return count === 1
+                ? '1 match. See the result panel.'
+                : `${count.toLocaleString()} matches. See the result panel.`;
+        }
+        if (kind === 'record') {
+            const record = headline.record && typeof headline.record === 'object' ? headline.record : {};
+            const nameKey = pickRecordNameKey(record);
+            const name = nameKey ? formatCellValue(record[nameKey]) : 'One record';
+            return `${name} — details in the result panel.`;
+        }
+        if (kind === 'grouped') {
+            const total = typeof headline.count === 'number' ? headline.count : null;
+            return total !== null
+                ? `${total.toLocaleString()} matches, grouped. See the result panel.`
+                : 'Grouped matches. See the result panel.';
+        }
+
+        const total = result && typeof result.totalRows === 'number' ? result.totalRows : null;
+        if (total !== null) {
+            return total === 1
+                ? '1 record. See the result panel.'
+                : `${total.toLocaleString()} records. See the result panel.`;
+        }
+        return 'Done. See the result panel.';
+    }
+
+    function resetChatConversation() {
+        // "Start over": end the follow-up chain so the next turn sends no
+        // previousJobId, and clear the display-only history. Nothing here was ever
+        // transmitted (FOLLOWUP-D2), so this is purely local.
+        state.lastCompletedJobId = null;
+        chatState.pendingAnswer = null;
+        if (chatLog) {
+            chatLog.innerHTML = '';
+        }
+        updateChatRefineVisibility();
+    }
+
+    function updateChatRefineVisibility() {
+        if (!chatRefine) {
+            return;
+        }
+        // "Refining last question" only makes sense once a prior turn exists to
+        // refine (state.lastCompletedJobId is what C2 would send as previousJobId).
+        chatRefine.classList.toggle('hidden', !state.lastCompletedJobId);
+    }
+
+    function toggleChatMinimized() {
+        chatPanel?.classList.toggle('minimized');
+    }
+
+    function initChatResize() {
+        if (!chatResize || !chatPanel) {
+            return;
+        }
+
+        let startX = 0;
+        let startY = 0;
+        let startW = 0;
+        let startH = 0;
+        let resizing = false;
+
+        const onMove = event => {
+            if (!resizing) {
+                return;
+            }
+            // Handle is top-left; the panel is anchored bottom-right, so dragging
+            // up/left grows it. Clamp to the Design contract: width ≤ 50vw,
+            // height ≤ 100vh, floored at the min-width/min-height.
+            const dx = startX - event.clientX;
+            const dy = startY - event.clientY;
+            const maxW = window.innerWidth * 0.5;
+            const maxH = window.innerHeight;
+            const w = Math.min(maxW, Math.max(300, startW + dx));
+            const h = Math.min(maxH, Math.max(260, startH + dy));
+            chatPanel.style.width = `${w}px`;
+            chatPanel.style.height = `${h}px`;
+        };
+
+        const onUp = () => {
+            resizing = false;
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+        };
+
+        chatResize.addEventListener('pointerdown', event => {
+            event.preventDefault();
+            resizing = true;
+            startX = event.clientX;
+            startY = event.clientY;
+            const rect = chatPanel.getBoundingClientRect();
+            startW = rect.width;
+            startH = rect.height;
+            window.addEventListener('pointermove', onMove);
+            window.addEventListener('pointerup', onUp);
+        });
+    }
+
+    // ==================== END F01 SLICE C3 ====================
 
     // ==================== FEEDBACK SYSTEM ====================
 

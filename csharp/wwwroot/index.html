@@ -156,6 +156,38 @@
         </footer>
     </div>
 
+    <!--
+      F01 Slice C3: floating conversational surface. Drives initial queries and
+      follow-ups through the same request path as the main form; results resolve
+      in the main window. The exchange log is display-only client history
+      (FOLLOWUP-D2): it never leaves the browser and is cleared on reload. Only a
+      reference to the prior completed turn (previousJobId) is ever transmitted.
+    -->
+    <div class="chat" id="chat">
+        <div class="rz" id="chatResize" title="Drag to resize"></div>
+        <div class="chat-head">
+            <span class="t"><span class="live" aria-hidden="true"></span> Ask the directory</span>
+            <button type="button" class="min" id="chatMinimize" aria-label="Minimize chat">–</button>
+        </div>
+        <div class="chat-log" id="chatLog"></div>
+        <form class="chat-composer" id="chatForm">
+            <div class="row">
+                <input
+                    type="text"
+                    id="chatInput"
+                    placeholder="Ask a follow-up…"
+                    autocomplete="off"
+                    aria-label="Ask a follow-up"
+                />
+                <button type="submit" class="send" id="chatSend" aria-label="Send">▸</button>
+            </div>
+            <div class="refine">
+                ↳ refining last question ·
+                <button type="button" class="linklike" id="chatReset">start over</button>
+            </div>
+        </form>
+    </div>
+
     <script src="js/app.js"></script>
 </body>
 </html>
