@@ -447,6 +447,23 @@ function Assert-NoVulnerablePackage {
     Write-Output "Vulnerability audit passed: $Target"
 }
 
+function Install-PlaywrightBrowser {
+    # The TEST-D1 browser harness (tests/.../Browser) drives real headless
+    # Chromium. Playwright emits a bootstrapper (playwright.ps1) into the test
+    # build output; use it to install only Chromium. This is a network operation;
+    # an offline failure here is a real environmental blocker, not something to
+    # bypass.
+    $bootstrapper = Join-Path $repositoryRoot `
+        'tests/AdQueryOrchestrator.Tests/bin/Release/net10.0-windows/playwright.ps1'
+    if (-not (Test-Path -LiteralPath $bootstrapper -PathType Leaf)) {
+        throw "Playwright bootstrapper was not found (did the test project build?): $bootstrapper"
+    }
+
+    Invoke-Native -FilePath 'pwsh' -Arguments @(
+        '-NoLogo', '-NoProfile', '-File', $bootstrapper, 'install', 'chromium'
+    )
+}
+
 function Invoke-RepositoryVerification {
     Push-Location $repositoryRoot
     try {
@@ -471,6 +488,9 @@ function Invoke-RepositoryVerification {
         Invoke-Native -FilePath 'dotnet' -Arguments @(
             'build', 'ADQuery.sln', '-c', 'Release', '--no-restore', '--nologo', '-warnaserror'
         )
+
+        Write-Stage 'Install the Playwright browser (TEST-D1 headless harness)'
+        Install-PlaywrightBrowser
 
         Write-Stage 'Run tests with TRX and Cobertura output'
         Invoke-Native -FilePath 'dotnet' -Arguments @(
