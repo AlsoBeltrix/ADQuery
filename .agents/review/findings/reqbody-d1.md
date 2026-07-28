@@ -2,7 +2,7 @@
 
 **Severity**: MEDIUM — a mis-wired or mis-sized cap either (a) fails to bound the raw request body (leaving the front-door memory-exhaustion exposure that CSV-KILL-D1 opened when it deleted the P05 Slice 2 cap), or (b) sizes/targets the limit wrongly so legitimate query/follow-up requests are rejected with 413. No auth, crypto, schema, migration, or serialization surface is touched; the change is host-options wiring plus a config knob and a guard test.
 
-**Status**: In progress (pending review)
+**Status**: Verified (awaiting owner-gated merge/push)
 **Branch**: (none — committed directly to master, this repo's non-branch policy for F01/CSV-KILL/REQBODY slices; reviewed post-hoc over a pinned SHA range because history rewrite is forbidden)
 **Commit**: `84ac4f6` (feat(api): restore an independent 2 MiB request-body cap (REQBODY-D1))
 
@@ -44,4 +44,17 @@ None.
 
 ## Reviewer comments
 
-(pending dispatch)
+`Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard`
+(model+effort inline/session-only — codex `harnesses.local.json` `"tiers": {}`, no owner-confirmed durable tier mapping; mirrors the F01/CSV-KILL slice chain. `--profile review`, owner-authorized unsandboxed on this host.)
+
+- **Reviewer harness + version**: codex-cli 0.145.0 (ASHBIAMWEB1).
+- **Reviewed SHA**: `84ac4f6c740db9caa7f55ef8564bdb8cc8fa3b4d`; **base SHA**: `4d17284d640bc80da4065a447c3f54eca7f512db`.
+- **guard_confirmed**: true (reviewer independently reproduced red→green in its own disposable worktree — both guards pass at head, both fail against host defaults when the wiring is removed, pass again after restore).
+- **Verdict**: accepted.
+- **Timestamp**: 2026-07-28T14:49Z.
+- **Comments**:
+  - `csharp/Program.cs:42` — `2L * 1024 * 1024` default feeds both the Kestrel and IIS request-body option writes at lines 44 and 46.
+  - `csharp/appsettings.json:142` — configured `RequestLimits:MaxRequestBodyBytes` is 2,097,152 bytes, independent of the deleted CSV surface.
+  - `tests/AdQueryOrchestrator.Tests/Unit/RequestBodyLimitTests.cs:29` — red→green reproduced in a disposable worktree: both guards pass at head, both fail against host defaults when the wiring is removed, and pass again after restore.
+
+Orchestrator acceptance (fail-closed schema check): exit 0; single schema-valid JSON envelope; `verdict` in enum; `reviewed_sha`/`base_sha` both equal the dispatched pins; `guard_confirmed` literally `true` → **accepted**. Accepted is a verdict, not merge authority — merge/push stays owner-gated.
