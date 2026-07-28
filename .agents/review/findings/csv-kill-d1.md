@@ -1,7 +1,7 @@
 # csv-kill-d1: CSV-KILL-D1 — remove the CSV enrichment feature entirely
 
 **Severity**: MEDIUM — the risk is not the removal itself but over-removal and residue: deleting the enrichment feature must not (a) also strip the regular-query CSV *download* format (`BuildCsv`/`EscapeCsv`/`DetermineHeaders`/`GenerateFileContent` "csv" branch/`CacheQueryResult`), (b) leave a dangling reference/compile break under warnings-as-errors, or (c) silently drop a request-body-size protection without recording it. A wrong cut breaks the shipped download path or the build. Server-side controller/service/config change; no auth, crypto, schema, migration, or serialization surface touched.
-**Status**: In progress (pending review)
+**Status**: Verified (awaiting owner-gated merge/push)
 **Branch**: (none — committed directly to master, this repo's non-branch policy for F01/CSV-KILL slices; reviewed post-hoc over a pinned SHA range because history rewrite is forbidden)
 **Commit**: `c777a67` (feat(csv): remove the CSV enrichment feature entirely (CSV-KILL-D1))
 
@@ -40,4 +40,17 @@ None.
 
 ## Reviewer comments
 
-(pending dispatch)
+`Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard`
+(model+effort inline/session-only — codex `harnesses.local.json` `"tiers": {}`, no owner-confirmed durable tier mapping; mirrors the F01 slice chain. `--profile review`, owner-authorized unsandboxed on this host.)
+
+- **Reviewer harness + version**: codex-cli 0.145.0 (ASHBIAMWEB1).
+- **Reviewed SHA**: `c777a6771f9b04fe6d95ddbe0889476d1ce60fbb`; **base SHA**: `92fb0a2d174847408a4ed1fd21a559fda2318f4c`.
+- **guard_confirmed**: true (reviewer independently reproduced the red→green probe in its own worktree — temporary `[HttpPost("csv-enrich")]` probe failed the filtered test, removal passed).
+- **Verdict**: accepted.
+- **Timestamp**: 2026-07-28T13:41Z.
+- **Comments**:
+  - `csharp/Controllers/QueryController.cs:31` — regular CSV download survived: `csv` remains supported, `GenerateFileContent` still routes `csv` to `BuildCsv`, and `DetermineHeaders`/`EscapeCsv` remain present (over-removal check clean).
+  - `tests/AdQueryOrchestrator.Tests/Unit/CsvUiParkingGuardTests.cs:44` — guard non-vacuous: temporary `[HttpPost("csv-enrich")]` probe failed the filtered test; removing it passed.
+  - `scripts/verify.ps1:1` — full verification passed at the reviewed SHA: Release build 0 warnings/0 errors, 138 tests passed, publish smokes and vulnerability audit passed.
+
+Orchestrator acceptance (fail-closed schema check): exit 0; single schema-valid JSON envelope; `verdict` in enum; `reviewed_sha`/`base_sha` both equal the dispatched pins; `guard_confirmed` literally `true` → **accepted**. Accepted is a verdict, not merge authority — merge/push stays owner-gated.
