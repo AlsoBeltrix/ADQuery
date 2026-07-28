@@ -1,6 +1,6 @@
 # F02 — Main window matches the approved mockup
 
-**Status:** Approved (owner, 2026-07-28). Owner confirmed keep the retry-with-alternate-model / downloads / feedback controls, restyled into the mockup blocks (not deleted).
+**Status:** Done (2026-07-28). All 3 slices landed: Slice 1 `995eba6` (chat sole input), Slice 2 `0790586` (masthead), Slice 3 `fa8bde4` (answer blocks). Owner confirmed keep the retry-with-alternate-model / downloads / feedback controls, restyled into the mockup blocks (not deleted).
 
 ## Problem
 

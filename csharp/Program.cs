@@ -146,7 +146,22 @@ app.MapFallbackToFile("index.html");
 
 Log.Information("Starting AdQuery Orchestrator API");
 Log.Information("Environment: {Environment}", app.Environment.EnvironmentName);
-Log.Information("Claude API configured: {Configured}", !string.IsNullOrEmpty(builder.Configuration["Claude:ApiKey"]));
+// F03 Slice 1: the key may come from config or the DPAPI store fallback; report
+// the resolved presence as a bool (mirrors the fallback in
+// AddLlmProviderConfiguration). The key itself is never logged.
+var configuredApiKey = builder.Configuration["Claude:ApiKey"];
+if (string.IsNullOrWhiteSpace(configuredApiKey))
+{
+    var apiKeyFile = builder.Configuration["Claude:ApiKeyFile"];
+    if (string.IsNullOrWhiteSpace(apiKeyFile))
+    {
+        apiKeyFile = ProtectedApiKeyProvider.DefaultApiKeyFilePath;
+    }
+
+    configuredApiKey = ProtectedApiKeyProvider.TryReadApiKey(apiKeyFile);
+}
+
+Log.Information("Claude API configured: {Configured}", !string.IsNullOrEmpty(configuredApiKey));
 
 try
 {

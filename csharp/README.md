@@ -137,6 +137,19 @@ This project delivers a pure C# pipeline for answering natural-language question
 
 Profile matching is exact and case-sensitive. Enabled temperatures must be finite values from `0.0` through `1.0`; blank or duplicate targets, unknown modes, and invalid enabled values fail startup. An `Omit` profile value or legacy global `Claude:Temperature` value is ignored with a startup warning and never enables sampling.
 
+### API key: DPAPI store (F03)
+
+The shipped `appsettings.json` leaves `Claude:ApiKey` blank on purpose. In deployment the key comes from a DPAPI-encrypted file **outside** the web root, so redeploying the app can never wipe it:
+
+- Default store path: `C:\ProgramData\ADQuery\claude-apikey.dat` (override with `Claude:ApiKeyFile`). The blob is DPAPI machine-scope (`LocalMachine`), so the IIS app-pool identity can decrypt it regardless of which account wrote it.
+- Provision it once per server (and again only to rotate the key), from an account on that server:
+
+  ```powershell
+  .\New-AdQueryApiKeyStore.ps1        # prompts for the key, writes the encrypted store
+  ```
+
+- Precedence: a non-blank `Claude:ApiKey` in config still wins; the DPAPI store is the fallback used when config leaves it blank. A missing or unreadable store leaves the key blank and the app degrades to its existing missing-key UX (it does not crash at startup). The key itself is never logged — startup logs only a `Claude API configured: true/false` bool.
+
 When hosted in IIS, queries run under the IIS application pool identity; locally they run under the current process identity. The optional `ActiveDirectory:RootPath` setting only overrides the default naming context when needed.
 
 ## Result Downloads & Logging
