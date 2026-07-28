@@ -8,18 +8,18 @@
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1>Active Directory Search</h1>
-            <p class="subtitle">
-                Ask questions about users, groups, and computers in everyday language.
-            </p>
-        </header>
+        <div class="masthead">
+            <h1>Directory <span class="slash">/</span> Search</h1>
+            <button type="button" id="themeToggle" class="theme-btn" aria-label="Toggle color theme">
+                Light theme
+            </button>
+        </div>
+        <p class="subline">
+            <span class="arrow">&rarr;</span> ask in the panel; answers resolve here in the form that fits.
+        </p>
 
         <div class="user-info" id="userInfo">
             <span id="welcomeMessage">Loading...</span>
-            <button type="button" id="themeToggle" class="theme-toggle" aria-label="Toggle color theme">
-                Light theme
-            </button>
         </div>
 
         <main>

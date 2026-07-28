@@ -106,20 +106,53 @@ html[data-theme="light"] {
     padding: 3rem 2.5rem 9rem;
 }
 
-header {
-    text-align: center;
-    margin-bottom: 2rem;
+/* F02: mockup masthead — title + theme button on one rule, subline below. */
+.masthead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 1rem;
+    margin-bottom: 0.3rem;
+    border-bottom: 1px solid var(--rule);
 }
 
-header h1 {
+.masthead h1 {
     margin: 0;
+    font-size: 1.3rem;
     font-weight: 700;
-    font-size: 2.4rem;
+    letter-spacing: -0.01em;
 }
 
-.subtitle {
-    margin-top: 0.6rem;
-    color: var(--text-muted);
+.masthead h1 .slash {
+    color: var(--accent);
+    font-weight: 500;
+}
+
+.subline {
+    font-size: 0.9rem;
+    color: var(--dim);
+    margin: 0.8rem 0 2.8rem;
+}
+
+.subline .arrow {
+    color: var(--accent);
+}
+
+.theme-btn {
+    font-family: var(--sans);
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--dim);
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    padding: 0.4rem 0.9rem;
+    cursor: pointer;
+}
+
+.theme-btn:hover {
+    color: var(--text);
+    border-color: var(--accent);
 }
 
 .user-info {

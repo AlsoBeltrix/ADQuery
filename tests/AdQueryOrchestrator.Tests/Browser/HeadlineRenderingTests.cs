@@ -174,6 +174,48 @@ public sealed class HeadlineRenderingTests
         }
     }
 
+    [Fact]
+    public async Task Masthead_MatchesMockup_TitleSlashAndSubline()
+    {
+        // F02 Slice 2 guard: the mockup masthead — "Directory / Search" with the
+        // slash tinted by --accent — plus the subline replace the old centered
+        // header. Drives the real page; no query needed.
+        var page = await _fixture.Browser.NewPageAsync(new BrowserNewPageOptions
+        {
+            ColorScheme = ColorScheme.Dark,
+        });
+        await page.RouteAsync("**/api/user/info", route => route.FulfillAsync(new RouteFulfillOptions
+        {
+            ContentType = "application/json",
+            Body = """{"isAuthenticated":true,"username":"tester"}""",
+        }));
+        await page.RouteAsync("**/api/query/config", route => route.FulfillAsync(new RouteFulfillOptions
+        {
+            ContentType = "application/json",
+            Body = """{"summaryRowCount":20}""",
+        }));
+        try
+        {
+            await page.GotoAsync(_fixture.BaseAddress + "/");
+
+            var title = page.Locator(".masthead h1");
+            await Assertions.Expect(title).ToBeVisibleAsync();
+            await Assertions.Expect(title).ToContainTextAsync("Directory");
+            await Assertions.Expect(title).ToContainTextAsync("Search");
+
+            // The slash carries the contract accent (dark --accent = #7fb2ad).
+            var slash = page.Locator(".masthead h1 .slash");
+            await Assertions.Expect(slash).ToHaveTextAsync("/");
+            await Assertions.Expect(slash).ToHaveCSSAsync("color", "rgb(127, 178, 173)");
+
+            await Assertions.Expect(page.Locator(".subline")).ToBeVisibleAsync();
+        }
+        finally
+        {
+            await page.CloseAsync();
+        }
+    }
+
     /// <summary>
     /// Opens the real page with the <c>/api</c> async-query flow stubbed to a
     /// single completed job carrying the given headline, then submits the form so
