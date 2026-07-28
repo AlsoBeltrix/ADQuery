@@ -186,11 +186,12 @@ public sealed class HeadlineRenderingTests
     }
 
     [Fact]
-    public async Task Masthead_MatchesMockup_TitleSlashAndSubline()
+    public async Task Masthead_MatchesMockup_TitleSlash_NoSubline()
     {
         // F02 Slice 2 guard: the mockup masthead — "Directory / Search" with the
-        // slash tinted by --accent — plus the subline replace the old centered
-        // header. Drives the real page; no query needed.
+        // slash tinted by --accent — replaces the old centered header. The mockup
+        // subline was dropped as chat-context bleed (it explained the app to
+        // itself); it must not be present. Drives the real page; no query needed.
         var page = await _fixture.Browser.NewPageAsync(new BrowserNewPageOptions
         {
             ColorScheme = ColorScheme.Dark,
@@ -219,7 +220,7 @@ public sealed class HeadlineRenderingTests
             await Assertions.Expect(slash).ToHaveTextAsync("/");
             await Assertions.Expect(slash).ToHaveCSSAsync("color", "rgb(127, 178, 173)");
 
-            await Assertions.Expect(page.Locator(".subline")).ToBeVisibleAsync();
+            await Assertions.Expect(page.Locator(".subline")).ToHaveCountAsync(0);
         }
         finally
         {

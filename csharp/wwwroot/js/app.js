@@ -1214,12 +1214,19 @@
     }
 
     function updateChatRefineVisibility() {
-        if (!chatRefine) {
-            return;
+        // "Refining last question" and the follow-up placeholder both only make
+        // sense once a prior turn exists to refine (state.lastCompletedJobId is
+        // what C2 would send as previousJobId). Before the first answer, the
+        // placeholder invites an opening question instead.
+        const hasPriorTurn = Boolean(state.lastCompletedJobId);
+        if (chatInput) {
+            const prompt = hasPriorTurn ? 'Ask a follow-up…' : 'Ask about the directory…';
+            chatInput.placeholder = prompt;
+            chatInput.setAttribute('aria-label', prompt);
         }
-        // "Refining last question" only makes sense once a prior turn exists to
-        // refine (state.lastCompletedJobId is what C2 would send as previousJobId).
-        chatRefine.classList.toggle('hidden', !state.lastCompletedJobId);
+        if (chatRefine) {
+            chatRefine.classList.toggle('hidden', !hasPriorTurn);
+        }
     }
 
     function toggleChatMinimized() {

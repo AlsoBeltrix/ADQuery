@@ -100,6 +100,38 @@ public sealed class ChatSurfaceTests
     }
 
     [Fact]
+    public async Task Placeholder_InvitesFirstQuestion_ThenSwitchesToFollowUp()
+    {
+        // The panel is the sole query input, so its opening prompt must invite a
+        // first question — not "Ask a follow-up…", which only makes sense once a
+        // prior answer exists. It switches to the follow-up prompt after the first
+        // turn settles (same signal as the "refining last question" affordance).
+        var page = await NewPageAsync();
+        try
+        {
+            await StubFlowAndCaptureBodiesAsync(page);
+            await page.GotoAsync(_fixture.BaseAddress + "/");
+
+            var input = page.Locator("#chatInput");
+            await Assertions.Expect(input).ToHaveAttributeAsync("placeholder", "Ask about the directory…");
+            // The "refining last question" line stays hidden until a prior turn exists.
+            await Assertions.Expect(page.Locator("#chat .refine")).ToHaveClassAsync(
+                new System.Text.RegularExpressions.Regex(@"\bhidden\b"));
+
+            await SubmitChatAsync(page, "who is in group X");
+            await WaitForAnswerSettledAsync(page);
+
+            await Assertions.Expect(input).ToHaveAttributeAsync("placeholder", "Ask a follow-up…");
+            await Assertions.Expect(page.Locator("#chat .refine")).Not.ToHaveClassAsync(
+                new System.Text.RegularExpressions.Regex(@"\bhidden\b"));
+        }
+        finally
+        {
+            await page.CloseAsync();
+        }
+    }
+
+    [Fact]
     public async Task DisplayHistory_IsNeverTransmitted()
     {
         var page = await NewPageAsync();

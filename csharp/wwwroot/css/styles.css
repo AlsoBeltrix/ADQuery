@@ -112,7 +112,7 @@ html[data-theme="light"] {
     align-items: center;
     justify-content: space-between;
     padding-bottom: 1rem;
-    margin-bottom: 0.3rem;
+    margin-bottom: 2rem;
     border-bottom: 1px solid var(--rule);
 }
 
@@ -126,16 +126,6 @@ html[data-theme="light"] {
 .masthead h1 .slash {
     color: var(--accent);
     font-weight: 500;
-}
-
-.subline {
-    font-size: 0.9rem;
-    color: var(--dim);
-    margin: 0.8rem 0 2.8rem;
-}
-
-.subline .arrow {
-    color: var(--accent);
 }
 
 .theme-btn {
