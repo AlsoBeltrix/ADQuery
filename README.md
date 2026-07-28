@@ -33,7 +33,7 @@ The implementation lives under `csharp\`.
 - LLM output is treated as data, not code.
 - Directory plans are validated before LDAP execution.
 - Allowed AD attributes are controlled by files in `csharp\Configuration`.
-- The repo `csharp\appsettings.json` does not contain the LLM API key; the deployed IIS copy under `D:\inetpub\adquery` holds the runtime secret.
+- The repo `csharp\appsettings.json` does not contain the LLM API key. In deployment the key is read from a DPAPI-encrypted store outside the web root (`C:\ProgramData\ADQuery\claude-apikey.dat`), provisioned once with `New-AdQueryApiKeyStore.ps1`, so a redeploy can never wipe it (F03; see `csharp/README.md`).
 - CORS is closed by default and only allows origins listed in `Cors:AllowedOrigins`.
 
 ## Prerequisites
@@ -87,7 +87,7 @@ Local execution requires configuration for the LLM endpoint and access to the ta
 
 Complete the [prerequisite checklist](#prerequisites) before any deployment. The verified output is framework-dependent and relies on the server's maintained .NET 10 Hosting Bundle; it does not ship a private runtime.
 
-`csharp\deploy.ps1` is a legacy deployment script. It does not verify the runtime or IIS prerequisites and can overwrite or remove the deployed `appsettings.json` that holds the runtime secret. Do not treat it as a safe unattended update path for an existing installation. Deployment hardening is tracked separately; until it lands, server changes require deliberate manual review and a configuration backup.
+`csharp\deploy.ps1` is a legacy deployment script and does not verify the runtime or IIS prerequisites. As of F03 it preserves the deployed `appsettings.json` by default (a redeploy never overwrites or removes it); pass `-OverwriteConfig` to deliberately replace it from the repo copy when a configuration change ships. The runtime secret no longer lives in that file — it is read from the DPAPI store outside the web root (see the security note above). Broader deployment hardening (release management, rollback) is tracked separately in `.agents/plans/P15-safe-iis-deployment.md`.
 
 Real Windows sign-in checks may be performed later on the actual server because no separate test server exists. Until they run, do not record Windows authentication as verified. When convenient, check an allowed account, a refused account, and anonymous access; if authentication is wrong, close access and remove or replace the failed installation.
 

@@ -180,7 +180,7 @@ The legacy deployment script attempts to:
 3. App pool recycle (`adquery_pool`)
 4. Basic HTTP reachability check
 
-It does not enforce the prerequisite checklist and can overwrite or remove a deployed `appsettings.json`. Do not use it as an unattended update path for an existing installation; see the root deployment warning.
+It does not enforce the prerequisite checklist. As of F03 it preserves the deployed `appsettings.json` by default; pass `-OverwriteConfig` to replace it from the repo copy when a configuration change ships. The API key lives in the DPAPI store outside the web root (see the API-key note above), so it is never touched by a deploy. See the root deployment warning for the broader hardening status.
 
 ## Health Checks
 

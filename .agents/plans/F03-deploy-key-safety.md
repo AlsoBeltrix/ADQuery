@@ -1,6 +1,8 @@
 # F03 — Deploy can never wipe the live API key
 
-**Status:** Approved (owner, 2026-07-28). DPAPI machine-scope; owner runs the deploy. F03-D1 resolved: preserve the deployed `appsettings.json` by default, opt-in `-OverwriteConfig` to replace from repo.
+**Status:** Done (2026-07-28). Both slices landed: Slice 1 `74093fe` (DPAPI key provider), Slice 2 `c21cef6` (deploy config protection). DPAPI machine-scope; owner runs the deploy. F03-D1 resolved: preserve the deployed `appsettings.json` by default, opt-in `-OverwriteConfig` to replace from repo.
+
+**Owner action remaining (server, not agent):** run `New-AdQueryApiKeyStore.ps1` once on the server to provision the DPAPI store, then deploy with `-OverwriteConfig` once to ship the MODEL-D1 route swap. Thereafter routine deploys preserve deployed config.
 
 ## Problem
 
