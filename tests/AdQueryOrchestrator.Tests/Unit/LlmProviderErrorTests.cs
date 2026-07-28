@@ -21,8 +21,6 @@ public sealed class LlmProviderErrorTests
     private const string PromptLine = "Produce only the JSON plan. Do not include explanations.";
     private const string NormalSystemLine =
         "- The `manager` attribute stores the manager's distinguished name (DN). When finding direct reports, drive lookups with distinguishedName values instead of display names or SMTP addresses.";
-    private const string CsvSystemLine =
-        "You are an expert Active Directory analyst. Your role is to interpret user requests about CSV data enrichment and output structured JSON instructions.";
 
     [Theory]
     [InlineData(
@@ -177,7 +175,7 @@ public sealed class LlmProviderErrorTests
     }
 
     [Fact]
-    public async Task CsvRequest_DoubleNestedFailureUsesTheSameParserAndRetainsCodeInLog()
+    public async Task NormalRequest_DoubleNestedFailureUsesTheSameParserAndRetainsCodeInLog()
     {
         const string body =
             "{\"error\":{\"error\":{\"message\":\"Unsupported parameter.\",\"type\":\"invalid_request_error\",\"code\":\"unsupported_value\"}}}";
@@ -186,10 +184,8 @@ public sealed class LlmProviderErrorTests
             new QueueHttpMessageHandler(ErrorResponse(HttpStatusCode.TooManyRequests, body)),
             logger);
 
-        var response = await service.GenerateCsvEnrichmentPlanAsync(
+        var response = await service.GenerateExecutionPlanAsync(
             "safe query",
-            ["employee"],
-            rowCount: 3,
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.False(response.Success);
@@ -258,19 +254,17 @@ public sealed class LlmProviderErrorTests
             ContextCanary);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ProviderFailure_DoesNotExposeRequestSecretsPromptsOrRawBody(bool csvRequest)
+    [Fact]
+    public async Task ProviderFailure_DoesNotExposeRequestSecretsPromptsOrRawBody()
     {
-        var systemLine = csvRequest ? CsvSystemLine : NormalSystemLine;
+        var systemLine = NormalSystemLine;
         var sensitiveMessage = string.Join(
             "\r\n",
             "SAFE_PROVIDER_MESSAGE",
             ApiKeyCanary,
             AuthTokenCanary,
             QueryCanary,
-            csvRequest ? string.Empty : ContextCanary,
+            ContextCanary,
             systemLine,
             PromptLine,
             new string('A', 1_000));
@@ -301,7 +295,7 @@ public sealed class LlmProviderErrorTests
                 ["Claude:AuthToken"] = AuthTokenCanary
             });
 
-        var result = await InvokeAsync(service, csvRequest, QueryCanary, ContextCanary);
+        var result = await InvokeAsync(service, QueryCanary, ContextCanary);
         var publicAndLogs = string.Concat(result.ErrorMessage, Environment.NewLine, FlattenLogs(logger));
 
         Assert.False(result.Success);
@@ -317,23 +311,15 @@ public sealed class LlmProviderErrorTests
             systemLine,
             PromptLine,
             RawBodyCanary);
-        if (!csvRequest)
-        {
-            Assert.DoesNotContain(ContextCanary, publicAndLogs, StringComparison.Ordinal);
-        }
+        Assert.DoesNotContain(ContextCanary, publicAndLogs, StringComparison.Ordinal);
     }
 
     [Theory]
-    [InlineData(false, "empty")]
-    [InlineData(true, "empty")]
-    [InlineData(false, "malformed")]
-    [InlineData(true, "malformed")]
-    [InlineData(false, "unknown")]
-    [InlineData(true, "unknown")]
-    [InlineData(false, "oversized")]
-    [InlineData(true, "oversized")]
+    [InlineData("empty")]
+    [InlineData("malformed")]
+    [InlineData("unknown")]
+    [InlineData("oversized")]
     public async Task UnknownProviderFailure_UsesFixedBoundedFallback(
-        bool csvRequest,
         string bodyKind)
     {
         var body = bodyKind switch
@@ -356,7 +342,7 @@ public sealed class LlmProviderErrorTests
             new QueueHttpMessageHandler(ErrorResponse(HttpStatusCode.BadRequest, body)),
             logger);
 
-        var result = await InvokeAsync(service, csvRequest, "safe query", context: null);
+        var result = await InvokeAsync(service, "safe query", context: null);
 
         Assert.False(result.Success);
         Assert.Empty(result.RawResponse);
@@ -367,10 +353,8 @@ public sealed class LlmProviderErrorTests
         Assert.DoesNotContain(RawBodyCanary, FlattenLogs(logger), StringComparison.Ordinal);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ErrorResponseStreamingRead_StopsAtTheByteLimit(bool csvRequest)
+    [Fact]
+    public async Task ErrorResponseStreamingRead_StopsAtTheByteLimit()
     {
         var payload = Encoding.UTF8.GetBytes(
             JsonSerializer.Serialize(
@@ -389,7 +373,7 @@ public sealed class LlmProviderErrorTests
         var logger = new CapturingLogger<ClaudeService>();
         var service = CreateService(new QueueHttpMessageHandler(providerResponse), logger);
 
-        var result = await InvokeAsync(service, csvRequest, "safe query", context: null);
+        var result = await InvokeAsync(service, "safe query", context: null);
 
         Assert.False(result.Success);
         Assert.Equal(LlmProviderErrorParser.MaxBodyBytes + 1, content.TransferredBytes);
@@ -421,10 +405,8 @@ public sealed class LlmProviderErrorTests
         Assert.DoesNotContain(RawBodyCanary, FlattenLogs(logger), StringComparison.Ordinal);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task TransportException_DoesNotLogExceptionMessageOrRequestContent(bool csvRequest)
+    [Fact]
+    public async Task TransportException_DoesNotLogExceptionMessageOrRequestContent()
     {
         var exceptionMessage = $"{ApiKeyCanary} {AuthTokenCanary} {QueryCanary} {ContextCanary}";
         var logger = new CapturingLogger<ClaudeService>();
@@ -438,7 +420,7 @@ public sealed class LlmProviderErrorTests
                 ["Claude:AuthToken"] = AuthTokenCanary
             });
 
-        var result = await InvokeAsync(service, csvRequest, QueryCanary, ContextCanary);
+        var result = await InvokeAsync(service, QueryCanary, ContextCanary);
         var publicAndLogs = string.Concat(result.ErrorMessage, Environment.NewLine, FlattenLogs(logger));
 
         Assert.False(result.Success);
@@ -451,10 +433,8 @@ public sealed class LlmProviderErrorTests
         Assert.Contains("InvalidOperationException", publicAndLogs, StringComparison.Ordinal);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task InvalidSuccessfulPayload_IsNotReturnedOrLogged(bool csvRequest)
+    [Fact]
+    public async Task InvalidSuccessfulPayload_IsNotReturnedOrLogged()
     {
         var logger = new CapturingLogger<ClaudeService>();
         var service = CreateService(
@@ -464,7 +444,7 @@ public sealed class LlmProviderErrorTests
                     $"{{\"unexpected\":\"{RawBodyCanary} {QueryCanary}\"}}")),
             logger);
 
-        var result = await InvokeAsync(service, csvRequest, QueryCanary, context: null);
+        var result = await InvokeAsync(service, QueryCanary, context: null);
         var publicAndLogs = string.Concat(result.ErrorMessage, Environment.NewLine, FlattenLogs(logger));
 
         Assert.False(result.Success);
@@ -474,20 +454,9 @@ public sealed class LlmProviderErrorTests
 
     private static async Task<InvocationResult> InvokeAsync(
         ClaudeService service,
-        bool csvRequest,
         string query,
         string? context)
     {
-        if (csvRequest)
-        {
-            var response = await service.GenerateCsvEnrichmentPlanAsync(
-                query,
-                ["employee"],
-                rowCount: 3,
-                cancellationToken: TestContext.Current.CancellationToken);
-            return new InvocationResult(response.Success, response.ErrorMessage ?? string.Empty, response.RawResponse);
-        }
-
         var normalResponse = await service.GenerateExecutionPlanAsync(
             query,
             context,

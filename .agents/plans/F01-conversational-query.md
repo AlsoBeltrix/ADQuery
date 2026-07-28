@@ -161,7 +161,7 @@ UI presentation of the follow-up flow; the resizable chat + exchange delineation
 
 - No multi-turn transcript reaching the model or retained server-side beyond the last turn (display-only client history excepted, C3).
 - No full result set or download sent to the model; downloads stay server-side (DATA-D1).
-- No removal or behavioral change of the CSV enrichment server path — parked in the UI only.
+- ~~No removal or behavioral change of the CSV enrichment server path — parked in the UI only.~~ **Reversed by CSV-KILL-D1 (owner, 2026-07-28): the CSV enrichment feature is removed entirely — server endpoint, service, validators, options, config, and tests. The regular-query CSV *download* format is unaffected.**
 - No web-font hosting/CDN; Candara only (FONT-D1).
 - No new model route (existing configured routes carry values per the DATA-D1 amendment; the cap is the only bound).
 

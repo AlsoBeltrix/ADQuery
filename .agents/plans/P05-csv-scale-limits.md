@@ -1,5 +1,7 @@
 # P05 — CSV Enrichment Scale and Request Limits
 
+**Status: Superseded (2026-07-28) by CSV-KILL-D1.** The owner removed the CSV enrichment feature entirely, so this plan's remaining scope is moot: Slices 1-2 landed but were reverted with the feature; Slices 3-7 (all further hardening of the removed path) will never be built; the Slice 0 capacity-evidence harness was deleted with the `Benchmarks/` suite. Retained for history only. The regular-query CSV *download* format is a separate feature and is unaffected. Original status follows.
+
 **Status: Approved.** Final advisory review completed; round-3 repairs were applied without a fourth review. The owner fixed the required row ceiling at 100,000. On 2026-07-22 the owner approved **Slice 0 only** (the read-only capacity-evidence harness); it changes no endpoint behavior, adds no checked-in limit defaults, and contacts no live provider, Active Directory, or production output root. On 2026-07-24 the owner approved the four settled D1 caps and gave an explicit go to implement Slices 1-6 (the concurrent active-CSV admission count remains deferred per `.agents/plans/P05-slice0-capacity-evidence.md`; its absence does not block Slices 1-6). All numeric workload assumptions other than the 100,000-row ceiling and the four settled D1 caps must still pass the evidence gate below before they become defaults.
 
 ## Finding

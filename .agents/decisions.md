@@ -1,5 +1,15 @@
 # Settled Decisions
 
+## CSV-KILL-D1 — Remove the CSV enrichment feature entirely
+
+- Status: Approved
+- Date: 2026-07-28
+- Authority: Repository owner
+- Decision: The CSV enrichment feature (upload a CSV, the LLM generates an enrichment plan, the backend does per-row AD lookups and merges results) is removed from the product in full — server endpoint, service, validators, options, configuration, and tests. F01 Slice A had parked it in the UI only; the server `POST api/query/csv-enrich` endpoint remained live and reachable but had no UI and no user. The owner declined to invest further in hardening a feature that "will never get used or seen."
+- Scope: Delete the enrichment-only surface (the `csv-enrich` action and its helpers, `CsvEnrichmentService`, `CsvEnrichmentPlanValidator`, `CsvEnrichmentRequestValidator`, `CsvEnrichmentFilterEvaluator`, `CsvEnrichmentLimitsOptions` + validator + DI extension, `CsvEnrichmentResultPublication`, `CsvEnrichmentPlan` model, `GenerateCsvEnrichmentPlanAsync` and its prompt builders, and every enrichment test). The CSV **download format** for ordinary query results (`BuildCsv`/`EscapeCsv`/the `"csv"` branch of `GenerateFileContent` and the download path) is a separate concern and is KEPT.
+- Constraints: One concern, landed with a red→green guard that proves the `csv-enrich` endpoint is no longer mapped (the former `CsvUiParkingGuardTests` mapping assertion is flipped). The Slice 2 transport request-body cap and its `web.config` `requestLimits` were sourced from the deleted CSV options and are removed with the feature.
+- Consequence: Reverses the F01 "park CSV in UI only" non-goal. Moots P05 Slices 3–7 (they hardened this feature); the P05 plan is superseded. DATA-D1's CSV-path "never row cell values" clause is now historical.
+
 ## TEST-D1 — F01 front-end slices are guarded by an automated browser test harness
 
 - Status: Approved

@@ -35,31 +35,6 @@ public sealed class LlmProviderRequestTests
     }
 
     [Fact]
-    public async Task GenerateCsvEnrichmentPlanAsync_PreservesRequiredWireContract()
-    {
-        var handler = new RecordingHttpMessageHandler();
-        var service = CreateService(handler);
-
-        var response = await service.GenerateCsvEnrichmentPlanAsync(
-            "add department",
-            ["employee"],
-            rowCount: 3,
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        Assert.True(response.Success);
-        var request = Assert.Single(handler.Requests);
-        AssertRequiredWireContract(request.Body, BaseModel, "CSV FILE INFO:");
-        var prompt = GetUserMessageContent(request.Body);
-        Assert.Contains("all|filtered", prompt, StringComparison.Ordinal);
-        Assert.DoesNotContain("all|matched", prompt, StringComparison.Ordinal);
-        Assert.Contains(
-            "Output mode: 'all' (include unmatched rows) or 'filtered' (only filtered rows)",
-            prompt,
-            StringComparison.Ordinal);
-        Assert.DoesNotContain("'matched'", prompt, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public async Task GenerateExecutionPlanAsync_PreservesExactModelOverrideAndPortkeyHeaders()
     {
         var handler = new RecordingHttpMessageHandler();
@@ -98,7 +73,7 @@ public sealed class LlmProviderRequestTests
     }
 
     [Fact]
-    public async Task ExactBaseProfile_AppliesTemperatureAcrossNormalCsvAndHealthRequests()
+    public async Task ExactBaseProfile_AppliesTemperatureAcrossNormalAndHealthRequests()
     {
         var handler = new RecordingHttpMessageHandler();
         var service = CreateService(
@@ -113,20 +88,13 @@ public sealed class LlmProviderRequestTests
         var normalResponse = await service.GenerateExecutionPlanAsync(
             "show active users",
             cancellationToken: TestContext.Current.CancellationToken);
-        var csvResponse = await service.GenerateCsvEnrichmentPlanAsync(
-            "add department",
-            ["employee"],
-            rowCount: 3,
-            cancellationToken: TestContext.Current.CancellationToken);
         var healthResponse = await service.CheckHealthAsync(TestContext.Current.CancellationToken);
 
         Assert.True(normalResponse.Success);
-        Assert.True(csvResponse.Success);
         Assert.True(healthResponse.IsHealthy);
-        Assert.Equal(3, handler.Requests.Count);
+        Assert.Equal(2, handler.Requests.Count);
         AssertRequiredWireContract(handler.Requests[0].Body, BaseModel, "show active users", 0.25);
-        AssertRequiredWireContract(handler.Requests[1].Body, BaseModel, "CSV FILE INFO:", 0.25);
-        AssertRequiredWireContract(handler.Requests[2].Body, BaseModel, "Return a simple confirmation", 0.25);
+        AssertRequiredWireContract(handler.Requests[1].Body, BaseModel, "Return a simple confirmation", 0.25);
     }
 
     [Fact]
@@ -146,11 +114,6 @@ public sealed class LlmProviderRequestTests
         var normalResponse = await service.GenerateExecutionPlanAsync(
             "show active users",
             cancellationToken: TestContext.Current.CancellationToken);
-        var csvResponse = await service.GenerateCsvEnrichmentPlanAsync(
-            "add department",
-            ["employee"],
-            rowCount: 3,
-            cancellationToken: TestContext.Current.CancellationToken);
         var healthResponse = await service.CheckHealthAsync(TestContext.Current.CancellationToken);
         var alternateResponse = await service.GenerateExecutionPlanAsync(
             "show alternate users",
@@ -162,18 +125,16 @@ public sealed class LlmProviderRequestTests
             modelOverride: arbitraryModel);
 
         Assert.True(normalResponse.Success);
-        Assert.True(csvResponse.Success);
         Assert.True(healthResponse.IsHealthy);
         Assert.True(alternateResponse.Success);
         Assert.True(arbitraryResponse.Success);
         Assert.Equal(AlternateModel, alternateResponse.ModelUsed);
         Assert.Equal(arbitraryModel, arbitraryResponse.ModelUsed);
-        Assert.Equal(5, handler.Requests.Count);
+        Assert.Equal(4, handler.Requests.Count);
         AssertRequiredWireContract(handler.Requests[0].Body, BaseModel, "show active users");
-        AssertRequiredWireContract(handler.Requests[1].Body, BaseModel, "CSV FILE INFO:");
-        AssertRequiredWireContract(handler.Requests[2].Body, BaseModel, "Return a simple confirmation");
-        AssertRequiredWireContract(handler.Requests[3].Body, AlternateModel, "show alternate users", 0.65);
-        AssertRequiredWireContract(handler.Requests[4].Body, arbitraryModel, "show arbitrary users");
+        AssertRequiredWireContract(handler.Requests[1].Body, BaseModel, "Return a simple confirmation");
+        AssertRequiredWireContract(handler.Requests[2].Body, AlternateModel, "show alternate users", 0.65);
+        AssertRequiredWireContract(handler.Requests[3].Body, arbitraryModel, "show arbitrary users");
     }
 
     private static ClaudeService CreateService(
@@ -264,15 +225,6 @@ public sealed class LlmProviderRequestTests
         var content = message.GetProperty("content");
         Assert.Equal(JsonValueKind.String, content.ValueKind);
         Assert.Contains(expectedPromptContent, content.GetString(), StringComparison.Ordinal);
-    }
-
-    private static string GetUserMessageContent(string body)
-    {
-        using var document = JsonDocument.Parse(body);
-        return document.RootElement
-            .GetProperty("messages")[0]
-            .GetProperty("content")
-            .GetString() ?? string.Empty;
     }
 
     private sealed class RecordingHttpMessageHandler : HttpMessageHandler

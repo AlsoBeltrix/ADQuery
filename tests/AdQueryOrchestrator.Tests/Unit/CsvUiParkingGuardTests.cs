@@ -6,10 +6,10 @@ using Xunit;
 namespace AdQuery.Orchestrator.Tests.Unit;
 
 /// <summary>
-/// Guards F01 Slice A: the CSV enrichment feature is parked in the UI only.
-/// The browser-facing surfaces (mode toggle, upload form, file handlers,
-/// enrich fetch) must be absent, while the server endpoint stays mapped so the
-/// parked feature remains callable and its P04/P05 hardening is untouched.
+/// Guards CSV-KILL-D1: the CSV enrichment feature is removed entirely. The
+/// browser-facing surfaces (mode toggle, upload form, file handlers, enrich
+/// fetch) must be absent, and the server <c>csv-enrich</c> endpoint must no
+/// longer be mapped on the controller.
 /// </summary>
 public sealed class CsvUiParkingGuardTests
 {
@@ -38,20 +38,19 @@ public sealed class CsvUiParkingGuardTests
         Assert.DoesNotContain("handleModeChange", js, StringComparison.Ordinal);
     }
 
-    // --- Part 2: the server CSV endpoint stays mapped (feature parked, not removed). ---
+    // --- Part 2: the server CSV endpoint is removed from the controller. ---
 
     [Fact]
-    public void CsvEnrichEndpoint_IsStillMappedOnController()
+    public void CsvEnrichEndpoint_IsNotMappedOnController()
     {
-        var method = typeof(QueryController).GetMethod(
-            nameof(QueryController.CsvEnrich),
-            BindingFlags.Public | BindingFlags.Instance);
+        var templates = typeof(QueryController)
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Select(method => method.GetCustomAttribute<HttpPostAttribute>())
+            .Where(attribute => attribute?.Template is not null)
+            .Select(attribute => attribute!.Template!)
+            .ToList();
 
-        Assert.NotNull(method);
-
-        var httpPost = method!.GetCustomAttribute<HttpPostAttribute>();
-        Assert.NotNull(httpPost);
-        Assert.Equal("csv-enrich", httpPost!.Template);
+        Assert.DoesNotContain("csv-enrich", templates);
     }
 
     private static string ReadWebAsset(string relativePath)

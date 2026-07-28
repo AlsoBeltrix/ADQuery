@@ -45,19 +45,6 @@ public sealed class DirectorySecurityPolicyTests
         Assert.True(accepted.OperationsValid, string.Join(Environment.NewLine, accepted.SecurityErrors));
         Assert.False(rejected.OperationsValid);
         Assert.Contains(rejected.SecurityErrors, error => error.Contains("'mobile'", StringComparison.Ordinal));
-
-        var csvValidation = new CsvEnrichmentPlanValidator(
-            policy,
-            new CsvEnrichmentFilterEvaluator()).Validate(
-                new CsvEnrichmentPlan
-                {
-                    MatchColumn = "Employee",
-                    MatchAttribute = "employeeID",
-                    RetrieveAttributes = ["customAttribute"],
-                    OutputMode = "all"
-                },
-                ["Employee"]);
-        Assert.True(csvValidation.IsValid, string.Join(Environment.NewLine, csvValidation.Errors));
     }
 
     [Fact]
@@ -81,22 +68,6 @@ public sealed class DirectorySecurityPolicyTests
 
         Assert.True(accepted.OperationsValid, string.Join(Environment.NewLine, accepted.SecurityErrors));
         Assert.False(rejected.OperationsValid);
-
-        var csvValidation = new CsvEnrichmentPlanValidator(
-            policy,
-            new CsvEnrichmentFilterEvaluator()).Validate(
-                new CsvEnrichmentPlan
-                {
-                    MatchColumn = "Employee",
-                    MatchAttribute = "employeeID",
-                    RetrieveAttributes = ["displayName"],
-                    OutputMode = "all"
-                },
-                ["Employee"]);
-        Assert.False(csvValidation.IsValid);
-        Assert.Contains(
-            "match_attribute is not allow-listed for User directory queries.",
-            csvValidation.Errors);
     }
 
     [Fact]
@@ -141,17 +112,6 @@ public sealed class DirectorySecurityPolicyTests
         var policy = CreatePolicy(CreateConfiguration(), AppContext.BaseDirectory);
 
         Assert.Equal(expected, policy.IsFilterOperatorAllowed(operatorValue));
-    }
-
-    [Fact]
-    public void CsvEvaluatorCapabilities_AreAllAllowedByCanonicalPolicy()
-    {
-        var policy = CreatePolicy(CreateConfiguration(), AppContext.BaseDirectory);
-        var evaluator = new CsvEnrichmentFilterEvaluator();
-
-        Assert.All(
-            evaluator.SupportedOperators,
-            operatorValue => Assert.True(policy.IsFilterOperatorAllowed(operatorValue)));
     }
 
     [Fact]

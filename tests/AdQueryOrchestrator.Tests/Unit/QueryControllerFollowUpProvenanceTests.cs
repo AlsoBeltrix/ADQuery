@@ -135,10 +135,6 @@ public sealed class QueryControllerFollowUpProvenanceTests
             manager,
             builder,
             null!,
-            null!,
-            null!,
-            null!,
-            null!,
             null!)
         {
             ControllerContext = new ControllerContext
