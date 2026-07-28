@@ -27,6 +27,24 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddLlmProviderConfiguration(builder.Configuration);
 builder.Services.AddFollowUpConfiguration(builder.Configuration);
 
+// REQBODY-D1: independent transport request-body cap (2 MiB default), owned by the
+// host and unrelated to any feature. Under the current IIS in-process hosting model
+// IISServerOptions is authoritative; the Kestrel limit is inert in-process but
+// protects a future direct/Kestrel host. The host returns 413 for an over-cap body;
+// no application code path is required.
+// REQBODY-D1: independent transport request-body cap (2 MiB default), owned by the
+// host and unrelated to any feature. Under the current IIS in-process hosting model
+// IISServerOptions is authoritative; the Kestrel limit is inert in-process but
+// protects a future direct/Kestrel host. The host returns 413 for an over-cap body;
+// no application code path is required.
+var maxRequestBodyBytes = builder.Configuration.GetValue<long?>(
+    "RequestLimits:MaxRequestBodyBytes")
+    ?? 2L * 1024 * 1024;
+builder.Services.Configure<Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerOptions>(
+    options => options.Limits.MaxRequestBodySize = maxRequestBodyBytes);
+builder.Services.Configure<Microsoft.AspNetCore.Builder.IISServerOptions>(
+    options => options.MaxRequestBodySize = maxRequestBodyBytes);
+
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new Microsoft.OpenApi.OpenApiInfo

@@ -1,5 +1,15 @@
 # Settled Decisions
 
+## REQBODY-D1 — Restore an independent 2 MiB transport request-body cap
+
+- Status: Approved
+- Date: 2026-07-28
+- Authority: Repository owner ("yeah 2MB limit should suffice")
+- Decision: Restore a transport request-body-size limit of 2 MiB (2,097,152 bytes), owned by the application host and independent of any feature. Killing CSV enrichment (CSV-KILL-D1) also removed the P05 Slice 2 body cap, which had been sourced from the deleted CSV options and was the app's only request-body-size protection. Rather than leave the front door uncapped, a plain 2 MiB cap is restored so a single oversized request cannot exhaust server memory.
+- Scope: Wire the cap into `IISServerOptions.MaxRequestBodySize` (authoritative under the current IIS in-process hosting model) and `KestrelServerOptions.Limits.MaxRequestBodySize` (inert in-process; protects a future direct/Kestrel host), driven by a config knob `RequestLimits:MaxRequestBodyBytes` defaulting to 2 MiB. The host returns 413 for an over-cap body; no application code path is required. This is unrelated to `FollowUp:MaxContextBytes`, which bounds what a follow-up turn sends to the model per turn — the two knobs govern different things (raw front-door size vs. model exposure) and never move together.
+- Constraints: One concern, landed with a red→green guard proving the configured host body cap equals 2 MiB (a test that fails when the wiring is reverted to the host default of 30 MB). Passes `scripts/verify.ps1`.
+- Consequence: Resolves the open owner y/n left by CSV-KILL-D1. The app again rejects oversized requests at the host; 2 MiB comfortably exceeds any legitimate query/follow-up payload (the follow-up context transport guard is 2,000 code units).
+
 ## CSV-KILL-D1 — Remove the CSV enrichment feature entirely
 
 - Status: Approved
