@@ -217,8 +217,9 @@ public sealed class HeadlineRenderingTests
         }));
 
         await page.GotoAsync(_fixture.BaseAddress + "/");
-        await page.FillAsync("#queryText", "q");
-        await page.ClickAsync("#searchBtn");
+        // The floating chat is the sole query input (F02).
+        await page.FillAsync("#chatInput", "q");
+        await page.ClickAsync("#chatSend");
         return page;
     }
 }

@@ -30,16 +30,21 @@ public sealed class FollowUpContextTransmissionTests
         {
             var bodies = await StubFlowAndCaptureBodiesAsync(page);
 
-            // First query: no prior turn yet, so no previousJobId.
+            // First query: no prior turn yet, so no previousJobId. The floating
+            // chat is the sole query input (F02).
             await page.GotoAsync(_fixture.BaseAddress + "/");
-            await page.FillAsync("#queryText", "who is in group X");
-            await page.ClickAsync("#searchBtn");
+            await page.FillAsync("#chatInput", "who is in group X");
+            await page.ClickAsync("#chatSend");
             await Assertions.Expect(page.Locator("#headline")).ToBeVisibleAsync();
+            // The chat ignores a submit while a query is in flight, so wait for the
+            // first turn to settle before following up.
+            await Assertions.Expect(page.Locator("#chatLog .turn.bot.pending")).ToHaveCountAsync(0);
 
             // Follow-up query: must reference the completed first job.
-            await page.FillAsync("#queryText", "and in Dublin?");
-            await page.ClickAsync("#searchBtn");
+            await page.FillAsync("#chatInput", "and in Dublin?");
+            await page.ClickAsync("#chatSend");
             await Assertions.Expect(page.Locator("#headline")).ToBeVisibleAsync();
+            await Assertions.Expect(page.Locator("#chatLog .turn.bot.pending")).ToHaveCountAsync(0);
 
             Assert.Equal(2, bodies.Count);
 

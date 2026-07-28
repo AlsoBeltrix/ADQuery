@@ -23,31 +23,6 @@
         </div>
 
         <main>
-            <div class="search-card">
-                <!-- Natural Language Query Form -->
-                <form id="queryForm">
-                    <div class="input-group">
-                        <label for="queryText">What would you like to find?</label>
-                        <textarea
-                            id="queryText"
-                            placeholder="Examples:
-- Show me the first twelve contractors in Dublin (limited to 12)
-- Find all disabled user accounts (returns every match)
-- List the first 5 computers that have not logged in for 30 days
-- Who are the members of the Corp IS Employees Norwood group? (returns every member)
-- Show me all users in IT Digital Workplace Services (returns every user in that department)"
-                            rows="4"
-                            required
-                        ></textarea>
-                    </div>
-
-                    <button type="submit" class="search-btn" id="searchBtn">
-                        <span class="btn-text">Search Active Directory</span>
-                        <span class="btn-loading" aria-hidden="true">Searching...</span>
-                    </button>
-                </form>
-            </div>
-
             <div id="results" class="results-section" hidden>
                 <!-- F01 Slice B2: plain-language headline answer, leads the results -->
                 <div id="headline" class="headline" hidden></div>

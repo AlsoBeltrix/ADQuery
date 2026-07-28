@@ -1,11 +1,11 @@
 (() => {
-    const form = document.getElementById('queryForm');
-    if (!form) {
+    // The floating chat is the sole query input (F02). If it is absent, there is
+    // nothing to wire, so bail early (theme-only pages, tests of fragments).
+    const chatPanel = document.getElementById('chat');
+    if (!chatPanel) {
         return;
     }
 
-    const queryInput = document.getElementById('queryText');
-    const submitButton = document.getElementById('searchBtn');
     const resultsSection = document.getElementById('results');
     const resultInfo = document.getElementById('resultsInfo');
     const tableHead = document.getElementById('tableHead');
@@ -20,7 +20,7 @@
     const themeToggle = document.getElementById('themeToggle');
 
     // F01 Slice C3 — floating chat surface. See initChat() for wiring.
-    const chatPanel = document.getElementById('chat');
+    // chatPanel is resolved above (the sole-input guard).
     const chatLog = document.getElementById('chatLog');
     const chatForm = document.getElementById('chatForm');
     const chatInput = document.getElementById('chatInput');
@@ -40,6 +40,7 @@
         isLoading: false,
         formLocked: false,
         currentRequestId: null,
+        currentQuery: null,
         currentJobId: null,
         // F01 Slice C2 (FOLLOWUP-D2): the last completed job id, kept separate from the
         // in-flight currentJobId that hideResults/runQuery clear each run. A follow-up
@@ -56,11 +57,6 @@
     };
 
     initTheme();
-
-    form.addEventListener('submit', event => {
-        event.preventDefault();
-        runQuery();
-    });
 
     downloadButtons.forEach(button => {
         button.addEventListener('click', () => {
@@ -176,26 +172,18 @@
 
     function toggleFormEnabled(enabled) {
         const shouldEnable = enabled && !state.formLocked;
-        if (queryInput) {
-            queryInput.disabled = !shouldEnable;
+        // The chat composer is the sole input; enable/disable it in lock-step
+        // with query state so an in-flight or access-denied session can't submit.
+        if (chatInput) {
+            chatInput.disabled = !shouldEnable;
         }
-        if (submitButton) {
-            submitButton.disabled = !shouldEnable;
+        if (chatSend) {
+            chatSend.disabled = !shouldEnable;
         }
     }
 
     function setLoading(isLoading) {
         state.isLoading = isLoading;
-
-        const btnText = submitButton?.querySelector('.btn-text');
-        const btnLoading = submitButton?.querySelector('.btn-loading');
-
-        if (btnText) {
-            btnText.hidden = isLoading;
-        }
-        if (btnLoading) {
-            btnLoading.hidden = !isLoading;
-        }
 
         toggleFormEnabled(!isLoading);
         updateDownloadButtons();
@@ -256,16 +244,13 @@
         }
     }
 
-    async function runQuery() {
-        if (!queryInput) {
-            return;
-        }
-
-        const query = queryInput.value.trim();
+    async function runQuery(queryText) {
+        const query = (queryText || '').trim();
         if (!query) {
             showError('Please enter a query.');
             return;
         }
+        state.currentQuery = query;
 
         hideError();
         hideResults();
@@ -1081,15 +1066,10 @@
             return;
         }
 
-        // Drive the existing query path. runQuery reads the main form input, so
-        // mirror the question into it; the response resolves in the main panel.
-        if (queryInput) {
-            queryInput.value = query;
-        }
-
+        // Drive the shared query path; the response resolves in the main panel.
         appendChatExchange(query);
         chatInput.value = '';
-        runQuery();
+        runQuery(query);
     }
 
     function appendChatExchange(query) {
