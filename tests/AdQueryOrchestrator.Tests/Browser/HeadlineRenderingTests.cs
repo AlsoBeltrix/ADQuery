@@ -21,7 +21,7 @@ public sealed class HeadlineRenderingTests
     public HeadlineRenderingTests(StaticSiteFixture fixture) => _fixture = fixture;
 
     [Fact]
-    public async Task Count_RendersValueHero()
+    public async Task Count_RendersValueBlock()
     {
         var page = await RunQueryWithHeadlineAsync(
             headlineJson: """{"kind":"count","count":42}""",
@@ -32,13 +32,15 @@ public sealed class HeadlineRenderingTests
             var headline = page.Locator("#headline");
             await Assertions.Expect(headline).ToBeVisibleAsync();
 
-            var value = headline.Locator(".headline-value");
+            // F02 Slice 3: the count answer is the mockup value block (.block.value .v).
+            await Assertions.Expect(headline).ToHaveClassAsync(new System.Text.RegularExpressions.Regex(@"\bvalue\b"));
+            var value = headline.Locator(".v");
             await Assertions.Expect(value).ToBeVisibleAsync();
             await Assertions.Expect(value).ToHaveTextAsync("42");
 
-            // The value hero, not a record grid or grouped list.
+            // The value block, not a person grid or a grouped count+table.
             await Assertions.Expect(headline.Locator(".kv")).ToHaveCountAsync(0);
-            await Assertions.Expect(headline.Locator(".headline-groups")).ToHaveCountAsync(0);
+            await Assertions.Expect(headline.Locator("table.data")).ToHaveCountAsync(0);
         }
         finally
         {
@@ -47,7 +49,7 @@ public sealed class HeadlineRenderingTests
     }
 
     [Fact]
-    public async Task Record_RendersNameAndKvGrid()
+    public async Task Record_RendersPersonBlockWithKvGrid()
     {
         var page = await RunQueryWithHeadlineAsync(
             headlineJson: """{"kind":"record","record":{"displayName":"Jane Doe","department":"IT","title":"Engineer"}}""",
@@ -58,13 +60,16 @@ public sealed class HeadlineRenderingTests
             var headline = page.Locator("#headline");
             await Assertions.Expect(headline).ToBeVisibleAsync();
 
-            await Assertions.Expect(headline.Locator(".headline-name")).ToHaveTextAsync("Jane Doe");
+            // F02 Slice 3: the record answer is the mockup person block (.block.person .who).
+            await Assertions.Expect(headline).ToHaveClassAsync(new System.Text.RegularExpressions.Regex(@"\bperson\b"));
+            await Assertions.Expect(headline.Locator(".who")).ToHaveTextAsync("Jane Doe");
 
-            // The name is not repeated as a kv row; the other two fields are.
-            var keys = headline.Locator(".kv dt");
+            // The name is not repeated as a kv row; the other two fields are, each
+            // a .k label paired with its value cell in the grid.
+            var keys = headline.Locator(".kv .k");
             await Assertions.Expect(keys).ToHaveCountAsync(2);
-            var values = headline.Locator(".kv dd");
-            await Assertions.Expect(values).ToContainTextAsync(new[] { "IT", "Engineer" });
+            await Assertions.Expect(headline.Locator(".kv")).ToContainTextAsync("IT");
+            await Assertions.Expect(headline.Locator(".kv")).ToContainTextAsync("Engineer");
         }
         finally
         {
@@ -73,7 +78,7 @@ public sealed class HeadlineRenderingTests
     }
 
     [Fact]
-    public async Task Grouped_RendersBoundedList()
+    public async Task Grouped_RendersCountAndDataTable()
     {
         var page = await RunQueryWithHeadlineAsync(
             headlineJson: """{"kind":"grouped","count":30,"groups":[{"key":"IT","count":12},{"key":"HR","count":10},{"key":"Sales","count":8}]}""",
@@ -84,11 +89,17 @@ public sealed class HeadlineRenderingTests
             var headline = page.Locator("#headline");
             await Assertions.Expect(headline).ToBeVisibleAsync();
 
-            var items = headline.Locator(".headline-groups li");
-            await Assertions.Expect(items).ToHaveCountAsync(3);
-            await Assertions.Expect(headline.Locator(".headline-groups .group-key"))
-                .ToContainTextAsync(new[] { "IT", "HR", "Sales" });
-            await Assertions.Expect(headline.Locator(".headline-groups .group-count"))
+            // F02 Slice 3: the grouped answer leads with the total (.count) over a
+            // per-group breakdown rendered as the mockup table.data.
+            await Assertions.Expect(headline.Locator(".count")).ToContainTextAsync("30");
+
+            var rows = headline.Locator("table.data tbody tr");
+            await Assertions.Expect(rows).ToHaveCountAsync(3);
+            await Assertions.Expect(headline.Locator("table.data tbody"))
+                .ToContainTextAsync("IT");
+            await Assertions.Expect(headline.Locator("table.data tbody"))
+                .ToContainTextAsync("Sales");
+            await Assertions.Expect(headline.Locator("table.data tbody td.mono"))
                 .ToContainTextAsync(new[] { "12", "10", "8" });
         }
         finally
@@ -139,7 +150,7 @@ public sealed class HeadlineRenderingTests
             await Assertions.Expect(page.Locator("body")).ToHaveCSSAsync("background-color", "rgb(212, 210, 202)");
 
             // The headline survives the theme change.
-            await Assertions.Expect(page.Locator("#headline .headline-value")).ToHaveTextAsync("7");
+            await Assertions.Expect(page.Locator("#headline .v")).ToHaveTextAsync("7");
         }
         finally
         {

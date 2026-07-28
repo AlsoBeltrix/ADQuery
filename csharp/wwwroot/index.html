@@ -24,61 +24,65 @@
 
         <main>
             <div id="results" class="results-section" hidden>
-                <!-- F01 Slice B2: plain-language headline answer, leads the results -->
-                <div id="headline" class="headline" hidden></div>
+                <!-- F02 Slice 3: the plain-language answer, rendered as a mockup
+                     `.block` card (count/person/grouped) by app.js renderHeadline(). -->
+                <div id="headline" class="block" hidden></div>
 
-                <div class="results-header">
-                    <h3>Search Results</h3>
-                    <div class="results-info" id="resultsInfo"></div>
-                </div>
                 <ul class="warning-list" id="warningList" hidden></ul>
 
-                <div class="download-section" id="downloadSection" hidden>
-                    <p id="downloadStatus">Download full results as:</p>
-                    <div class="download-buttons">
-                        <button type="button" class="download-btn" data-download-format="csv">CSV</button>
-                        <button type="button" class="download-btn" data-download-format="excel">Excel</button>
-                        <button type="button" class="download-btn" data-download-format="html">HTML</button>
-                        <button type="button" class="download-btn" data-download-format="text">Plain Text</button>
+                <!-- Full data preview + downloads: their own `.block` card. The
+                     download formats are folded into the `.ops` pill row. -->
+                <div class="block">
+                    <div class="block-label">
+                        <span>Full results</span>
+                        <span class="idx" id="resultsInfo"></span>
                     </div>
-                </div>
 
-                <div class="aggregation-section" id="aggregationSection" hidden>
-                    <h4>Summary</h4>
-                    <p class="aggregation-message" id="aggregationMessage" hidden></p>
-                    <table class="aggregation-table">
-                        <thead id="aggregationHead">
-                        </thead>
-                        <tbody id="aggregationBody"></tbody>
-                    </table>
-                </div>
+                    <div class="aggregation-section" id="aggregationSection" hidden>
+                        <p class="aggregation-message" id="aggregationMessage" hidden></p>
+                        <table class="data" id="aggregationTable">
+                            <thead id="aggregationHead"></thead>
+                            <tbody id="aggregationBody"></tbody>
+                        </table>
+                    </div>
 
-                <div class="results-table-container">
-                    <table id="resultsTable" class="results-table">
-                        <thead id="tableHead"></thead>
-                        <tbody id="tableBody"></tbody>
-                    </table>
+                    <div class="results-table-container">
+                        <table id="resultsTable" class="data">
+                            <thead id="tableHead"></thead>
+                            <tbody id="tableBody"></tbody>
+                        </table>
+                    </div>
+
+                    <div class="ops" id="downloadSection" hidden>
+                        <span id="downloadStatus" class="sr-status" hidden>Download full results as:</span>
+                        <button type="button" class="op key" data-download-format="csv">Download CSV</button>
+                        <button type="button" class="op" data-download-format="excel">Excel</button>
+                        <button type="button" class="op" data-download-format="html">HTML</button>
+                        <button type="button" class="op" data-download-format="text">Plain Text</button>
+                    </div>
                 </div>
             </div>
 
-            <div id="feedbackSection" class="feedback-section" hidden>
-                <h3>Were these results helpful?</h3>
-                <div class="feedback-buttons">
-                    <button type="button" class="btn-feedback btn-positive" onclick="submitFeedback('Positive')">
-                        👍 Yes, this is helpful
+            <div id="feedbackSection" class="block feedback-section" hidden>
+                <div class="block-label">
+                    <span>Were these results helpful?</span>
+                </div>
+                <div class="ops feedback-buttons">
+                    <button type="button" class="op key btn-feedback btn-positive" onclick="submitFeedback('Positive')">
+                        👍 Helpful
                     </button>
-                    <button type="button" class="btn-feedback btn-negative" onclick="submitFeedback('Negative')">
-                        👎 No, not helpful
+                    <button type="button" class="op btn-feedback btn-negative" onclick="submitFeedback('Negative')">
+                        👎 Not helpful
                     </button>
                 </div>
 
                 <div id="negativeOptions" class="negative-options" hidden>
-                    <h4>What would you like to do?</h4>
-
-                    <button type="button" class="btn-retry" onclick="retryWithAlternateModel()">
-                        ♦️ Try again with another model
-                        <small>Uses a more powerful model for higher accuracy</small>
-                    </button>
+                    <div class="ops">
+                        <button type="button" class="op key btn-retry" onclick="retryWithAlternateModel()">
+                            ♦️ Try again with another model
+                        </button>
+                    </div>
+                    <p class="retry-hint">Uses a different model for a second opinion.</p>
 
                     <div class="comment-section">
                         <label for="feedbackComment">Tell us what was wrong (optional):</label>
@@ -87,14 +91,15 @@
                             placeholder="e.g., Returned too many people, Missing key information, Wrong interpretation..."
                             rows="3"
                         ></textarea>
-                        <button type="button" class="btn-submit-comment" onclick="submitComment()">
-                            Submit Feedback
-                        </button>
+                        <div class="ops">
+                            <button type="button" class="op key btn-submit-comment" onclick="submitComment()">
+                                Submit Feedback
+                            </button>
+                            <button type="button" class="op btn-cancel" onclick="closeFeedback()">
+                                Cancel
+                            </button>
+                        </div>
                     </div>
-
-                    <button type="button" class="btn-cancel" onclick="closeFeedback()">
-                        Cancel
-                    </button>
                 </div>
 
                 <div id="retryStatus" class="retry-status" hidden>

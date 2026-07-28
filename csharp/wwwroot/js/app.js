@@ -467,14 +467,15 @@
     }
 
     /**
-     * F01 Slice B2: renders the plain-language headline answer (the B1
-     * server-side contract) at the top of the result panel, per kind. It never
-     * replaces the authoritative download or the full data table beneath.
+     * F02 Slice 3: renders the plain-language headline answer (the B1
+     * server-side contract) as a mockup `.block` card leading the result panel,
+     * per kind (artifacts/mockups/qa-ui.html). It never replaces the
+     * authoritative download or the full data table beneath.
      *
      * Kinds (see Models/HeadlineResult.cs / HeadlineKind):
-     *   - "count"   → value hero (a single emphasised number)
-     *   - "record"  → person record .kv grid (single projected row)
-     *   - "grouped" → bounded grouped-count list
+     *   - "count"   → .block.value  (.v big number + .ctx context line)
+     *   - "record"  → .block.person (.who name + .kv grid)
+     *   - "grouped" → .block        (.count total + table.data breakdown)
      *   - "none"/absent → the headline block stays hidden
      */
     function renderHeadline(headline) {
@@ -485,6 +486,8 @@
 
         container.innerHTML = '';
         container.hidden = true;
+        // Reset to the base block; each kind adds its own modifier class.
+        container.className = 'block';
 
         const kind = headline && typeof headline.kind === 'string' ? headline.kind : 'none';
 
@@ -502,53 +505,68 @@
         container.hidden = false;
     }
 
-    function appendHeadlineLabel(container, text) {
-        const label = document.createElement('p');
-        label.className = 'headline-label';
-        label.textContent = text;
+    function appendBlockLabel(container, text, idx) {
+        const label = document.createElement('div');
+        label.className = 'block-label';
+        const main = document.createElement('span');
+        main.textContent = text;
+        label.appendChild(main);
+        if (idx) {
+            const idxEl = document.createElement('span');
+            idxEl.className = 'idx';
+            idxEl.textContent = idx;
+            label.appendChild(idxEl);
+        }
         container.appendChild(label);
     }
 
     function renderHeadlineCount(container, headline) {
+        container.classList.add('value');
         const count = typeof headline.count === 'number' ? headline.count : 0;
-        appendHeadlineLabel(container, count === 1 ? 'Match found' : 'Matches found');
+        appendBlockLabel(container, count === 1 ? 'Match found' : 'Matches found');
 
-        const value = document.createElement('span');
-        value.className = 'headline-value';
+        const value = document.createElement('div');
+        value.className = 'v';
         value.textContent = count.toLocaleString();
         container.appendChild(value);
+
+        const ctx = document.createElement('span');
+        ctx.className = 'ctx';
+        const label = count === 1 ? 'record' : 'records';
+        ctx.textContent = `${count.toLocaleString()} matching ${label}`;
+        container.appendChild(ctx);
     }
 
     function renderHeadlineRecord(container, headline) {
+        container.classList.add('person');
         const record = headline.record && typeof headline.record === 'object'
             ? headline.record
             : {};
         const entries = Object.entries(record);
 
-        appendHeadlineLabel(container, 'Record found');
+        appendBlockLabel(container, 'Single match', '1 record');
 
         // The record's display name leads; the remaining fields form the grid.
         const nameKey = pickRecordNameKey(record);
         if (nameKey) {
             const name = document.createElement('div');
-            name.className = 'headline-name';
+            name.className = 'who';
             name.textContent = formatCellValue(record[nameKey]);
             container.appendChild(name);
         }
 
-        const grid = document.createElement('dl');
+        const grid = document.createElement('div');
         grid.className = 'kv';
         entries
             .filter(([key]) => key !== nameKey)
             .forEach(([key, value]) => {
-                const pair = document.createElement('div');
-                const dt = document.createElement('dt');
-                dt.textContent = formatColumnName(key);
-                const dd = document.createElement('dd');
-                dd.textContent = formatCellValue(value);
-                pair.appendChild(dt);
-                pair.appendChild(dd);
-                grid.appendChild(pair);
+                const k = document.createElement('div');
+                k.className = 'k';
+                k.textContent = formatColumnName(key);
+                const v = document.createElement('div');
+                v.textContent = formatCellValue(value);
+                grid.appendChild(k);
+                grid.appendChild(v);
             });
         container.appendChild(grid);
     }
@@ -568,27 +586,44 @@
         const groups = Array.isArray(headline.groups) ? headline.groups : [];
         const total = typeof headline.count === 'number' ? headline.count : null;
 
-        appendHeadlineLabel(
-            container,
-            total !== null ? `${total.toLocaleString()} matches, grouped` : 'Grouped matches');
+        appendBlockLabel(container, 'Grouped matches', 'agg');
 
-        const list = document.createElement('ul');
-        list.className = 'headline-groups';
-        groups.forEach(group => {
-            const li = document.createElement('li');
-            const key = document.createElement('span');
-            key.className = 'group-key';
-            const rawKey = group && typeof group.key === 'string' ? group.key : '';
-            key.textContent = rawKey.length > 0 ? rawKey : '(empty)';
-            const count = document.createElement('span');
-            count.className = 'group-count';
-            const rawCount = group && typeof group.count === 'number' ? group.count : 0;
-            count.textContent = rawCount.toLocaleString();
-            li.appendChild(key);
-            li.appendChild(count);
-            list.appendChild(li);
+        const countEl = document.createElement('div');
+        countEl.className = 'count';
+        countEl.textContent = total !== null ? total.toLocaleString() : String(groups.length);
+        const small = document.createElement('small');
+        small.textContent = total === 1 ? 'matching record' : 'matching records';
+        countEl.appendChild(small);
+        container.appendChild(countEl);
+
+        const table = document.createElement('table');
+        table.className = 'data';
+        const thead = document.createElement('thead');
+        const headRow = document.createElement('tr');
+        ['Group', 'Count'].forEach(text => {
+            const th = document.createElement('th');
+            th.textContent = text;
+            headRow.appendChild(th);
         });
-        container.appendChild(list);
+        thead.appendChild(headRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        groups.forEach(group => {
+            const tr = document.createElement('tr');
+            const keyCell = document.createElement('td');
+            const rawKey = group && typeof group.key === 'string' ? group.key : '';
+            keyCell.textContent = rawKey.length > 0 ? rawKey : '(empty)';
+            const countCell = document.createElement('td');
+            countCell.className = 'mono';
+            const rawCount = group && typeof group.count === 'number' ? group.count : 0;
+            countCell.textContent = rawCount.toLocaleString();
+            tr.appendChild(keyCell);
+            tr.appendChild(countCell);
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        container.appendChild(table);
     }
 
     function renderAggregation(aggregation) {
