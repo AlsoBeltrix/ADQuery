@@ -20,6 +20,9 @@ Feature plans (the `F` namespace) capture net-new product direction, not finding
 | ID | Plan | Status |
 |---|---|---|
 | F01 | Conversational query experience (headline answer, follow-up chat, park CSV in UI) | Approved |
+| F02 | Main window matches the approved mockup | Done |
+| F03 | Deploy can never wipe the live API key | Done |
+| F04 | Genuine conversational answers (model writes the answer; delete destructive transform) | Draft |
 
 ## Plans
 
