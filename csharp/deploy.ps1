@@ -3,7 +3,14 @@ param(
     [string]$AppName     = "adquery",
     [string]$AppPoolName = "adquery_pool",
     [string]$TargetPath  = "D:\inetpub\adquery",
-    [switch]$Force
+    [switch]$Force,
+    # F03 Slice 2 / F03-D1: by default the deploy PRESERVES the deployed
+    # appsettings.json (neither the -Force cleanup nor the copy touches it), so a
+    # redeploy can never clobber deployed configuration. Pass -OverwriteConfig to
+    # deliberately replace it from the repo copy (e.g. when a config change such as
+    # a model-route swap ships). The live API key lives in the DPAPI store outside
+    # the web root (see New-AdQueryApiKeyStore.ps1), so it is never at risk either way.
+    [switch]$OverwriteConfig
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,13 +66,20 @@ if (Test-Path "IIS:\AppPools\$AppPoolName") {
     try { $_.Kill(); $_.WaitForExit() } catch {}
 }
 
-# Prepare target directory (preserve logs folder)
+# Files preserved through a -Force cleanup. logs is always kept; the deployed
+# appsettings.json is kept unless -OverwriteConfig was passed (F03-D1).
+$preserve = @("logs")
+if (-not $OverwriteConfig) {
+    $preserve += "appsettings.json"
+}
+
+# Prepare target directory (preserve logs folder; preserve config unless overwriting)
 Write-Host "Preparing target directory..." -ForegroundColor Yellow
 if (-not (Test-Path $TargetPath)) {
     New-Item -ItemType Directory -Path $TargetPath -Force | Out-Null
 } elseif ($Force) {
     [System.IO.Directory]::EnumerateFileSystemEntries($TargetPath) |
-        Where-Object { [System.IO.Path]::GetFileName($_) -ne "logs" } |
+        Where-Object { $preserve -notcontains [System.IO.Path]::GetFileName($_) } |
         ForEach-Object {
             try {
                 Remove-Item $_ -Recurse -Force
@@ -75,9 +89,21 @@ if (-not (Test-Path $TargetPath)) {
         }
 }
 
-# Copy files
+# Copy files. Exclude the deployed appsettings.json from the copy unless
+# -OverwriteConfig was passed, so a redeploy never clobbers deployed config.
 Write-Host "Copying files..." -ForegroundColor Yellow
-robocopy $publishDir $TargetPath /E /COPY:DAT /R:2 /W:2 | Out-Null
+if ($OverwriteConfig) {
+    Write-Host "  -OverwriteConfig: replacing deployed appsettings.json from the repo copy." -ForegroundColor Yellow
+    robocopy $publishDir $TargetPath /E /COPY:DAT /R:2 /W:2 | Out-Null
+} else {
+    if (Test-Path (Join-Path $TargetPath "appsettings.json")) {
+        Write-Host "  Preserving deployed appsettings.json (pass -OverwriteConfig to replace it)." -ForegroundColor Gray
+        robocopy $publishDir $TargetPath /E /COPY:DAT /R:2 /W:2 /XF appsettings.json | Out-Null
+    } else {
+        # No deployed config yet (first install): ship the repo copy so the app has one.
+        robocopy $publishDir $TargetPath /E /COPY:DAT /R:2 /W:2 | Out-Null
+    }
+}
 
 # Ensure logs directory exists
 $logsPath = Join-Path $TargetPath "logs"
