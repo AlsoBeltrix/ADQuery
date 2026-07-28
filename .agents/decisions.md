@@ -1,5 +1,23 @@
 # Settled Decisions
 
+## MODEL-D1 — Claude primary, gpt-5.5 alternate
+
+- Status: Approved
+- Date: 2026-07-28
+- Authority: Repository owner ("the alternate model returned 2 … that's better. swap the models back")
+- Decision: `Claude:Model` (primary) is `@gcp-vertexai-us-global-integration/anthropic.claude-opus-4-8`; `Claude:AlternateModel` (retry) is `@azure-openai-eus2-global/gpt-5.5-dzs`. Reverses commit 47daf22.
+- Evidence: On the owner's "who is the CFO?" query the Claude route returned 2 records (the current CFO plus a prior CFO whose account still exists) versus 7 from gpt-5.5; the tighter answer is preferred as the default. The wide-OR person search in `Configuration/prompt_template.txt` is the underlying cause of the over-matching and is not changed by this decision.
+- Consequence: Committed `1152036`. The deployed copy carries the swap only after a deploy that ships the repo `appsettings.json` (see F03-D1).
+
+## F03-D1 — Deployed appsettings.json is preserved by default on deploy
+
+- Status: Approved
+- Date: 2026-07-28
+- Authority: Repository owner
+- Decision: Once the Claude API key lives in the DPAPI store (F03 change A), the deployed `appsettings.json` is non-secret (model routes only). The deploy preserves the deployed copy by default — neither the `-Force` cleanup nor robocopy overwrites it — and requires an explicit `-OverwriteConfig` switch to replace it from the repo. Shipping a config change (e.g. the MODEL-D1 route swap) is a deliberate `-OverwriteConfig` run.
+- Scope: Governs `csharp/deploy.ps1` (F03 Slice 2). DPAPI is machine-scope (`DataProtectionScope.LocalMachine`); the store lives at `C:\ProgramData\ADQuery\claude-apikey.dat`, outside the web root, so no deploy touches the secret. Detail in `.agents/plans/F03-deploy-key-safety.md`.
+- Relationship to P15: F03 is the minimal targeted fix satisfying P15-D3's "no secret only inside the app directory" invariant; it does not implement or authorize the full P15 release-management rebuild.
+
 ## REQBODY-D1 — Restore an independent 2 MiB transport request-body cap
 
 - Status: Approved
