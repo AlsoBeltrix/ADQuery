@@ -48,7 +48,9 @@ public sealed class FollowUpContextBuilder : IFollowUpContextBuilder
         // whole-component drop) is the single bound; this builder only sources the three
         // last-turn components from the resolved prior job.
         return _enforcer.Compose(new FollowUpContextComponents(
-            Values: BuildValueSlice(previousJob.Aggregation),
+            Values: BuildValueSlice(
+                previousJob.Aggregation,
+                previousJob.Plan?.Projection?.Aggregation?.GroupBy?.Count ?? 1),
             PlanSummary: BuildPlanSummary(previousJob.Plan),
             PriorQuestion: BuildPriorQuestion(previousJob.Query)));
     }
@@ -78,7 +80,7 @@ public sealed class FollowUpContextBuilder : IFollowUpContextBuilder
         return parts.Count == 0 ? null : "Previous query: " + string.Join("; ", parts);
     }
 
-    private string? BuildValueSlice(IReadOnlyDictionary<string, object>? aggregation)
+    private string? BuildValueSlice(IReadOnlyDictionary<string, object>? aggregation, int groupByFieldCount)
     {
         if (aggregation is null ||
             !aggregation.TryGetValue("grouped_counts", out var raw) ||
@@ -88,10 +90,12 @@ public sealed class FollowUpContextBuilder : IFollowUpContextBuilder
             return null;
         }
 
+        // Keys are decoded before they leave for the model (slice1r2-or-2): the escaped
+        // composite is transport, and sending it would show the model altered AD values.
         var top = counts
             .OrderByDescending(pair => pair.Value)
             .Take(ValueSliceRowCap)
-            .Select(pair => $"{pair.Key}: {pair.Value}");
+            .Select(pair => $"{GroupKey.ToDisplay(pair.Key, groupByFieldCount)}: {pair.Value}");
 
         return "Previous results: " + string.Join(", ", top);
     }

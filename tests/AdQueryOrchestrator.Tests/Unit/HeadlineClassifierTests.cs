@@ -157,6 +157,42 @@ public sealed class HeadlineClassifierTests
         Assert.Equal("cat05", result.Groups[9].Key);
     }
 
+    // --- slice1r2-or-2: the stored key is transport, not display text. ---
+
+    [Fact]
+    public void MultiFieldGroupKey_IsDecodedForDisplay_NotShownAsRawTransport()
+    {
+        // The composite key escapes '|' and '\' so distinct combinations stay distinct
+        // (slice1-or-2). Passing it through verbatim showed the user an escaped, pipe-
+        // joined string and misrepresented directory values that contain a pipe.
+        var counts = new Dictionary<string, int>
+        {
+            [GroupKey.Compose(["R&D|Labs", "Boston"])] = 9,
+            [GroupKey.Compose(["IT", "Dublin"])] = 4,
+        };
+
+        var result = HeadlineClassifier.Classify(
+            AggregationPlan("department", "city"), 13, GroupedAggregation(counts), null);
+
+        Assert.NotNull(result.Groups);
+        Assert.Equal("R&D|Labs / Boston", result.Groups![0].Key);
+        Assert.Equal("IT / Dublin", result.Groups[1].Key);
+        Assert.DoesNotContain(result.Groups, group => group.Key.Contains('\\'));
+    }
+
+    [Fact]
+    public void SingleFieldGroupKey_IsShownVerbatim()
+    {
+        // A single-field key is never escaped, so decoding must not alter it — a value
+        // containing '|' or '\' stays exactly as the directory holds it.
+        var counts = new Dictionary<string, int> { [@"R&D|Labs\Boston"] = 6 };
+
+        var result = HeadlineClassifier.Classify(
+            AggregationPlan("department"), 6, GroupedAggregation(counts), null);
+
+        Assert.Equal(@"R&D|Labs\Boston", result.Groups![0].Key);
+    }
+
     // --- Non-vacuity: precedence actually discriminates. If the classifier were
     //     forced to a single branch, at least one of these expectations breaks. ---
 

@@ -48,7 +48,7 @@ public static class HeadlineClassifier
         }
 
         // 2. Grouped — the runtime aggregation carries grouped counts.
-        var groups = ExtractGroups(aggregation);
+        var groups = ExtractGroups(aggregation, plan?.Projection?.Aggregation?.GroupBy?.Count ?? 1);
         if (groups != null && groups.Count > 0)
         {
             return new HeadlineResult
@@ -80,10 +80,12 @@ public static class HeadlineClassifier
     /// <summary>
     /// Bounds the runtime <c>grouped_counts</c> to <see cref="MaxHeadlineGroups"/>
     /// with deterministic ordering (count descending, then key ascending).
-    /// Returns null when no grouped counts are present.
+    /// Returns null when no grouped counts are present. Keys are decoded for display
+    /// (slice1r2-or-2): the stored key is an escaped composite, not text to show.
     /// </summary>
     private static IReadOnlyList<HeadlineGroup>? ExtractGroups(
-        IReadOnlyDictionary<string, object>? aggregation)
+        IReadOnlyDictionary<string, object>? aggregation,
+        int groupByFieldCount)
     {
         if (aggregation == null ||
             !aggregation.TryGetValue("grouped_counts", out var raw) ||
@@ -97,7 +99,11 @@ public static class HeadlineClassifier
             .OrderByDescending(kvp => kvp.Value)
             .ThenBy(kvp => kvp.Key, System.StringComparer.Ordinal)
             .Take(MaxHeadlineGroups)
-            .Select(kvp => new HeadlineGroup { Key = kvp.Key, Count = kvp.Value })
+            .Select(kvp => new HeadlineGroup
+            {
+                Key = GroupKey.ToDisplay(kvp.Key, groupByFieldCount),
+                Count = kvp.Value,
+            })
             .ToList();
     }
 

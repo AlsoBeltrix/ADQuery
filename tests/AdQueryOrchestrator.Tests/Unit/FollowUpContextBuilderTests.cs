@@ -134,6 +134,37 @@ public sealed class FollowUpContextBuilderTests
     }
 
     [Fact]
+    public void BuildFromPreviousTurn_DecodesCompositeGroupKeys()
+    {
+        // slice1r2-or-2: the escaped composite key is transport. Sent verbatim, the model
+        // would be told the department is literally "R&D\|Labs|Boston" and could repeat
+        // that back as a directory value.
+        var builder = CreateBuilder();
+        var plan = new DirectoryQueryPlan
+        {
+            Description = "count users by department and city",
+            Projection = new ProjectionDefinition
+            {
+                Aggregation = new AggregationDefinition { Count = true, GroupBy = ["department", "city"] },
+            },
+        };
+        var aggregation = new Dictionary<string, object>
+        {
+            ["grouped_counts"] = new Dictionary<string, int>
+            {
+                [GroupKey.Compose(["R&D|Labs", "Boston"])] = 9,
+            },
+        };
+
+        var context = builder.BuildFromPreviousTurn(
+            CompletedJob("how many per department and city", plan, aggregation));
+
+        Assert.NotNull(context);
+        Assert.Contains("R&D|Labs / Boston: 9", context);
+        Assert.DoesNotContain(@"\|", context);
+    }
+
+    [Fact]
     public void BuildFromPreviousTurn_ResultFitsByteCap()
     {
         var builder = CreateBuilder(maxBytes: 200);

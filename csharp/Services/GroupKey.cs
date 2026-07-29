@@ -101,6 +101,14 @@ internal static class GroupKey
         return components;
     }
 
+    /// <summary>
+    /// Renders a key for a human or the model: escapes removed, components separated
+    /// readably (slice1r2-or-2). Every consumer that shows a group key — headline text,
+    /// follow-up context — goes through here, because the raw key is transport, not text.
+    /// </summary>
+    public static string ToDisplay(string key, int fieldCount)
+        => fieldCount <= 1 ? key : string.Join(" / ", Decompose(key, fieldCount));
+
     private static string EscapeComponent(string component)
     {
         if (component.IndexOf(Delimiter) < 0 && component.IndexOf(Escape) < 0)
