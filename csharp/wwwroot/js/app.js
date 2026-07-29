@@ -411,6 +411,7 @@
         state.lastCompletedJobId = job.jobId;
         state.recordCount = job.result.totalRows || 0;
 
+        renderAnswer(job.result.answer);
         renderHeadline(job.result.headline);
         renderWarnings(job.result.warnings);
         renderAggregation(job.result.aggregation);
@@ -464,6 +465,36 @@
         // the chat) and refresh the "refining last question" affordance now that a
         // completed turn exists to follow up on.
         resolveChatAnswer(job);
+    }
+
+    /**
+     * F04 Slice 3: leads the main window with the model's answer (the Slice 2
+     * Narrate string carried on the status DTO). Absent whenever Narrate failed,
+     * was skipped, or the job predates F04 — the block then stays hidden and the
+     * F01 headline leads the panel exactly as it did before.
+     */
+    function renderAnswer(answer) {
+        const container = document.getElementById('answer');
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML = '';
+        container.hidden = true;
+
+        const text = typeof answer === 'string' ? answer.trim() : '';
+        if (text.length === 0) {
+            return;
+        }
+
+        appendBlockLabel(container, 'Answer');
+
+        const prose = document.createElement('div');
+        prose.className = 'prose';
+        prose.textContent = text;
+        container.appendChild(prose);
+
+        container.hidden = false;
     }
 
     /**
@@ -1222,10 +1253,18 @@
         updateChatRefineVisibility();
     }
 
-    // A short plain-language answer echoed in the chat log, derived from the same
-    // headline contract the main panel renders. The panel remains authoritative.
+    // F04 Slice 3: the chat bubble carries the model's answer (Slice 2 Narrate).
+    // The code-templated headline summary below survives only as the fallback for
+    // a job that has no answer — Narrate failed, was skipped, or the job predates
+    // F04. The result panel remains authoritative for the detail either way.
     function summariseJobForChat(job) {
         const result = job && job.result ? job.result : null;
+
+        const answer = result && typeof result.answer === 'string' ? result.answer.trim() : '';
+        if (answer.length > 0) {
+            return answer;
+        }
+
         const headline = result ? result.headline : null;
         const kind = headline && typeof headline.kind === 'string' ? headline.kind : 'none';
 

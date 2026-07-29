@@ -499,6 +499,17 @@ footer li {
     font-weight: 400;
 }
 
+/* F04 Slice 3: the model-authored answer leads the panel above the headline.
+   Prose, so it reads at body size in the body face (FONT-D1 unchanged) — the
+   emphasis over the surrounding copy is weight and measure, never colour. */
+.answer .prose {
+    font-size: 1.15rem;
+    line-height: 1.55;
+    color: var(--text);
+    max-width: 62ch;
+    white-space: pre-wrap;
+}
+
 /* count kind → value hero: emphasis is size/weight, never colour. */
 .value .v {
     font-size: 2.6rem;
