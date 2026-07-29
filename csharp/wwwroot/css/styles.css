@@ -615,6 +615,15 @@ table.data .morerow td {
     margin-top: 1.4rem;
 }
 
+/*
+ * An author-declared `display` beats the UA sheet's `[hidden] { display: none }`, so
+ * `.ops` rows need this to honour the attribute at all. Load-bearing for the F04 Slice 4
+ * export affordance, which is withheld by setting `hidden` on the row.
+ */
+.ops[hidden] {
+    display: none;
+}
+
 .op {
     font-family: var(--sans);
     font-size: 0.85rem;
@@ -646,6 +655,24 @@ table.data .morerow td {
 .op.key:hover:not(:disabled) {
     background: var(--accent);
     color: var(--bg);
+}
+
+/*
+ * F04 Slice 4: a secondary pill row — present on every answer that has an
+ * exportable artifact, but never competing with the answer for attention. Quieter
+ * than a plain .op until pointed at; no .key member, since nothing here is the
+ * primary action of the response.
+ */
+.ops.secondary .op {
+    font-weight: 600;
+    color: var(--dim);
+    background: transparent;
+    padding: 0.35rem 0.9rem;
+}
+
+.ops.secondary .op:hover:not(:disabled) {
+    color: var(--accent);
+    background: var(--panel-2);
 }
 
 /* ==================== END F02 SLICE 3 ==================== */

@@ -443,7 +443,7 @@
             renderSummary({ recordCount: job.result.totalRows || 0 }, 0);
         }
 
-        showDownloadOptions();
+        showDownloadOptions(job.result.exportable === true);
 
         resultsSection.hidden = false;
         resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -937,8 +937,21 @@
         });
     }
 
-    function showDownloadOptions() {
+    /**
+     * F04 Slice 4: export is a permanent, unobtrusive affordance — but only on a
+     * response that IS a meaningful exportable artifact (a set or table). A one-line
+     * answer and a single-record answer gain nothing from a file, so the row stays
+     * away entirely. The server decides (`result.exportable`), because the question
+     * is about plan shape, not about what the browser happens to be displaying.
+     */
+    function showDownloadOptions(exportable) {
         if (!downloadSection) {
+            return;
+        }
+
+        if (!exportable) {
+            downloadSection.hidden = true;
+            updateDownloadButtons();
             return;
         }
 

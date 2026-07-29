@@ -1018,21 +1018,37 @@ public class QueryController : ControllerBase
                     ? (int)((job.NodesProcessed / (double)job.EstimatedTotal) * 100)
                     : 0
             } : null,
-            result = job.Status == JobStatus.Completed ? new
-            {
-                totalRows = job.TotalRows,
-                aggregation = BuildAggregationSummary(job),
-                headline = BuildHeadline(job),
-                // F04 Slice 2: only the model-authored answer string ships, never the raw
-                // model response and never rows. Absent when Narrate failed or was skipped.
-                answer = job.Answer,
-                warnings = job.Warnings.Any() ? job.Warnings : null,
-                downloadUrl = $"/api/query/download-async/{job.JobId}"
-            } : null,
+            result = job.Status == JobStatus.Completed ? BuildCompletedResult(job) : null,
             error = job.Status == JobStatus.Failed ? job.ErrorMessage : null
         };
 
         return Ok(response);
+    }
+
+    /// <summary>
+    /// The completed-job result payload. Built separately from the status envelope so the
+    /// headline is classified once and reused — the F04 Slice 4 export affordance is derived
+    /// from that same headline, so the two cannot disagree about the answer's shape.
+    /// </summary>
+    private object BuildCompletedResult(QueryJob job)
+    {
+        var headline = BuildHeadline(job);
+
+        return new
+        {
+            totalRows = job.TotalRows,
+            aggregation = BuildAggregationSummary(job),
+            headline,
+            // F04 Slice 4: export is offered only on a meaningful exportable artifact — a
+            // set or table — never on a one-line answer or a single record (owner rule
+            // 2026-07-28). Plan shape decides, so the server decides.
+            exportable = ExportAffordance.HasExportableArtifact(job.Plan, job.TotalRows ?? 0, headline),
+            // F04 Slice 2: only the model-authored answer string ships, never the raw
+            // model response and never rows. Absent when Narrate failed or was skipped.
+            answer = job.Answer,
+            warnings = job.Warnings.Any() ? job.Warnings : null,
+            downloadUrl = $"/api/query/download-async/{job.JobId}"
+        };
     }
 
     /// <summary>
