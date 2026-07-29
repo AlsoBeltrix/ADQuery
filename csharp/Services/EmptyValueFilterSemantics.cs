@@ -26,6 +26,18 @@ internal static class EmptyValueFilterSemantics
     /// <summary>The legacy attribute whose <c>equals ""</c> means "never expires".</summary>
     private const string AccountExpirationDate = "AccountExpirationDate";
 
+    private const string Enabled = "Enabled";
+
+    /// <summary>
+    /// Attributes the search layer <em>synthesizes</em> onto every record it returns rather
+    /// than reading verbatim from the directory: <c>ActiveDirectoryService.MapToRecord</c>
+    /// derives <c>Enabled</c> from <c>userAccountControl</c> and <c>AccountExpirationDate</c>
+    /// from <c>accountExpires</c>, defaulting the latter to the literal "Never". Both
+    /// therefore always carry a value, so "is this attribute populated" is unconditionally
+    /// true for them — see <see cref="IsAlwaysPopulatedAttribute"/>.
+    /// </summary>
+    private static readonly string[] SynthesizedAttributes = [Enabled, AccountExpirationDate];
+
     public static bool IsNegationOperator(string? operatorValue)
         => operatorValue is not null &&
            operatorValue.Trim().StartsWith("not_", StringComparison.OrdinalIgnoreCase);
@@ -38,6 +50,19 @@ internal static class EmptyValueFilterSemantics
         => !string.IsNullOrWhiteSpace(attribute) &&
            string.IsNullOrWhiteSpace(value) &&
            IsNegationOperator(operatorValue);
+
+    /// <summary>
+    /// True for an attribute the search layer synthesizes onto every record, which is
+    /// therefore populated on every record (slice5-or-1). Callers must answer the
+    /// populated-attribute question for these with an unconditional yes: the special-cased
+    /// clause builders would otherwise answer a different question entirely — the
+    /// <c>Enabled</c> builder reads a blank value as "disabled" and the
+    /// <c>AccountExpirationDate</c> builder reads it as "never expires", so
+    /// <c>not_equals ""</c> would return only enabled, or only expired, accounts.
+    /// </summary>
+    public static bool IsAlwaysPopulatedAttribute(string? attribute)
+        => attribute is not null &&
+           SynthesizedAttributes.Contains(attribute.Trim(), StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Whether a filter may carry an empty value at all — the gate the validator and both

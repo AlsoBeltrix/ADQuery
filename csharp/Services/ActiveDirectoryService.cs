@@ -422,11 +422,32 @@ public class ActiveDirectoryService : IActiveDirectoryService
         };
     }
 
-    private static string BuildFilterClause(DirectoryFilter filter)
+    /// <summary>
+    /// Renders one filter as an LDAP clause. Internal rather than private so the clause text
+    /// can be asserted directly: the LDAP layer decides which records ever reach the process,
+    /// so a wrong clause here cannot be corrected by any later in-memory pass (slice5-or-1).
+    /// </summary>
+    internal static string BuildFilterClause(DirectoryFilter filter)
     {
         if (filter.Conditions is { Count: > 0 })
         {
             return BuildCompoundFilterClause(filter);
+        }
+
+        // "Attribute is populated" (F04-D3) is settled before the attribute-specific
+        // builders below, which read a blank value as a different question entirely —
+        // "disabled" and "never expires" respectively (slice5-or-1). LDAP presence is
+        // (attr=*); the naive (!(attr=**)) an empty value would otherwise produce is not the
+        // same predicate, and for not_equals it would be (!(attr=)) — an invalid filter.
+        if (EmptyValueFilterSemantics.IsPopulatedAttributeFilter(
+                filter.Attribute, filter.Operator, filter.Value))
+        {
+            // Enabled and AccountExpirationDate are synthesized onto every record, so they
+            // are populated on every record; there is no real LDAP attribute of that name to
+            // test for presence. (objectClass=*) is the everything clause.
+            return EmptyValueFilterSemantics.IsAlwaysPopulatedAttribute(filter.Attribute)
+                ? "(objectClass=*)"
+                : $"({filter.Attribute}=*)";
         }
 
         if (filter.Attribute.Equals("Enabled", StringComparison.OrdinalIgnoreCase))
@@ -437,15 +458,6 @@ public class ActiveDirectoryService : IActiveDirectoryService
         if (filter.Attribute.Equals("AccountExpirationDate", StringComparison.OrdinalIgnoreCase))
         {
             return BuildAccountExpirationDateFilterClause(filter);
-        }
-
-        // "Attribute is populated" (F04-D3). LDAP presence is (attr=*); the naive
-        // (!(attr=**)) an empty value would otherwise produce is not the same predicate,
-        // and for not_equals it would be (!(attr=)) — an invalid filter string.
-        if (EmptyValueFilterSemantics.IsPopulatedAttributeFilter(
-                filter.Attribute, filter.Operator, filter.Value))
-        {
-            return $"({filter.Attribute}=*)";
         }
 
         var attribute = filter.Attribute;

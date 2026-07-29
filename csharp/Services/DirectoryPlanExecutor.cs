@@ -1445,14 +1445,15 @@ internal sealed class DirectoryPlanRuntime
         // MatchesBaseOperator short-circuits contains/starts_with/ends_with to true on an
         // empty value, so under negation those three would match nothing — the inverse of
         // what the filter means.
-        // The populated-attribute reading is settled before generic dispatch (f04-or-5):
-        // MatchesBaseOperator short-circuits contains/starts_with/ends_with to true on an
-        // empty value, so under negation those three would match nothing — the inverse of
-        // what the filter means.
         if (EmptyValueFilterSemantics.IsPopulatedAttributeFilter(
                 filter.Attribute, operatorValue, filter.Value))
         {
-            return EmptyValueFilterSemantics.HasPopulatedValue(record, filter.Attribute);
+            // A synthesized attribute is present on every record, so it is populated on
+            // every record — the same answer the LDAP clause builder gives (slice5-or-1).
+            // Asking HasPopulatedValue instead would drop records the search already
+            // returned, whenever the attribute was not among those requested.
+            return EmptyValueFilterSemantics.IsAlwaysPopulatedAttribute(filter.Attribute) ||
+                   EmptyValueFilterSemantics.HasPopulatedValue(record, filter.Attribute);
         }
 
         var isNegated = operatorValue.StartsWith("not_");

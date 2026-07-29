@@ -3,7 +3,7 @@
 **Severity**: HIGH — `Enabled not_equals ""` and `AccountExpirationDate not_equals ""` return a
 wrong, silently plausible subset of the directory rather than every populated record, and the
 records excluded at the LDAP layer cannot be recovered by the later in-memory pass.
-**Status**: Open
+**Status**: Verified
 **Branch**: — (repo works on `master`; one commit per finding)
 **Commit**: `<git-sha>` (filled in after commit)
 
@@ -42,26 +42,64 @@ for exactly those two attributes the F04-D3 semantics silently do not apply, and
 answer is produced at the LDAP layer where nothing downstream can correct it.
 
 ## Approach
-_(to be completed when the fix lands)_
+The root cause is named rather than patched around: `Enabled` and `AccountExpirationDate` are
+attributes the search layer **synthesizes** onto every record, so "is this attribute
+populated" is unconditionally true for them. `EmptyValueFilterSemantics` — already the single
+owner of the empty-value reading — gains `IsAlwaysPopulatedAttribute` stating that fact once,
+and both evaluators consult it. In `BuildFilterClause` the populated-attribute branch now runs
+**ahead of** the two attribute-specific builders (ordering was the proximate defect) and emits
+`(objectClass=*)`, the everything clause, for a synthesized attribute — there is no real LDAP
+attribute of that name whose presence could be tested. `RecordMatchesFilter` short-circuits the
+same way, because a search that never requested the attribute leaves the record without it and
+`HasPopulatedValue` would then drop rows the LDAP clause had admitted. Filters carrying a real
+value still reach the special-cased builders untouched.
+
+Also removed a duplicated four-line comment block in `RecordMatchesFilter` left by `0ef62aa`.
 
 ## Files changed
-_(to be completed when the fix lands)_
+- `csharp/Services/EmptyValueFilterSemantics.cs:26-40,55-66` — the `SynthesizedAttributes` set
+  and `IsAlwaysPopulatedAttribute`, with the derivation documented at the declaration
+- `csharp/Services/ActiveDirectoryService.cs:425-455` — populated branch moved ahead of the
+  `Enabled` / `AccountExpirationDate` builders; `(objectClass=*)` for synthesized attributes;
+  `BuildFilterClause` made `internal` so the clause text is directly assertable
+- `csharp/Services/DirectoryPlanExecutor.cs:1444-1457` — in-memory evaluator agrees; duplicated
+  comment block removed
+- `tests/AdQueryOrchestrator.Tests/Unit/SynthesizedAttributePopulatedFilterTests.cs` — new, 11 tests
 
 ## Guard proof
-_(to be completed when the fix lands)_
+- `SynthesizedAttributePopulatedFilterTests` — reverted in two independent halves, because the
+  fix has two halves and a single revert would have left one of them unguarded:
+  - Restore the original ordering (guard the populated branch with
+    `!IsAlwaysPopulatedAttribute(...)`, so synthesized attributes fall through to their
+    special-cased builders exactly as before): **7 tests FAIL** —
+    `PopulatedFilter_OnASynthesizedAttribute_MatchesEveryRecord` (both attributes),
+    `EveryNegationOperator_ReadsTheSameOnASynthesizedAttribute` (all four operators), and
+    `CompoundFilters_CarryThePopulatedReadingIntoChildren`. Restored → pass.
+  - Drop `IsAlwaysPopulatedAttribute` from `RecordMatchesFilter`, leaving
+    `HasPopulatedValue` alone: **2 tests FAIL** —
+    `InMemoryEvaluation_AgreesWithTheLdapClause` for both attributes. Restored → pass.
+  - `OrdinaryAttributes_StillUsePresence_AndAreNotAlwaysPopulated` and
+    `FiltersCarryingARealValue_KeepTheirSpecialCasedClauses` are the over-removal sentinels:
+    `manager not_equals ""` must stay `(manager=*)`, and a filter with a real value must still
+    reach the `userAccountControl` / `accountExpires` builders.
+- Canonical verification: `pwsh -NoLogo -NoProfile -File scripts/verify.ps1` — passed,
+  234 tests, 0 warnings, published smoke passed, audit clean.
 
 ## Coder dispute (if any)
 None. Verified against code; admitted as written.
 
 ## Known gaps
-Whether `Enabled` should participate in the populated reading at all is a semantic question:
-`Enabled` is a **synthesized** attribute (`ActiveDirectoryService.cs:626-627` derives it from
-`userAccountControl`) and is therefore populated for every user object, so a correct
-"populated" answer is "all of them". `AccountExpirationDate` is likewise synthesized
-(`:630-637`, defaulting to the literal `"Never"`). Either is defensible as (a) ordering the
-populated check first and emitting a presence clause on the *underlying* real attribute, or
-(b) explicitly declining the populated reading for synthesized attributes. Overlaps
-`slice5-or-2`, which concerns the same synthesized-value mismatch on the in-memory side.
+The semantic question the fix had to settle: `Enabled` and `AccountExpirationDate` are
+synthesized (`ActiveDirectoryService.cs:623-637`; the latter defaults to the literal `"Never"`),
+so they are populated on every record and the correct answer to "which records have this
+populated" is "all of them". That is what the fix returns. The alternative — testing presence
+of the *underlying* real attribute (`userAccountControl` / `accountExpires`) — was rejected as
+answering a question the user did not ask: those are populated on essentially every object too,
+and the filter names the synthesized attribute, not the raw one.
+
+`slice5-or-2` remains open. It shares the synthesized-value root cause but fails on a different
+operator (`equals`) at a different layer (in-memory literal comparison against `"Never"`), and
+is fixed separately per the one-finding-per-commit rule.
 
 ## Reviewer comments
 `Reviewer: codex / gpt-5.6-sol / xhigh / frontier` — openreview Slice 5 round 1, inline
