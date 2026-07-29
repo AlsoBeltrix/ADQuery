@@ -1,5 +1,16 @@
 # Settled Decisions
 
+## F04-D1 — Two model calls per turn: Translate then Narrate
+
+- Status: Approved
+- Date: 2026-07-29
+- Authority: Repository owner ("yes", to the one-line ask "Add the second call?")
+- Decision: A conversational turn makes two model calls with distinct jobs. **Translate** reads the conversation and emits one complete `DirectoryQueryPlan` (this is the existing `GenerateExecutionPlanAsync` call). **Narrate** runs after the engine has executed and reduced the result, and the model writes the answer text from that bounded reduction. Narrate is the only point at which the model sees what Active Directory actually returned.
+- Scope: Narrate's input is the server-derived bounded reduction — the `HeadlineResult` (a scalar count, one record, or ≤10 grouped buckets) plus the scalar distribution summary required by F04-OR-3 — under a byte cap. It never receives result rows, the full set, or the on-disk artifact. Both calls run through the existing route-neutral `LlmMessagesRequestBuilder`/`ClaudeService` machinery (MODEL-D1, P02-D1); neither opens a second HTTP path. Narrate failure must not fail the query: the job still completes with headline, table, and export, and the answer field is simply absent.
+- Evidence: The chat answer is currently assembled by the code template `summariseJobForChat` (`csharp/wwwroot/js/app.js:1171`), e.g. "42 matches. See the result panel." Deployed job `bc623ae0` ("how many users roll up to Sanjay Abhyankar") shows the cost: the model's own plan description said "Count all users…", the answer 77 existed in the log, and the user was handed a 77-row CSV to count themselves.
+- Distinction from the rejected design: an earlier F04 draft proposed a second call that *reformatted* the first call's output, which the owner rejected as the wrong shape. These two calls do different jobs — words→structure, then reduced-data→words — and without the second the model must commit to answer wording before the data exists, so it cannot react when the data is degenerate.
+- Consequence: One extra call's latency and tokens per turn, accepted by the owner. Implemented by F04 Slice 2; `.agents/plans/F04-genuine-conversational-answers.md` D1 is ruled.
+
 ## MODEL-D1 — Claude primary, gpt-5.5 alternate
 
 - Status: Approved
