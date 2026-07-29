@@ -56,16 +56,19 @@ public class InMemoryQueryJobStore : IQueryJobStore
         }
     }
 
-    public void SetCompleted(string jobId, int totalRows, Dictionary<string, object>? aggregation, List<string> warnings, string resultsCacheKey)
+    public void SetCompleted(string jobId, int totalRows, Dictionary<string, object>? aggregation, List<string> warnings, string resultsCacheKey, string? answer = null)
     {
         if (_jobs.TryGetValue(jobId, out var job))
         {
-            job.Status = JobStatus.Completed;
-            job.CompletedAt = DateTime.UtcNow;
             job.TotalRows = totalRows;
             job.Aggregation = aggregation;
             job.Warnings = warnings ?? new List<string>();
             job.ResultsCacheKey = resultsCacheKey;
+            job.Answer = answer;
+
+            // Status last: a reader that sees Completed sees a fully populated job.
+            job.CompletedAt = DateTime.UtcNow;
+            job.Status = JobStatus.Completed;
         }
     }
 

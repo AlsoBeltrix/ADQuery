@@ -30,6 +30,7 @@ public sealed class QueryJobManagerContextEnforcementTests
             NullLogger<QueryJobManager>.Instance,
             new PlanPreprocessor(configuration),
             enforcer,
+            new AnswerReductionBuilder(Options.Create(new AnswerOptions())),
             configuration);
     }
 

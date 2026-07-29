@@ -14,7 +14,38 @@ public interface IClaudeService
         CancellationToken cancellationToken = default,
         string? modelOverride = null);
 
+    /// <summary>
+    /// Narrate (F04 Slice 2, F04-D1): the second model call of a turn. Writes the answer
+    /// text from an already-bounded server-built reduction — never rows, never the full
+    /// result set. The caller owns the bound; this method only transmits what it is given.
+    /// Failure is returned, never thrown, because Narrate must not fail the query.
+    /// </summary>
+    Task<ClaudeAnswerResponse> GenerateAnswerAsync(
+        string reduction,
+        CancellationToken cancellationToken = default,
+        string? modelOverride = null);
+
     Task<ClaudeHealthResult> CheckHealthAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Response from the Narrate call (F04 Slice 2). Carries the model-authored answer text
+/// only; the raw provider response is logged, never shipped to the browser.
+/// </summary>
+public class ClaudeAnswerResponse
+{
+    public bool Success { get; set; }
+
+    /// <summary>The model-authored answer. Null on any failure.</summary>
+    public string? Answer { get; set; }
+
+    public string? ErrorMessage { get; set; }
+
+    public TokenUsage TokenUsage { get; set; } = new();
+
+    public long ResponseTimeMs { get; set; }
+
+    public string? ModelUsed { get; set; }
 }
 
 /// <summary>

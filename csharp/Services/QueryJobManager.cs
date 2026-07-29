@@ -23,6 +23,7 @@ public class QueryJobManager : IQueryJobManager
     private readonly ILogger<QueryJobManager> _logger;
     private readonly IPlanPreprocessor _planPreprocessor;
     private readonly IFollowUpContextEnforcer _followUpContextEnforcer;
+    private readonly IAnswerReductionBuilder _answerReductionBuilder;
     private readonly int _maxJobsPerUser;
 
     // Server-generated internal control directive appended to a job's context to force a
@@ -37,6 +38,7 @@ public class QueryJobManager : IQueryJobManager
         ILogger<QueryJobManager> logger,
         IPlanPreprocessor planPreprocessor,
         IFollowUpContextEnforcer followUpContextEnforcer,
+        IAnswerReductionBuilder answerReductionBuilder,
         IConfiguration configuration)
     {
         _store = store;
@@ -44,6 +46,7 @@ public class QueryJobManager : IQueryJobManager
         _logger = logger;
         _planPreprocessor = planPreprocessor;
         _followUpContextEnforcer = followUpContextEnforcer;
+        _answerReductionBuilder = answerReductionBuilder;
         _maxJobsPerUser = Math.Max(0, configuration.GetValue<int>("Jobs:MaxJobsPerUser", 0));
     }
 
@@ -348,12 +351,15 @@ public class QueryJobManager : IQueryJobManager
             var aggregation = ComputeSettledAggregation(
                 job.Plan, result.Data, result.GroupValues, result.Warnings);
 
+            var answer = await NarrateAsync(job, claude, aggregation, result, modelOverride, jobToken);
+
             _store.SetCompleted(
                 jobId,
                 result.Data.Count,
                 aggregation,
                 result.Warnings,
-                resultsCacheKey);
+                resultsCacheKey,
+                answer);
 
             WriteJobLog(success: true, recordCount: result.Data.Count, warnings: result.Warnings, errorMessage: null);
 
@@ -374,6 +380,66 @@ public class QueryJobManager : IQueryJobManager
             _store.UpdateStatus(jobId, JobStatus.Failed, ex.Message);
             _logger.LogError(ex, "Job {JobId} failed with exception", jobId);
             WriteJobLog(success: false, recordCount: 0, warnings: null, errorMessage: ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Narrate (F04 Slice 2, F04-D1): the second model call of a turn. Builds the bounded
+    /// reduction server-side and asks the model to write the answer from it.
+    ///
+    /// Additive and isolated: every failure path — a null builder, an over-cap reduction,
+    /// a provider error, a timeout, an unexpected exception — returns null, and the job
+    /// completes with headline, table, and export exactly as it did before. Narrate is
+    /// never a new way for a query to fail. Cancellation is the one exception: it belongs
+    /// to the job and propagates.
+    /// </summary>
+    private async Task<string?> NarrateAsync(
+        QueryJob job,
+        IClaudeService claude,
+        Dictionary<string, object>? aggregation,
+        PlanExecutionResult result,
+        string? modelOverride,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var totalRows = result.Data.Count;
+            var firstRow = totalRows == 1 && result.Data.Count > 0
+                ? result.Data[0]
+                : null;
+
+            var headline = HeadlineClassifier.Classify(job.Plan, totalRows, aggregation, firstRow);
+            var distribution = DistributionSummarizer.Summarize(
+                aggregation,
+                job.Plan?.Projection?.Aggregation?.GroupBy?.Count ?? 1,
+                totalRows);
+
+            var reduction = _answerReductionBuilder.Build(job.Query, job.Plan, headline, distribution);
+            if (string.IsNullOrWhiteSpace(reduction))
+            {
+                _logger.LogWarning(
+                    "Job {JobId} produced no composable answer reduction; completing without an answer", job.JobId);
+                return null;
+            }
+
+            var response = await claude.GenerateAnswerAsync(reduction, cancellationToken, modelOverride);
+            if (!response.Success || string.IsNullOrWhiteSpace(response.Answer))
+            {
+                _logger.LogWarning(
+                    "Job {JobId} answer generation failed: {Error}", job.JobId, response.ErrorMessage);
+                return null;
+            }
+
+            return response.Answer;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Job {JobId} answer generation threw; completing without an answer", job.JobId);
+            return null;
         }
     }
 

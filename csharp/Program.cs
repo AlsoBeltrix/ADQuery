@@ -26,6 +26,7 @@ builder.Services.AddControllers()
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddLlmProviderConfiguration(builder.Configuration);
 builder.Services.AddFollowUpConfiguration(builder.Configuration);
+builder.Services.AddAnswerConfiguration(builder.Configuration);
 
 // REQBODY-D1: independent transport request-body cap (2 MiB default), owned by the
 // host and unrelated to any feature. Under the current IIS in-process hosting model
@@ -88,6 +89,7 @@ builder.Services.AddSingleton<IQueryJobStore, InMemoryQueryJobStore>();
 builder.Services.AddSingleton<IQueryJobQueue, InMemoryQueryJobQueue>();
 builder.Services.AddSingleton<IFollowUpContextEnforcer, FollowUpContextEnforcer>();
 builder.Services.AddSingleton<IFollowUpContextBuilder, FollowUpContextBuilder>();
+builder.Services.AddSingleton<IAnswerReductionBuilder, AnswerReductionBuilder>();
 builder.Services.AddSingleton<IQueryJobManager, QueryJobManager>();
 builder.Services.AddHostedService<QueryJobExecutorHostedService>();
 

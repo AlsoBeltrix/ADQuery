@@ -22,6 +22,13 @@ internal sealed class ClaudeService : IClaudeService
     private readonly LlmProviderOptions _providerOptions;
     private readonly LlmMessagesRequestBuilder _requestBuilder;
     private readonly string? _promptTemplate;
+    private readonly string? _answerPromptTemplate;
+
+    /// <summary>
+    /// Narrate writes one to three sentences (F04 Slice 2); the plan-generation budget is
+    /// sized for a whole JSON plan and is far larger than this call can use.
+    /// </summary>
+    private const int AnswerMaxTokens = 500;
 
     public ClaudeService(
         HttpClient httpClient,
@@ -75,6 +82,21 @@ internal sealed class ClaudeService : IClaudeService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to load prompt template from {Path}, using built-in template", promptTemplatePath);
+            }
+        }
+
+        var answerTemplatePath = _providerOptions.AnswerPromptTemplate
+            ?? "Configuration/answer_prompt_template.txt";
+        if (File.Exists(answerTemplatePath))
+        {
+            try
+            {
+                _answerPromptTemplate = File.ReadAllText(answerTemplatePath);
+                _logger.LogInformation("Loaded answer prompt template from {Path}", answerTemplatePath);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to load answer prompt template from {Path}, using built-in template", answerTemplatePath);
             }
         }
     }
@@ -221,6 +243,129 @@ internal sealed class ClaudeService : IClaudeService
         {
             response.Success = false;
             response.ErrorMessage = "Error generating directory plan.";
+            LogProviderException(endpoint, effectiveModel, ex);
+        }
+        finally
+        {
+            stopwatch.Stop();
+            response.ResponseTimeMs = stopwatch.ElapsedMilliseconds;
+        }
+
+        return response;
+    }
+
+    public async Task<ClaudeAnswerResponse> GenerateAnswerAsync(
+        string reduction,
+        CancellationToken cancellationToken = default,
+        string? modelOverride = null)
+    {
+        var response = new ClaudeAnswerResponse();
+        var stopwatch = Stopwatch.StartNew();
+        var effectiveModel = !string.IsNullOrWhiteSpace(modelOverride)
+          ? modelOverride
+          : _providerOptions.Model ?? "claude-3-sonnet-20240229";
+        var endpoint = _providerOptions.Endpoint ?? "/v1/messages";
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(reduction))
+            {
+                response.Success = false;
+                response.ErrorMessage = "The answer reduction was empty.";
+                return response;
+            }
+
+            if (string.IsNullOrWhiteSpace(_providerOptions.ApiKey))
+            {
+                response.Success = false;
+                response.ErrorMessage = "Claude API key is not configured.";
+                _logger.LogWarning("Cannot narrate an answer because Claude API key is missing.");
+                return response;
+            }
+
+            var prompt = BuildAnswerPrompt(reduction);
+
+            // Route-neutral, same builder and same HTTP path as Translate (MODEL-D1,
+            // P02-D1): Narrate never opens a second provider path. The system slot is
+            // empty because every instruction Narrate needs is in the template — the
+            // plan-generation schema guidance would be actively misleading here.
+            var claudeRequest = _requestBuilder.Build(
+                effectiveModel,
+                AnswerMaxTokens,
+                string.Empty,
+                prompt);
+
+            var requestJson = JsonSerializer.Serialize(claudeRequest);
+            using var apiRequest = new HttpRequestMessage(HttpMethod.Post, endpoint)
+            {
+                Content = new StringContent(requestJson, Encoding.UTF8, "application/json")
+            };
+            using var apiResponse = await _httpClient.SendAsync(
+                apiRequest,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+
+            if (!apiResponse.IsSuccessStatusCode)
+            {
+                var errorBody = await LlmProviderErrorParser.ReadBoundedBodyAsync(
+                    apiResponse.Content,
+                    cancellationToken);
+                var errorDetails = LlmProviderErrorParser.Parse(
+                    errorBody,
+                    LlmProviderErrorParser.GetCorrelationId(apiResponse),
+                    [
+                        _providerOptions.ApiKey,
+                        _providerOptions.AuthToken,
+                        reduction,
+                        prompt,
+                        requestJson
+                    ]);
+
+                response.Success = false;
+                response.ErrorMessage =
+                    $"Claude API error: {apiResponse.StatusCode} - {errorDetails.ToPublicDescription()}";
+                LogProviderFailure(
+                    endpoint,
+                    effectiveModel,
+                    apiResponse.StatusCode,
+                    errorDetails,
+                    authenticationFailure: apiResponse.StatusCode == HttpStatusCode.Unauthorized);
+                return response;
+            }
+
+            var responseContent = await apiResponse.Content.ReadAsStringAsync(cancellationToken);
+
+            var claudeResponse = JsonSerializer.Deserialize<ClaudeApiResponse>(
+              responseContent,
+              new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            var assistantMessage = claudeResponse?.Content?
+              .FirstOrDefault(block => !string.IsNullOrWhiteSpace(block.Text));
+
+            if (assistantMessage?.Text is null)
+            {
+                response.Success = false;
+                response.ErrorMessage = "Invalid response format from Claude API";
+                LogProviderProtocolFailure(endpoint, effectiveModel, "assistant_content_missing");
+                return response;
+            }
+
+            response.Answer = assistantMessage.Text.Trim();
+            response.Success = true;
+            response.ModelUsed = effectiveModel;
+            response.TokenUsage = new TokenUsage
+            {
+                InputTokens = claudeResponse?.Usage?.InputTokens ?? 0,
+                OutputTokens = claudeResponse?.Usage?.OutputTokens ?? 0
+            };
+        }
+        catch (Exception ex)
+        {
+            // Narrate must never fail the query (F04-D1): every failure becomes an absent
+            // answer, and the job still completes with headline, table, and export.
+            response.Success = false;
+            response.Answer = null;
+            response.ErrorMessage = "Error generating the answer.";
             LogProviderException(endpoint, effectiveModel, ex);
         }
         finally
@@ -462,6 +607,41 @@ internal sealed class ClaudeService : IClaudeService
         prompt = prompt.Replace("{{USER_QUERY}}", userQuery);
 
         return prompt;
+    }
+
+    /// <summary>
+    /// Builds the Narrate prompt (F04 Slice 2). The external template is authoritative when
+    /// present; the built-in fallback carries the same rules so a missing file degrades the
+    /// wording, never the bound or the no-invention constraint. Both are provider-agnostic.
+    /// </summary>
+    private string BuildAnswerPrompt(string reduction)
+    {
+        if (!string.IsNullOrWhiteSpace(_answerPromptTemplate))
+        {
+            return _answerPromptTemplate.Replace("{{REDUCTION}}", reduction);
+        }
+
+        var builder = new StringBuilder();
+        builder.AppendLine("You are answering a question about an organization's Active Directory.");
+        builder.AppendLine();
+        builder.AppendLine("A deterministic query engine has already run the query and reduced the result.");
+        builder.AppendLine("You are given that reduction below. Write the answer.");
+        builder.AppendLine();
+        builder.AppendLine("RULES:");
+        builder.AppendLine("- Answer the question directly, in one to three sentences of plain prose.");
+        builder.AppendLine("- Use only the numbers and values given below. Never invent, estimate, or extrapolate a value that is not present.");
+        builder.AppendLine("- LARGEST VALUES lists at most the ten biggest buckets, never the whole distribution. Do not describe it as the complete list.");
+        builder.AppendLine("- Read DISTRIBUTION before answering a 'most common' or 'unique values' question. When most values occur exactly once, say plainly that there is no meaningful most-common value and give the shape.");
+        builder.AppendLine("- When the result is empty, say so plainly.");
+        builder.AppendLine("- State the interpretation the query used, drawn from QUERY RUN.");
+        builder.AppendLine("- No markdown tables, no bullet lists, no headings, no code fences.");
+        builder.AppendLine();
+        builder.AppendLine("REDUCTION:");
+        builder.AppendLine(reduction);
+        builder.AppendLine();
+        builder.AppendLine("Write only the answer text.");
+
+        return builder.ToString();
     }
 
     private static string BuildSystemGuidance(IConfiguration configuration)

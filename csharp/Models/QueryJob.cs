@@ -32,6 +32,14 @@ public class QueryJob
     public int? TotalRows { get; set; }
     public string? ModelUsed { get; set; }
     public Dictionary<string, object>? Aggregation { get; set; }
+
+    /// <summary>
+    /// The model-authored answer text from Narrate (F04 Slice 2, F04-D1). Null when Narrate
+    /// failed, timed out, or was skipped — the job still completes with headline, table, and
+    /// export, so an absent answer is a degraded presentation, never a failed query.
+    /// </summary>
+    public string? Answer { get; set; }
+
     public List<string> Warnings { get; set; } = new();
 
     // Error handling

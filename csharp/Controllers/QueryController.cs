@@ -1023,6 +1023,9 @@ public class QueryController : ControllerBase
                 totalRows = job.TotalRows,
                 aggregation = BuildAggregationSummary(job),
                 headline = BuildHeadline(job),
+                // F04 Slice 2: only the model-authored answer string ships, never the raw
+                // model response and never rows. Absent when Narrate failed or was skipped.
+                answer = job.Answer,
                 warnings = job.Warnings.Any() ? job.Warnings : null,
                 downloadUrl = $"/api/query/download-async/{job.JobId}"
             } : null,

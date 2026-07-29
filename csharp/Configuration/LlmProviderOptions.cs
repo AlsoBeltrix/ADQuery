@@ -22,6 +22,9 @@ public sealed class LlmProviderOptions
 
     public string? PromptTemplate { get; set; }
 
+    /// <summary>Narrate prompt template path (F04 Slice 2). Provider-agnostic, like the plan template.</summary>
+    public string? AnswerPromptTemplate { get; set; }
+
     /// <summary>
     /// Legacy global value retained only so validation can warn that it is ignored.
     /// It never enables sampling.
