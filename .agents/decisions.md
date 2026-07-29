@@ -1,5 +1,18 @@
 # Settled Decisions
 
+## F04-D4 — Grouping is case-insensitive by default, with a model-settable case-sensitive mode
+
+- Status: Approved
+- Date: 2026-07-29
+- Authority: Repository owner ("not unconditionally. it's possible we will need to use this to find alternate case instances so we have normalization targets. default, yes, but if we can have a case sensitive option without building any complex scaffolding" → "sure", to the two-part ask)
+- Decision: Three parts.
+  1. **Default: case-insensitive.** `ComputeAggregation` (`csharp/Services/QueryJobManager.cs:468-494`) folds the group key case-insensitively, so `Contractor` / `contractor` / `CONTRACTOR` form one bucket. The displayed key is the most frequent original casing, ties broken ordinally, so the label is deterministic. `(empty)` for null/blank stays distinct from any real value.
+  2. **Case-sensitive is available, requested in natural language.** The owner has a real use for exact-case grouping — finding case variants so they can be normalized in AD. A boolean on `AggregationDefinition` (alongside the existing `group_by`, `count`, `include_level_metadata`) selects it, defaulting to case-insensitive, and the Translate prompt teaches the model to set it when the user asks for case variants or exact-case counts. No config knob, no UI control, no second aggregation implementation: line `:488` is `.ToDictionary(g => g.Key, g => g.Count())` and the two modes are that same call with or without `StringComparer.OrdinalIgnoreCase`.
+  3. **The default view reports multi-spelling buckets.** When a case-folded bucket absorbed more than one original spelling, carry the distinct-spelling count so the answer can say "Contractor: 6,112 (3 spellings)". Without this the *existence* of case variants is invisible by default and the normalization use case is undiscoverable — the user would have to already know to ask for case-sensitive mode. One extra integer per bucket, computed from the same grouping pass, no additional directory work.
+- Evidence: The emitted extensionAttribute1 CSV contains `Contractor` 6,100 / `contractor` 9 / `CONTRACTOR` 3, `other` 959 / `Other` 704 / `OTHER` 26, and `CONFROOM` 1,478 / `confroom` 12 as separate buckets. Each count is individually correct but the split fragments what a human means by "one value" and corrupts any most-common answer.
+- Constraints: One concern, landed with a red→green guard: grouping `["Contractor","contractor","CONTRACTOR", blank]` yields one `Contractor` bucket of 3 with a stable display key plus one `(empty)` bucket, and reports 3 spellings; the same input under the case-sensitive flag yields three buckets. Proven to fail against the case-sensitive keying. Passes `scripts/verify.ps1`.
+- Consequence: "Most common value" reflects human intent by default, exact-case analysis stays reachable by asking for it, and case inconsistency surfaces without the user knowing the feature exists. Implemented by F04 Slice 1b; `.agents/plans/F04-genuine-conversational-answers.md` D4 is ruled. The singleton/blank/distinct counts F04-OR-3 requires for Narrate are computed over the case-folded buckets.
+
 ## F04-D3 — A negation filter with an empty value means "this attribute is populated"
 
 - Status: Approved
