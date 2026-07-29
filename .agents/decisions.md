@@ -1,5 +1,16 @@
 # Settled Decisions
 
+## F04-D3 — A negation filter with an empty value means "this attribute is populated"
+
+- Status: Approved
+- Date: 2026-07-29
+- Authority: Repository owner ("yes", to the one-line ask "Fix it?")
+- Decision: A projection filter using a **negation** operator (`not_equals`, `not_contains`, `not_starts_with`, `not_ends_with`) with an empty or whitespace value is interpreted as "the attribute is populated" rather than rejected as malformed. The strict `Projection filter value is required` rejection stays in force for non-negation operators and for genuinely malformed filters (missing attribute, unknown row step, non-allow-listed attribute, unsupported operator).
+- Scope: `csharp/Security/PlanValidator.cs:229-233` is the rejection that faults the turn. The same empty-value question arises at the two sibling operator checks (`:277`, `:300`); apply the rule consistently wherever a filter value is validated. The executor already carries this concept in narrow hardcoded form — `DirectoryPlanExecutor.AllowsEmptyFilterValue` (`:1419-1434`) permits an empty value for `AccountExpirationDate` with `equals`/`not_equals` only — so this decision **generalizes an existing behavior to any attribute under a negation operator**; it does not invent a new filter semantic. Keep the executor and validator readings consistent so a plan the validator accepts is one the executor evaluates the same way.
+- Evidence: Deployed job `3b3223c7`, the follow-up *"only users with titles"* to the Sanjay roll-up, failed with `Error: Projection filter value is required` and `Success: False`. The model's plan was correct — it emitted `{"attribute":"title","operator":"not_equals","value":""}`, the natural structural reading of "with titles". A conversational refinement faulted the whole turn on a validator edge case.
+- Constraints: One concern, landed with a red→green guard: a plan carrying `title not_equals ""` over a record set with some blank titles completes and filters to populated titles, rather than returning `Projection filter value is required`. Proven to fail against the current strict path. Passes `scripts/verify.ps1`.
+- Consequence: The most natural way for a model to express "has a value" stops being a hard error. Implemented by F04 Slice 5, sequenced early because it is a self-contained bug fix independent of the conversational rework; `.agents/plans/F04-genuine-conversational-answers.md` D3 is ruled.
+
 ## F04-D2 — Delete the guess-transform; a grouped result's export is the value+count table
 
 - Status: Approved
