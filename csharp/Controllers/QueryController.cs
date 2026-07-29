@@ -1034,22 +1034,38 @@ public class QueryController : ControllerBase
     {
         var headline = BuildHeadline(job);
 
+        // F04 Slice 4: export is offered only on a meaningful exportable artifact — a set or
+        // table — never on a one-line answer or a single record (owner rule 2026-07-28). Plan
+        // shape decides, so the server decides; the same policy gates DownloadAsync, so a
+        // non-exportable answer is neither advertised nor downloadable (slice4-or-1).
+        var exportable = HasExportableArtifact(job, headline);
+
         return new
         {
             totalRows = job.TotalRows,
             aggregation = BuildAggregationSummary(job),
             headline,
-            // F04 Slice 4: export is offered only on a meaningful exportable artifact — a
-            // set or table — never on a one-line answer or a single record (owner rule
-            // 2026-07-28). Plan shape decides, so the server decides.
-            exportable = ExportAffordance.HasExportableArtifact(job.Plan, job.TotalRows ?? 0, headline),
+            exportable,
             // F04 Slice 2: only the model-authored answer string ships, never the raw
             // model response and never rows. Absent when Narrate failed or was skipped.
             answer = job.Answer,
             warnings = job.Warnings.Any() ? job.Warnings : null,
-            downloadUrl = $"/api/query/download-async/{job.JobId}"
+            downloadUrl = exportable ? $"/api/query/download-async/{job.JobId}" : null
         };
     }
+
+    /// <summary>
+    /// The F04 Slice 4 export policy for a completed job, in one place. Both the status DTO
+    /// and <see cref="DownloadAsync"/> consult this, so the affordance the browser is shown
+    /// and the export the server will actually perform cannot disagree (slice4-or-1).
+    /// </summary>
+    /// <param name="headline">
+    /// The job's classified headline, when the caller has already computed it — the status
+    /// path classifies once and reuses it for both fields.
+    /// </param>
+    private bool HasExportableArtifact(QueryJob job, HeadlineResult? headline = null) =>
+        ExportAffordance.HasExportableArtifact(
+            job.Plan, job.TotalRows ?? 0, headline ?? BuildHeadline(job));
 
     /// <summary>
     /// Gets preview rows (first 10) from a completed async job
@@ -1151,6 +1167,14 @@ public class QueryController : ControllerBase
         if (job.Status != JobStatus.Completed)
         {
             return BadRequest(new { error = $"Job status is {job.Status.ToString().ToLower()}, not completed" });
+        }
+
+        // F04 Slice 4 (slice4-or-1): the export rule is server policy, not a UI decoration.
+        // Hiding the pills is presentation; this is the enforcement, so a direct request for a
+        // one-line or single-record answer cannot obtain rows the answer never offered.
+        if (!HasExportableArtifact(job))
+        {
+            return BadRequest(new { error = "This answer has no exportable result set." });
         }
 
         if (string.IsNullOrWhiteSpace(job.ResultsCacheKey) ||

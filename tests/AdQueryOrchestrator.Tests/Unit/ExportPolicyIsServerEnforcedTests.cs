@@ -1,0 +1,195 @@
+using System.Collections.Generic;
+using System.Security.Claims;
+using System.Threading;
+using System.Threading.Tasks;
+using AdQuery.Orchestrator.Controllers;
+using AdQuery.Orchestrator.Models;
+using AdQuery.Orchestrator.Security;
+using AdQuery.Orchestrator.Services;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Xunit;
+
+namespace AdQuery.Orchestrator.Tests.Unit;
+
+/// <summary>
+/// Guards finding slice4-or-1: the F04 Slice 4 export rule is server policy, not a UI
+/// decoration. Withholding the download pills tells the user an answer has no exportable
+/// artifact; this asserts the server means it — a direct request for a one-line or
+/// single-record answer is refused, and the status DTO does not advertise a URL the server
+/// would reject.
+///
+/// Drives the real <see cref="QueryController"/> action. A non-exportable job is refused
+/// before any filesystem work, so no <c>E:\WWWOutput</c> path is touched and the test is
+/// portable to a build agent.
+/// </summary>
+public sealed class ExportPolicyIsServerEnforcedTests
+{
+    private const string Owner = "ANALOG\\owner";
+    private const string OwnerSam = "owner";
+
+    private static DirectoryQueryPlan SearchPlan() => new()
+    {
+        Steps = { new DirectoryPlanStep { Name = "s1", Operation = "search" } },
+        Projection = new ProjectionDefinition { RowStep = "s1" },
+    };
+
+    private static DirectoryQueryPlan PureCountPlan() => new()
+    {
+        Steps = { new DirectoryPlanStep { Name = "s1", Operation = "search" } },
+        Projection = new ProjectionDefinition
+        {
+            RowStep = "s1",
+            Aggregation = new AggregationDefinition { Count = true },
+        },
+    };
+
+    [Fact]
+    public void DownloadAsync_PureCountAnswer_IsRefused()
+    {
+        // "How many people are in Sales?" — the answer is one number. Exporting it would hand
+        // back the underlying rows the answer deliberately never showed.
+        var (controller, _) = CreateController(PureCountPlan(), totalRows: 27000);
+
+        var result = controller.DownloadAsync("job-1");
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public void DownloadAsync_SingleRecordAnswer_IsRefused()
+    {
+        var (controller, _) = CreateController(SearchPlan(), totalRows: 1);
+
+        var result = controller.DownloadAsync("job-1");
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public void DownloadAsync_ExportableAnswer_PassesThePolicyGate()
+    {
+        // A multi-row list IS the artifact. The policy gate must let it through — proving the
+        // refusals above are the rule firing, not the endpoint being broken for everything.
+        // Execution stops at the cache lookup (this job's results are absent), which is the
+        // next check after the gate and well before any file is written.
+        var (controller, _) = CreateController(SearchPlan(), totalRows: 42);
+
+        var result = controller.DownloadAsync("job-1");
+
+        var notFound = Assert.IsType<NotFoundObjectResult>(result);
+        Assert.Contains("expired", notFound.Value?.ToString(), System.StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void GetJobStatus_NonExportableAnswer_AdvertisesNoDownloadUrl()
+    {
+        // The DTO must not offer a URL the server would refuse; the two read one policy.
+        var (controller, _) = CreateController(PureCountPlan(), totalRows: 27000);
+
+        var payload = CompletedResultOf(controller.GetJobStatus("job-1"));
+
+        Assert.False(GetProperty<bool>(payload, "exportable"));
+        Assert.Null(GetProperty<string>(payload, "downloadUrl"));
+    }
+
+    [Fact]
+    public void GetJobStatus_ExportableAnswer_AdvertisesTheDownloadUrl()
+    {
+        var (controller, _) = CreateController(SearchPlan(), totalRows: 42);
+
+        var payload = CompletedResultOf(controller.GetJobStatus("job-1"));
+
+        Assert.True(GetProperty<bool>(payload, "exportable"));
+        Assert.Equal("/api/query/download-async/job-1", GetProperty<string>(payload, "downloadUrl"));
+    }
+
+    private static object CompletedResultOf(IActionResult actionResult)
+    {
+        var ok = Assert.IsType<OkObjectResult>(actionResult);
+        var result = GetProperty<object>(ok.Value!, "result");
+        return Assert.IsType<object>(result, exactMatch: false);
+    }
+
+    private static T? GetProperty<T>(object source, string name)
+    {
+        var property = source.GetType().GetProperty(name);
+        Assert.NotNull(property);
+        return (T?)property!.GetValue(source);
+    }
+
+    private static (QueryController Controller, StubJobManager Manager) CreateController(
+        DirectoryQueryPlan plan, int totalRows)
+    {
+        var manager = new StubJobManager
+        {
+            JobsById =
+            {
+                ["job-1"] = new QueryJob
+                {
+                    JobId = "job-1",
+                    UserName = OwnerSam,
+                    Query = "q",
+                    Status = JobStatus.Completed,
+                    Plan = plan,
+                    TotalRows = totalRows,
+                    // No ResultsCacheKey: an exportable job therefore stops at the cache check,
+                    // which is the first thing after the policy gate.
+                },
+            },
+        };
+
+        var controller = new QueryController(
+            NullLogger<QueryController>.Instance,
+            null!,
+            null!,
+            new MemoryCache(new MemoryCacheOptions()),
+            new ConfigurationBuilder().Build(),
+            manager,
+            null!,
+            null!,
+            null!)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(
+                        [new Claim(ClaimTypes.Name, Owner)], "Test")),
+                },
+            },
+        };
+
+        return (controller, manager);
+    }
+
+    private sealed class StubJobManager : IQueryJobManager
+    {
+        public Dictionary<string, QueryJob> JobsById { get; } = new();
+
+        public QueryJob? GetJob(string jobId) => JobsById.TryGetValue(jobId, out var job) ? job : null;
+
+        public Task<string> CreateJobAsync(
+            string userName,
+            string query,
+            string? context = null,
+            int? requestedResultLimit = null,
+            CancellationToken cancellationToken = default) => Task.FromResult("new-job");
+
+        public Task EnqueueJobAsync(QueryJob job, string? forceModel = null) => Task.CompletedTask;
+        public void CancelJob(string jobId) { }
+        public List<QueryJob> GetUserJobs(string userName) => new();
+        public List<QueryJob> GetQueuedJobs() => new();
+        public void CleanupCompletedJobs(System.TimeSpan olderThan) { }
+        public Task ExecuteJobWithServicesAsync(
+            string jobId,
+            IClaudeService claude,
+            IPlanValidator validator,
+            IDirectoryPlanExecutor executor,
+            IMemoryCache cache,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+}
