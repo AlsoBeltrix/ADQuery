@@ -345,7 +345,8 @@ public class QueryJobManager : IQueryJobManager
             var resultsCacheKey = $"job_results_{jobId}";
             cache.Set(resultsCacheKey, result, TimeSpan.FromHours(2));
 
-            var aggregation = ComputeSettledAggregation(job.Plan, result.Data, result.Warnings);
+            var aggregation = ComputeSettledAggregation(
+                job.Plan, result.Data, result.GroupValues, result.Warnings);
 
             _store.SetCompleted(
                 jobId,
@@ -419,9 +420,16 @@ public class QueryJobManager : IQueryJobManager
     /// plan, so the distribution stays the answer and the rows stay the underlying records.
     /// Returns null when the plan requested no aggregation or produced no rows.
     /// </summary>
+    /// <param name="groupValues">
+    /// Per-row <c>group_by</c> values from the executor, read off the directory record
+    /// (slice1r2-or-1). Positional against <paramref name="rows"/>. Absent or short — a
+    /// legacy caller — degrades to no grouped counts plus a warning, never to a fabricated
+    /// single bucket.
+    /// </param>
     internal static Dictionary<string, object>? ComputeSettledAggregation(
         DirectoryQueryPlan plan,
         List<Dictionary<string, object?>> rows,
+        IReadOnlyList<IReadOnlyList<string?>>? groupValues = null,
         ICollection<string>? warnings = null)
     {
         if (plan.Projection?.Aggregation == null || rows.Count == 0)
@@ -429,38 +437,13 @@ public class QueryJobManager : IQueryJobManager
             return null;
         }
 
-        return ComputeAggregation(rows, plan.Projection, warnings);
-    }
-
-    /// <summary>
-    /// Resolves a <c>group_by</c> field — an <em>attribute</em> name — to the key it
-    /// actually occupies in a projected row (slice1-or-1). Projection writes values under
-    /// <see cref="ProjectionColumn.Name"/> (`DirectoryPlanExecutor.Project`), so grouping
-    /// on the attribute misses whenever a column carries a display alias. Prefers the
-    /// field itself (rows are case-insensitive, so a case-variant alias resolves here),
-    /// then the name of a column projecting that attribute. Null means the field reaches
-    /// the projected rows under no key at all.
-    /// </summary>
-    private static string? ResolveGroupKey(
-        string field,
-        ProjectionDefinition projection,
-        Dictionary<string, object?> sampleRow)
-    {
-        if (sampleRow.ContainsKey(field))
-        {
-            return field;
-        }
-
-        var column = projection.Columns.FirstOrDefault(c =>
-            c.Attribute.Equals(field, StringComparison.OrdinalIgnoreCase) &&
-            sampleRow.ContainsKey(c.Name));
-
-        return column?.Name;
+        return ComputeAggregation(rows.Count, plan.Projection, groupValues, warnings);
     }
 
     private static Dictionary<string, object> ComputeAggregation(
-        List<Dictionary<string, object?>> rows,
+        int rowCount,
         ProjectionDefinition projection,
+        IReadOnlyList<IReadOnlyList<string?>>? groupValues,
         ICollection<string>? warnings)
     {
         var result = new Dictionary<string, object>();
@@ -468,30 +451,18 @@ public class QueryJobManager : IQueryJobManager
 
         if (aggregation.Count && aggregation.GroupBy.Any())
         {
-            // Resolution is per-field and fixed for the whole result: projected rows all
-            // carry the same key set, so one sample settles it.
-            var resolved = aggregation.GroupBy
-                .Select(field => (Field: field, Key: ResolveGroupKey(field, projection, rows[0])))
-                .ToList();
-
-            foreach (var (field, key) in resolved.Where(r => r.Key is null))
+            if (groupValues == null || groupValues.Count != rowCount)
             {
-                // Surfacing this beats folding every record into one "(empty)" bucket and
-                // reporting that fabricated distribution as the answer.
-                warnings?.Add($"Aggregation field '{field}' is not present in the projected results; its grouping component is empty.");
+                // Reporting nothing beats reporting a distribution built from values the
+                // executor never supplied.
+                warnings?.Add(
+                    "Grouped counts are unavailable: the executor supplied no group values for this result.");
+                return result;
             }
 
-            var keys = rows
-                .Select(row => GroupKey.Compose(resolved
-                    .Select(r =>
-                    {
-                        object? value = null;
-                        if (r.Key is not null)
-                        {
-                            row.TryGetValue(r.Key, out value);
-                        }
-                        return value?.ToString() ?? "(empty)";
-                    })
+            var keys = groupValues
+                .Select(values => GroupKey.Compose(aggregation.GroupBy
+                    .Select((_, i) => (i < values.Count ? values[i] : null) ?? "(empty)")
                     .ToList()))
                 .ToList();
 

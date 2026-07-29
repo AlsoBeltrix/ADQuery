@@ -43,6 +43,19 @@ public sealed class CaseFoldedGroupingTests
             })
             .ToList();
 
+    /// <summary>
+    /// The executor's per-row group values (slice1r2-or-1), one single-field entry per row.
+    /// </summary>
+    private static List<IReadOnlyList<string?>> GroupValues(params string?[] values)
+        => values.Select(IReadOnlyList<string?> (value) => new[] { value }).ToList();
+
+    /// <summary>
+    /// Folds a case-grouped plan over <paramref name="values"/>, supplying both the rows
+    /// and the matching record-sourced group values.
+    /// </summary>
+    private static Dictionary<string, object>? Fold(DirectoryQueryPlan plan, params string?[] values)
+        => QueryJobManager.ComputeSettledAggregation(plan, Rows(values), GroupValues(values));
+
     private static Dictionary<string, int> Counts(Dictionary<string, object>? aggregation)
     {
         Assert.NotNull(aggregation);
@@ -59,8 +72,7 @@ public sealed class CaseFoldedGroupingTests
     {
         // Pre-fix, ordinal keying reported Contractor/contractor/CONTRACTOR as three
         // buckets, fragmenting what a human means by one value.
-        var aggregation = QueryJobManager.ComputeSettledAggregation(
-            GroupedPlan(), Rows("Contractor", "contractor", "CONTRACTOR", null));
+        var aggregation = Fold(GroupedPlan(), "Contractor", "contractor", "CONTRACTOR", null);
 
         var counts = Counts(aggregation);
 
@@ -77,13 +89,11 @@ public sealed class CaseFoldedGroupingTests
     {
         // The display key is a property of the folded group's members, which is why the
         // fold cannot be a dictionary comparer: a comparer sees only the first key in.
-        var byFrequency = QueryJobManager.ComputeSettledAggregation(
-            GroupedPlan(), Rows("cwk", "CWK", "CWK"));
+        var byFrequency = Fold(GroupedPlan(), "cwk", "CWK", "CWK");
 
         Assert.Equal(new[] { "CWK" }, Counts(byFrequency).Keys);
 
-        var byTie = QueryJobManager.ComputeSettledAggregation(
-            GroupedPlan(), Rows("cwk", "CWK"));
+        var byTie = Fold(GroupedPlan(), "cwk", "CWK");
 
         // Ordinal ordering puts uppercase first, so the tie resolves stably.
         Assert.Equal(new[] { "CWK" }, Counts(byTie).Keys);
@@ -94,8 +104,7 @@ public sealed class CaseFoldedGroupingTests
     {
         // A "1" per bucket would duplicate the distribution at no information gain — a
         // near-unique attribute has tens of thousands of single-spelling buckets.
-        var aggregation = QueryJobManager.ComputeSettledAggregation(
-            GroupedPlan(), Rows("CWK", "FTE", "FTE"));
+        var aggregation = Fold(GroupedPlan(), "CWK", "FTE", "FTE");
 
         Assert.Equal(2, Counts(aggregation).Count);
         Assert.Null(Spellings(aggregation));
@@ -105,8 +114,8 @@ public sealed class CaseFoldedGroupingTests
     public void CaseSensitiveFlag_YieldsSeparateBucketsPerSpelling()
     {
         // Prove the mode exists: ignoring the flag silently gives the folded answer.
-        var aggregation = QueryJobManager.ComputeSettledAggregation(
-            GroupedPlan(caseSensitive: true), Rows("Contractor", "contractor", "CONTRACTOR", null));
+        var aggregation = Fold(
+            GroupedPlan(caseSensitive: true), "Contractor", "contractor", "CONTRACTOR", null);
 
         var counts = Counts(aggregation);
 
@@ -144,7 +153,11 @@ public sealed class CaseFoldedGroupingTests
             new(System.StringComparer.OrdinalIgnoreCase) { ["department"] = "IT", ["city"] = "Cork" },
         };
 
-        var aggregation = QueryJobManager.ComputeSettledAggregation(plan, rows)!;
+        var groupValues = rows
+            .Select(IReadOnlyList<string?> (row) => new[] { row["department"] as string, row["city"] as string })
+            .ToList();
+
+        var aggregation = QueryJobManager.ComputeSettledAggregation(plan, rows, groupValues)!;
         var counts = Counts(aggregation);
 
         Assert.Equal(2, counts.Count);
@@ -156,8 +169,7 @@ public sealed class CaseFoldedGroupingTests
     public void FoldedExport_CarriesTheSpellingCount_OnlyWhenABucketMergedSpellings()
     {
         var plan = GroupedPlan();
-        var aggregation = QueryJobManager.ComputeSettledAggregation(
-            plan, Rows("Contractor", "Contractor", "contractor", "CONTRACTOR", "FTE"))!;
+        var aggregation = Fold(plan, "Contractor", "Contractor", "contractor", "CONTRACTOR", "FTE")!;
 
         var csv = Encoding.UTF8.GetString(QueryController.GenerateFileContent(
             [], [], "csv", aggregation, warnings: null, metadata: null,
@@ -170,7 +182,7 @@ public sealed class CaseFoldedGroupingTests
         Assert.Equal("FTE,1,1", lines[2]);
 
         // No merged bucket, no column: the header only appears where it says something.
-        var uniform = QueryJobManager.ComputeSettledAggregation(plan, Rows("CWK", "FTE"))!;
+        var uniform = Fold(plan, "CWK", "FTE")!;
         var uniformCsv = Encoding.UTF8.GetString(QueryController.GenerateFileContent(
             [], [], "csv", uniform, warnings: null, metadata: null,
             groupByFields: plan.Projection.Aggregation.GroupBy));

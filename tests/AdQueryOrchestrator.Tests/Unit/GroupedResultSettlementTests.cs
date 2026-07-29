@@ -42,7 +42,7 @@ public sealed class GroupedResultSettlementTests
 
     /// <summary>
     /// Rows shaped the way <c>DirectoryPlanExecutor.Project</c> shapes them: keyed by the
-    /// projection column's <c>Name</c>, never by its source attribute (slice1-or-1).
+    /// projection column's <c>Name</c>, never by its source attribute.
     /// </summary>
     private static List<Dictionary<string, object?>> ProjectedRows(string columnName)
         => Values
@@ -54,6 +54,29 @@ public sealed class GroupedResultSettlementTests
 
     private static List<Dictionary<string, object?>> DistinctListShapedRows()
         => ProjectedRows(Attribute);
+
+    /// <summary>
+    /// The executor's per-row group values, read from the directory record and positional
+    /// against the rows (slice1r2-or-1) — independent of the display projection.
+    /// </summary>
+    private static List<IReadOnlyList<string?>> GroupValues(params string?[]? values)
+        => (values is { Length: > 0 } ? values : Values)
+            .Select(IReadOnlyList<string?> (value) => new[] { value })
+            .ToList();
+
+    /// <summary>
+    /// Group values lifted from test rows that stand in for the directory records
+    /// themselves — the shape the executor produces when the plan projects the same
+    /// attributes it groups on.
+    /// </summary>
+    private static List<IReadOnlyList<string?>> GroupValuesFrom(
+        IEnumerable<Dictionary<string, object?>> records,
+        params string[] fields)
+        => records
+            .Select(IReadOnlyList<string?> (record) => fields
+                .Select(field => record.TryGetValue(field, out var v) ? v as string : null)
+                .ToList())
+            .ToList();
 
     private static Dictionary<string, int> GroupedCounts(Dictionary<string, object>? aggregation)
     {
@@ -71,7 +94,7 @@ public sealed class GroupedResultSettlementTests
         var plan = DistinctListShapedPlan();
         var rows = DistinctListShapedRows();
 
-        var aggregation = QueryJobManager.ComputeSettledAggregation(plan, rows);
+        var aggregation = QueryJobManager.ComputeSettledAggregation(plan, rows, GroupValues());
 
         // Pre-removal, the transform cleared the aggregation and rebuilt rows as one
         // row per distinct value (5 rows of value+Count). Both assertions fail there.
@@ -93,25 +116,24 @@ public sealed class GroupedResultSettlementTests
         plan.Projection!.Columns.Add(new ProjectionColumn { Name = "Name", Attribute = "displayName" });
         var rows = DistinctListShapedRows();
 
-        var counts = GroupedCounts(QueryJobManager.ComputeSettledAggregation(plan, rows));
+        var counts = GroupedCounts(QueryJobManager.ComputeSettledAggregation(plan, rows, GroupValues()));
 
         Assert.Equal(5, counts.Count);
         Assert.Equal(8, rows.Count);
     }
 
-    // --- slice1-or-1: group_by names an attribute; rows are keyed by column name. ---
+    // --- slice1r2-or-1: grouping reads the record, not the display projection. ---
 
     [Fact]
-    public void AliasedProjectionColumn_GroupsByTheProjectedValue()
+    public void AliasedProjectionColumn_GroupsByTheRecordValue()
     {
         // group_by is "extensionAttribute1"; the projection emits it as "Cost Center".
-        // Pre-fix, the attribute lookup missed every row and folded all 8 records into a
-        // single "(empty)" bucket — a fabricated distribution reported as the answer.
+        // Grouping is unaffected because it never reads the projected row.
         var plan = DistinctListShapedPlan(columnName: "Cost Center");
-        var rows = ProjectedRows("Cost Center");
         var warnings = new List<string>();
 
-        var counts = GroupedCounts(QueryJobManager.ComputeSettledAggregation(plan, rows, warnings));
+        var counts = GroupedCounts(QueryJobManager.ComputeSettledAggregation(
+            plan, ProjectedRows("Cost Center"), GroupValues(), warnings));
 
         Assert.Equal(5, counts.Count);
         Assert.Equal(3, counts["CC-100"]);
@@ -120,31 +142,73 @@ public sealed class GroupedResultSettlementTests
     }
 
     [Fact]
-    public void CaseVariantColumnName_StillResolves()
+    public void UnprojectedGroupByField_GroupsCorrectly_NotIntoOneEmptyBucket()
     {
-        // The shipped prompt example projects 'department' as "Department"; rows are
-        // case-insensitive, so the field resolves directly without alias mapping.
-        var plan = DistinctListShapedPlan(columnName: Attribute.ToUpperInvariant());
-        var rows = ProjectedRows(Attribute.ToUpperInvariant());
+        // A plan grouping by employeeType while projecting only Name and Title is valid
+        // and common. Deriving the key from the projected row folded every record into a
+        // single "(empty)" bucket and reported that fabricated distribution as the answer.
+        var plan = new DirectoryQueryPlan
+        {
+            Steps = { new DirectoryPlanStep { Name = "s1", Operation = "search" } },
+            Projection = new ProjectionDefinition
+            {
+                RowStep = "s1",
+                Columns =
+                {
+                    new ProjectionColumn { Name = "Name", Attribute = "displayName" },
+                    new ProjectionColumn { Name = "Title", Attribute = "title" },
+                },
+                Aggregation = new AggregationDefinition { Count = true, GroupBy = { "employeeType" } },
+            },
+        };
 
-        Assert.Equal(5, GroupedCounts(QueryJobManager.ComputeSettledAggregation(plan, rows)).Count);
+        var rows = new[] { "Ann", "Bo", "Cy" }
+            .Select(name => new Dictionary<string, object?>(System.StringComparer.OrdinalIgnoreCase)
+            {
+                ["Name"] = name,
+                ["Title"] = "Engineer",
+            })
+            .ToList();
+
+        var warnings = new List<string>();
+        var counts = GroupedCounts(QueryJobManager.ComputeSettledAggregation(
+            plan, rows, GroupValues("CWK", "CWK", "FTE"), warnings));
+
+        Assert.Equal(2, counts.Count);
+        Assert.Equal(2, counts["CWK"]);
+        Assert.Equal(1, counts["FTE"]);
+        Assert.DoesNotContain("(empty)", counts.Keys);
+        Assert.Empty(warnings);
     }
 
     [Fact]
-    public void UnprojectedGroupByField_WarnsRatherThanFabricatingAnEmptyBucket()
+    public void RecordsMissingTheGroupedAttribute_LandInTheEmptyBucket()
     {
-        // Grouping on an attribute the projection never emits: the single "(empty)"
-        // bucket is unavoidable, but it must not be reported as a silent real answer.
-        var plan = DistinctListShapedPlan();
-        plan.Projection!.Aggregation!.GroupBy.Clear();
-        plan.Projection.Aggregation.GroupBy.Add("nowhere");
+        // A genuinely unset attribute is one real bucket, distinct from a resolution
+        // failure — the executor normalises blank and absent alike to null, and null is
+        // the only signal this layer reads.
+        var counts = GroupedCounts(QueryJobManager.ComputeSettledAggregation(
+            DistinctListShapedPlan(),
+            ProjectedRows(Attribute).Take(3).ToList(),
+            GroupValues("CC-100", null, null)));
+
+        Assert.Equal(2, counts.Count);
+        Assert.Equal(2, counts["(empty)"]);
+    }
+
+    [Fact]
+    public void MissingGroupValues_WarnRatherThanReportingAFabricatedDistribution()
+    {
+        // A caller that supplies no group values (or a set that does not line up with the
+        // rows) gets no grouped counts at all — never a distribution built from nothing.
         var warnings = new List<string>();
 
-        var counts = GroupedCounts(
-            QueryJobManager.ComputeSettledAggregation(plan, DistinctListShapedRows(), warnings));
+        var aggregation = QueryJobManager.ComputeSettledAggregation(
+            DistinctListShapedPlan(), DistinctListShapedRows(), groupValues: null, warnings);
 
-        Assert.Equal(new[] { "(empty)" }, counts.Keys);
-        Assert.Contains(warnings, w => w.Contains("nowhere") && w.Contains("not present"));
+        Assert.NotNull(aggregation);
+        Assert.False(aggregation!.ContainsKey("grouped_counts"));
+        Assert.Contains(warnings, w => w.Contains("Grouped counts are unavailable"));
     }
 
     [Fact]
@@ -156,9 +220,10 @@ public sealed class GroupedResultSettlementTests
             Projection = new ProjectionDefinition { RowStep = "s1" },
         };
 
-        Assert.Null(QueryJobManager.ComputeSettledAggregation(plainPlan, DistinctListShapedRows()));
         Assert.Null(QueryJobManager.ComputeSettledAggregation(
-            DistinctListShapedPlan(), new List<Dictionary<string, object?>>()));
+            plainPlan, DistinctListShapedRows(), GroupValues()));
+        Assert.Null(QueryJobManager.ComputeSettledAggregation(
+            DistinctListShapedPlan(), [], []));
     }
 
     // --- Export: the distribution is the exported table, in every format. ---
@@ -167,7 +232,7 @@ public sealed class GroupedResultSettlementTests
     {
         var plan = DistinctListShapedPlan();
         var rows = DistinctListShapedRows();
-        var aggregation = QueryJobManager.ComputeSettledAggregation(plan, rows)!;
+        var aggregation = QueryJobManager.ComputeSettledAggregation(plan, rows, GroupValues())!;
         return (rows, aggregation, plan.Projection!.Aggregation!.GroupBy);
     }
 
@@ -252,7 +317,8 @@ public sealed class GroupedResultSettlementTests
             new(System.StringComparer.OrdinalIgnoreCase) { ["department"] = "HR", ["city"] = "Cork" },
         };
 
-        var aggregation = QueryJobManager.ComputeSettledAggregation(plan, rows)!;
+        var aggregation = QueryJobManager.ComputeSettledAggregation(
+            plan, rows, GroupValuesFrom(rows, "department", "city"))!;
         var export = QueryController.BuildGroupedDistributionExport(aggregation, plan.Projection!.Aggregation!.GroupBy);
 
         Assert.NotNull(export);
@@ -291,7 +357,8 @@ public sealed class GroupedResultSettlementTests
             new(System.StringComparer.OrdinalIgnoreCase) { ["department"] = "R&D", ["city"] = "Labs|Boston" },
         };
 
-        var aggregation = QueryJobManager.ComputeSettledAggregation(plan, rows)!;
+        var aggregation = QueryJobManager.ComputeSettledAggregation(
+            plan, rows, GroupValuesFrom(rows, "department", "city"))!;
 
         Assert.Equal(2, GroupedCounts(aggregation).Count);
 

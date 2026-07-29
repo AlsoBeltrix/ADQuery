@@ -26,6 +26,14 @@ public class PlanExecutionResult
 
     public List<Dictionary<string, object?>> Data { get; set; } = new();
 
+    /// <summary>
+    /// Per-row <c>group_by</c> values, read from the row-step directory record rather
+    /// than the display projection (slice1r2-or-1), one entry per <see cref="Data"/> row
+    /// in <c>group_by</c> order. Empty when the plan requests no grouping. Grouping must
+    /// not depend on which columns the plan happens to display.
+    /// </summary>
+    public List<IReadOnlyList<string?>> GroupValues { get; set; } = new();
+
     public List<string> Errors { get; set; } = new();
 
     public List<string> Warnings { get; set; } = new();

@@ -60,6 +60,7 @@ public class DirectoryPlanExecutor : IDirectoryPlanExecutor
             result.Errors.AddRange(execution.Errors);
             result.Warnings.AddRange(execution.Warnings);
             result.Data = execution.Data;
+            result.GroupValues = execution.GroupValues;
             result.StepsExecuted = execution.StepsExecuted;
             result.StepsSkipped = execution.StepsSkipped;
         }
@@ -216,7 +217,7 @@ internal sealed class DirectoryPlanRuntime
             }
         }
 
-        result.Data = Project(plan.Projection);
+        (result.Data, result.GroupValues) = Project(plan.Projection);
 
         // Aggregation is computed once, on the settled result, by
         // QueryJobManager.ComputeSettledAggregation — not here (slice1-or-1).
@@ -233,6 +234,8 @@ internal sealed class DirectoryPlanRuntime
         if (plan.ResultLimit.HasValue && plan.ResultLimit.Value > 0 && result.Data.Count > plan.ResultLimit.Value)
         {
             result.Data = result.Data.Take(plan.ResultLimit.Value).ToList();
+            // Truncation applies to both in lockstep: the group values are positional.
+            result.GroupValues = result.GroupValues.Take(plan.ResultLimit.Value).ToList();
             _warnings.Add($"Result set truncated to {plan.ResultLimit.Value} rows.");
         }
         result.Errors.AddRange(_errors);
@@ -518,14 +521,24 @@ internal sealed class DirectoryPlanRuntime
         return state;
     }
 
-    private List<Dictionary<string, object?>> Project(ProjectionDefinition projection)
+    /// <summary>
+    /// Builds the display rows and, in the same pass, the per-row <c>group_by</c> values
+    /// read from the row-step directory record (slice1r2-or-1). Grouping reads the record
+    /// so a plan that groups on an attribute it does not display still groups correctly;
+    /// deriving it from the projected row instead folded every record into one fabricated
+    /// <c>(empty)</c> bucket.
+    /// </summary>
+    private (List<Dictionary<string, object?>> Rows, List<IReadOnlyList<string?>> GroupValues) Project(
+        ProjectionDefinition projection)
     {
         if (!_stepStates.TryGetValue(projection.RowStep, out var rowState))
         {
             throw new InvalidOperationException($"Projection references unknown step '{projection.RowStep}'.");
         }
 
+        var groupBy = projection.Aggregation?.GroupBy ?? [];
         var rows = new List<Dictionary<string, object?>>();
+        var groupValues = new List<IReadOnlyList<string?>>();
         var projectionFilters = new List<DirectoryFilter>();
 
         if (projection.Filters is not null && projection.Filters.Count > 0)
@@ -572,9 +585,34 @@ internal sealed class DirectoryPlanRuntime
             }
 
             rows.Add(row);
+
+            if (groupBy.Count > 0)
+            {
+                groupValues.Add(groupBy
+                    .Select(field => FormatGroupValue(record[field]))
+                    .ToList());
+            }
         }
 
-        return rows;
+        return (rows, groupValues);
+    }
+
+    /// <summary>
+    /// Renders one directory attribute value as its group key component. Multivalued
+    /// attributes join their values so a record lands in one bucket rather than being
+    /// silently keyed on an arbitrary element; null and blank both read as unset.
+    /// </summary>
+    private static string? FormatGroupValue(object? value)
+    {
+        var text = value switch
+        {
+            null => null,
+            string s => s,
+            IEnumerable<string> many => string.Join(", ", many),
+            _ => value.ToString(),
+        };
+
+        return string.IsNullOrWhiteSpace(text) ? null : text;
     }
 
     private bool TryEvaluateTemplateSearch(DirectoryPlanStep step, List<DirectoryFilter> filters, out IReadOnlyList<DirectoryRecord> records)
@@ -1516,6 +1554,9 @@ internal sealed class DirectoryPlanRuntime
         public bool Success { get; set; }
 
         public List<Dictionary<string, object?>> Data { get; set; } = new();
+
+        /// <summary>See <see cref="PlanExecutionResult.GroupValues"/>.</summary>
+        public List<IReadOnlyList<string?>> GroupValues { get; set; } = new();
 
         public List<string> Errors { get; set; } = new();
 
