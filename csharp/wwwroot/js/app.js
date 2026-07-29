@@ -679,8 +679,8 @@
             const row = document.createElement('tr');
 
             if (isMultiField) {
-                // Split the composite key
-                const keyParts = key.split('|');
+                // Split the composite key (escape-aware — see Services/GroupKey.cs)
+                const keyParts = decomposeGroupKey(key, groupByFields.length);
                 keyParts.forEach(part => {
                     const cell = document.createElement('td');
                     cell.textContent = part || '(empty)';
@@ -978,6 +978,46 @@
         }
 
         return [];
+    }
+
+    // Mirror of Services/GroupKey.Decompose. Composite group keys join their per-field
+    // components with '|' and escape any '|' or '\' inside a value, so an unescaped split
+    // would shift every column after a value that contains the delimiter. Keep in step
+    // with the server-side encoding; single-field keys are never escaped.
+    function decomposeGroupKey(key, fieldCount) {
+        if (fieldCount <= 1) {
+            return [key];
+        }
+
+        const components = [];
+        let current = '';
+        let escaped = false;
+
+        for (const ch of key) {
+            if (escaped) {
+                current += ch;
+                escaped = false;
+            } else if (ch === '\\') {
+                escaped = true;
+            } else if (ch === '|' && components.length < fieldCount - 1) {
+                components.push(current);
+                current = '';
+            } else {
+                current += ch;
+            }
+        }
+
+        if (escaped) {
+            current += '\\';
+        }
+
+        components.push(current);
+
+        while (components.length < fieldCount) {
+            components.push('');
+        }
+
+        return components;
     }
 
     function formatColumnName(name) {

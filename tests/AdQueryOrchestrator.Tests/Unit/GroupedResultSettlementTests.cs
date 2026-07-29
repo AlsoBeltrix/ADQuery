@@ -262,6 +262,62 @@ public sealed class GroupedResultSettlementTests
         Assert.Equal(2, export.Value.Rows[0]["Count"]);
     }
 
+    // --- slice1-or-2: the composite key encoding is reversible. ---
+
+    [Fact]
+    public void CompositeKeyWithDelimiterInAValue_DoesNotCollideOrShiftColumns()
+    {
+        // AD free-text attributes may contain the '|' the composite key joins on. Pre-fix,
+        // these two distinct combinations both encoded to "R&D|Labs|Boston" and merged into
+        // one bucket, and the export's unescaped split shifted "Boston" out of the row.
+        var plan = new DirectoryQueryPlan
+        {
+            Steps = { new DirectoryPlanStep { Name = "s1", Operation = "search" } },
+            Projection = new ProjectionDefinition
+            {
+                RowStep = "s1",
+                Columns =
+                {
+                    new ProjectionColumn { Name = "department", Attribute = "department" },
+                    new ProjectionColumn { Name = "city", Attribute = "city" },
+                },
+                Aggregation = new AggregationDefinition { Count = true, GroupBy = { "department", "city" } },
+            },
+        };
+
+        var rows = new List<Dictionary<string, object?>>
+        {
+            new(System.StringComparer.OrdinalIgnoreCase) { ["department"] = "R&D|Labs", ["city"] = "Boston" },
+            new(System.StringComparer.OrdinalIgnoreCase) { ["department"] = "R&D", ["city"] = "Labs|Boston" },
+        };
+
+        var aggregation = QueryJobManager.ComputeSettledAggregation(plan, rows)!;
+
+        Assert.Equal(2, GroupedCounts(aggregation).Count);
+
+        var export = QueryController.BuildGroupedDistributionExport(
+            aggregation, plan.Projection!.Aggregation!.GroupBy);
+
+        Assert.NotNull(export);
+        Assert.Equal(2, export!.Value.Rows.Count);
+        Assert.Contains(export.Value.Rows, row =>
+            Equals(row["department"], "R&D|Labs") && Equals(row["city"], "Boston"));
+        Assert.Contains(export.Value.Rows, row =>
+            Equals(row["department"], "R&D") && Equals(row["city"], "Labs|Boston"));
+    }
+
+    [Theory]
+    [InlineData("R&D|Labs", "Boston")]
+    [InlineData(@"back\slash", "plain")]
+    [InlineData(@"pipe|and\escape", @"\|")]
+    [InlineData("", "|")]
+    public void GroupKeyRoundTrips_ForValuesContainingDelimiterAndEscape(string first, string second)
+    {
+        var parts = GroupKey.Decompose(GroupKey.Compose([first, second]), 2);
+
+        Assert.Equal([first, second], parts);
+    }
+
     [Fact]
     public void NonGroupedResult_ExportsItsRowsUnchanged()
     {

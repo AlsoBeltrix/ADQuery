@@ -495,7 +495,7 @@ public class QueryJobManager : IQueryJobManager
                             return value?.ToString() ?? "(empty)";
                         })
                         .ToList();
-                    return string.Join("|", keys);
+                    return GroupKey.Compose(keys);
                 })
                 .ToDictionary(g => g.Key, g => g.Count());
 

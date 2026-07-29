@@ -355,11 +355,11 @@ public class QueryController : ControllerBase
         foreach (var (key, count) in counts.OrderByDescending(kvp => kvp.Value).ThenBy(kvp => kvp.Key, StringComparer.Ordinal))
         {
             var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-            var parts = fields.Count == 1 ? new[] { key } : key.Split('|');
+            var parts = GroupKey.Decompose(key, fields.Count);
 
             for (var i = 0; i < fields.Count; i++)
             {
-                row[fields[i]] = i < parts.Length ? parts[i] : null;
+                row[fields[i]] = parts[i];
             }
 
             row["Count"] = count;
