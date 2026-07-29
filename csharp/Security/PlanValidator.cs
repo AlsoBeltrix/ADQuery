@@ -226,14 +226,17 @@ public class PlanValidator : IPlanValidator
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(filter.Value))
+        var operatorValue = string.IsNullOrWhiteSpace(filter.Operator) ? "equals" : filter.Operator;
+        filter.Operator = operatorValue;
+
+        // An empty value under a negation operator means "attribute is populated" (F04-D3);
+        // under any other operator it is still a malformed filter.
+        if (string.IsNullOrWhiteSpace(filter.Value) &&
+            !EmptyValueFilterSemantics.AllowsEmptyValue(filter.Attribute, operatorValue))
         {
             result.SecurityErrors.Add("Projection filter value is required.");
             return;
         }
-
-        var operatorValue = string.IsNullOrWhiteSpace(filter.Operator) ? "equals" : filter.Operator;
-        filter.Operator = operatorValue;
 
         if (!_securityPolicy.IsFilterOperatorAllowed(operatorValue))
         {

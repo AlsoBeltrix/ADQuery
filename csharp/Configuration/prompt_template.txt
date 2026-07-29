@@ -12,6 +12,7 @@ PLAN REQUIREMENTS:
 - target_type must be one of: User, Group, Computer, OrganizationalUnit.
 - Filters support operators: equals, not_equals, contains, not_contains, starts_with, not_starts_with, ends_with, not_ends_with.
 - Use not_equals (or related negations) when the user asks to exclude a value (e.g., `extensionAttribute8` not_equals "2").
+- A negation operator with an empty value means "this attribute is populated" (e.g., `manager` not_equals "" finds everyone who has a manager). Whitespace-only counts as not populated. All four negations read the same way here; positive operators still require a value.
 - Active accounts are enabled and have `AccountExpirationDate` empty (or "Never") or in the future; inactive accounts are disabled or have `AccountExpirationDate` populated with a past timestamp. To test for a populated date string, use a `contains "-"` filter (dates are formatted as `yyyy-MM-dd HH:mm:ss`) and optionally exclude "Never".
 - Combine multiple conditions by using a filter with "operator" set to "or" or "and" and a "conditions" array of child filters.
 - Contractors have `EmployeeType` equal to `CWK`. To find inactive contractors, use an "or" filter group that checks for `Enabled` = "false" or an `AccountExpirationDate` value that is populated in the past (for example `contains "-"` and `not_equals "Never"`). Treat blank/"Never" as still active.

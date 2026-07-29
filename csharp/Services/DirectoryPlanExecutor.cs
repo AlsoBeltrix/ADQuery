@@ -1425,21 +1425,7 @@ internal sealed class DirectoryPlanRuntime
     }
 
     private static bool AllowsEmptyFilterValue(string? attribute, string operatorValue)
-    {
-        if (string.IsNullOrWhiteSpace(attribute))
-        {
-            return false;
-        }
-
-        if (attribute.Equals("AccountExpirationDate", StringComparison.OrdinalIgnoreCase) &&
-            (operatorValue.Equals("not_equals", StringComparison.OrdinalIgnoreCase) ||
-             operatorValue.Equals("equals", StringComparison.OrdinalIgnoreCase)))
-        {
-            return true;
-        }
-
-        return false;
-    }
+        => EmptyValueFilterSemantics.AllowsEmptyValue(attribute, operatorValue);
 
     private static bool RecordMatchesFilter(DirectoryRecord record, DirectoryFilter filter)
     {
@@ -1453,6 +1439,20 @@ internal sealed class DirectoryPlanRuntime
                 "and" => filter.Conditions.All(child => RecordMatchesFilter(record, child)),
                 _ => filter.Conditions.All(child => RecordMatchesFilter(record, child))
             };
+        }
+
+        // The populated-attribute reading is settled before generic dispatch (f04-or-5):
+        // MatchesBaseOperator short-circuits contains/starts_with/ends_with to true on an
+        // empty value, so under negation those three would match nothing — the inverse of
+        // what the filter means.
+        // The populated-attribute reading is settled before generic dispatch (f04-or-5):
+        // MatchesBaseOperator short-circuits contains/starts_with/ends_with to true on an
+        // empty value, so under negation those three would match nothing — the inverse of
+        // what the filter means.
+        if (EmptyValueFilterSemantics.IsPopulatedAttributeFilter(
+                filter.Attribute, operatorValue, filter.Value))
+        {
+            return EmptyValueFilterSemantics.HasPopulatedValue(record, filter.Attribute);
         }
 
         var isNegated = operatorValue.StartsWith("not_");

@@ -390,16 +390,7 @@ public class ActiveDirectoryService : IActiveDirectoryService
     }
 
     private static bool AllowsEmptyFilterValue(string attribute, string operatorValue)
-    {
-        if (attribute.Equals("AccountExpirationDate", StringComparison.OrdinalIgnoreCase) &&
-            (operatorValue.Equals("not_equals", StringComparison.OrdinalIgnoreCase) ||
-             operatorValue.Equals("equals", StringComparison.OrdinalIgnoreCase)))
-        {
-            return true;
-        }
-
-        return false;
-    }
+        => EmptyValueFilterSemantics.AllowsEmptyValue(attribute, operatorValue);
 
     private string BuildFilter(DirectorySearchRequest request)
     {
@@ -446,6 +437,15 @@ public class ActiveDirectoryService : IActiveDirectoryService
         if (filter.Attribute.Equals("AccountExpirationDate", StringComparison.OrdinalIgnoreCase))
         {
             return BuildAccountExpirationDateFilterClause(filter);
+        }
+
+        // "Attribute is populated" (F04-D3). LDAP presence is (attr=*); the naive
+        // (!(attr=**)) an empty value would otherwise produce is not the same predicate,
+        // and for not_equals it would be (!(attr=)) — an invalid filter string.
+        if (EmptyValueFilterSemantics.IsPopulatedAttributeFilter(
+                filter.Attribute, filter.Operator, filter.Value))
+        {
+            return $"({filter.Attribute}=*)";
         }
 
         var attribute = filter.Attribute;
