@@ -3,7 +3,7 @@
 **Severity**: MEDIUM — a filter form the validator explicitly admits is evaluated wrongly by
 the in-memory projection pass, silently discarding every record it was meant to keep. Narrower
 than `slice5-or-1`: it needs a projection-level filter, and the LDAP layer gets it right.
-**Status**: Open
+**Status**: Verified
 **Branch**: — (repo works on `master`; one commit per finding)
 **Commit**: `<git-sha>` (filled in after commit)
 
@@ -44,13 +44,37 @@ pre-existing gap became reachable-and-stated when Slice 5 made that invariant ex
 not introduce the mismatch.
 
 ## Approach
-_(to be completed when the fix lands)_
+`EmptyValueFilterSemantics` gains the second empty-value reading it was already implicitly
+admitting: `IsNeverExpiresFilter` recognises the form, `NeverExpiresValue` names the literal
+the search layer writes, and `HasNeverExpiresValue` tests a record for it. `RecordMatchesFilter`
+intercepts the form immediately after the populated-attribute branch, so neither of the two
+readings `AllowsEmptyValue` admits can now reach generic dispatch — which is the only place the
+empty needle gets compared literally. The LDAP builder needed no change; it was already correct,
+and the fix brings the in-memory evaluator into agreement with it rather than the reverse.
+
+Naming the literal in one place is the durable part: the comparison previously depended on an
+undocumented coincidence between `MapToRecord`'s output and an evaluator elsewhere, and now a
+change to one has an obvious counterpart.
 
 ## Files changed
-_(to be completed when the fix lands)_
+- `csharp/Services/EmptyValueFilterSemantics.cs:67-101` — `NeverExpiresValue`,
+  `IsNeverExpiresFilter`, `HasNeverExpiresValue`
+- `csharp/Services/DirectoryPlanExecutor.cs:1459-1468` — the never-expires branch, ahead of
+  generic dispatch
+- `tests/AdQueryOrchestrator.Tests/Unit/NeverExpiresFilterTests.cs` — new, 6 tests
 
 ## Guard proof
-_(to be completed when the fix lands)_
+- `NeverExpiresFilterTests` — disabling the new branch in `RecordMatchesFilter` makes
+  `NeverExpiresFilter_ReturnsTheNeverExpiringRecords` and
+  `WhitespaceValue_ReadsIdenticallyToEmpty` **FAIL** (both return the empty set, which is the
+  reported defect exactly). Restoring makes them pass.
+- Over-removal sentinels: `ARealDateValue_KeepsOrdinaryEqualsSemantics` (a real date is still
+  an ordinary comparison), `OnlyAccountExpirationDateEquals_CarriesTheNeverExpiresReading` (not
+  negation, not another attribute, not a real value), and
+  `NegationStillMeansPopulated_NotNeverExpires` (the slice5-or-1 reading is not captured by
+  this branch). `TheMarkerMatchesWhatTheSearchLayerWrites` pins the literal.
+- Canonical verification: `pwsh -NoLogo -NoProfile -File scripts/verify.ps1` — passed,
+  240 tests, 0 warnings, published smoke passed, audit clean.
 
 ## Coder dispute (if any)
 None on the facts. One scope note: this is a **pre-existing** defect, not one Slice 5
@@ -59,11 +83,16 @@ made `EmptyValueFilterSemantics` the declared single owner of the empty-value re
 is a live violation of that ownership.
 
 ## Known gaps
-Overlaps `slice5-or-1`: both stem from `AccountExpirationDate` and `Enabled` being synthesized
-display values rather than raw directory attributes, evaluated by two layers with different
-notions of what the stored value is. A single fix addressing synthesized-attribute handling in
-`EmptyValueFilterSemantics` may close both; they are kept as separate findings because they
-fail on different operators (negation vs `equals`) at different layers (LDAP vs in-memory).
+Overlaps `slice5-or-1` (fixed in `d7944cd`): both stem from `AccountExpirationDate` and
+`Enabled` being synthesized display values rather than raw directory attributes, evaluated by
+two layers with different notions of what the stored value is. They were fixed separately, per
+the one-finding-per-commit rule, because they fail on different operators (negation vs
+`equals`) at different layers (LDAP vs in-memory); `EmptyValueFilterSemantics` now owns both
+readings.
+
+Not addressed: whether `AccountExpirationDate` is on the attribute allow-list at all is a
+separate policy question, unchanged here — the Slice 5 test
+`AccountExpirationDateEqualsEmpty_KeepsItsLegacyMeaning` already notes it does not own that.
 
 ## Reviewer comments
 `Reviewer: codex / gpt-5.6-sol / xhigh / frontier` — openreview Slice 5 round 1, inline

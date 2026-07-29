@@ -65,6 +65,41 @@ internal static class EmptyValueFilterSemantics
            SynthesizedAttributes.Contains(attribute.Trim(), StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// The literal <c>ActiveDirectoryService.MapToRecord</c> writes for an account with no
+    /// expiration. It is synthesized, never the empty string, so an evaluator that compares
+    /// <c>AccountExpirationDate equals ""</c> literally rejects exactly the records that
+    /// filter selects (slice5-or-2). Changing the literal there without changing it here
+    /// reopens that defect.
+    /// </summary>
+    public const string NeverExpiresValue = "Never";
+
+    /// <summary>
+    /// True when this filter carries the pre-existing <c>AccountExpirationDate equals ""</c>
+    /// reading, "never expires" — the one positive-operator form
+    /// <see cref="AllowsEmptyValue"/> admits. Evaluators must intercept it rather than let it
+    /// reach generic dispatch, where the empty needle is compared against the synthesized
+    /// value and matches nothing.
+    /// </summary>
+    public static bool IsNeverExpiresFilter(string? attribute, string? operatorValue, string? value)
+        => attribute is not null &&
+           attribute.Trim().Equals(AccountExpirationDate, StringComparison.OrdinalIgnoreCase) &&
+           string.IsNullOrWhiteSpace(value) &&
+           (string.IsNullOrWhiteSpace(operatorValue) ? "equals" : operatorValue.Trim())
+               .Equals("equals", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether the record holds the synthesized "never expires" marker. Whitespace and case
+    /// are tolerated for the same reason the rest of this type tolerates them: the value is
+    /// rendered for display, not parsed.
+    /// </summary>
+    public static bool HasNeverExpiresValue(DirectoryRecord record, string attribute)
+        => record is not null &&
+           record.GetStrings(attribute)
+               .Append(record.GetString(attribute))
+               .Any(value => value is not null &&
+                             value.Trim().Equals(NeverExpiresValue, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
     /// Whether a filter may carry an empty value at all — the gate the validator and both
     /// normalizers share. Positive operators are NOT widened; the one exception is the
     /// pre-existing <c>AccountExpirationDate equals ""</c> ("never expires"), which is a

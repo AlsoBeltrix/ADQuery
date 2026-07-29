@@ -1456,6 +1456,16 @@ internal sealed class DirectoryPlanRuntime
                    EmptyValueFilterSemantics.HasPopulatedValue(record, filter.Attribute);
         }
 
+        // The other empty-value form AllowsEmptyValue admits: AccountExpirationDate equals ""
+        // means "never expires" (slice5-or-2). The stored value is the synthesized literal
+        // "Never", so generic dispatch would compare it against "" and discard exactly the
+        // records the filter selects. The LDAP clause builder already reads it correctly.
+        if (EmptyValueFilterSemantics.IsNeverExpiresFilter(
+                filter.Attribute, operatorValue, filter.Value))
+        {
+            return EmptyValueFilterSemantics.HasNeverExpiresValue(record, filter.Attribute);
+        }
+
         var isNegated = operatorValue.StartsWith("not_");
         var baseOperator = isNegated ? operatorValue[4..] : operatorValue;
         var expected = filter.Value ?? string.Empty;
