@@ -1,6 +1,6 @@
 # F04 — Genuine Conversational Answers
 
-**Status: Draft, openreview round 1 resolved (2026-07-29); all six owner decisions D1–D6 ruled (2026-07-29). Not approved; no code lands until the owner flips this status line to `Approved`.** The rulings are recorded as `F04-D1`…`F04-D6` in `.agents/decisions.md`; the "Open owner decisions" section below carries each one's status line and is now a record, not a queue.
+**Status: Approved (owner, 2026-07-29 — "approved. push, then start."). Two openreview rounds resolved; all six owner decisions D1–D6 ruled (2026-07-29).** Implementation may proceed in slice order. The rulings are recorded as `F04-D1`…`F04-D6` in `.agents/decisions.md`; the "Open owner decisions" section below carries each one's status line and is now a record, not a queue.
 
 **Review history.** Two openreview rounds, codex (gpt-5.6-sol @ xhigh, frontier, inline session-only); all eight findings admitted and resolved in this document. Records: `.agents/review/findings/f04-or-{1..8}.md`.
 
