@@ -1,5 +1,18 @@
 # Settled Decisions
 
+## F04-D2 — Delete the guess-transform; a grouped result's export is the value+count table
+
+- Status: Approved
+- Date: 2026-07-29
+- Authority: Repository owner ("y", to the one-line ask "Stop the guessing, and make the download for any 'how many of each' question a clean two-column table")
+- Decision: Two halves, one concern.
+  1. **Delete the guess-transform.** `QueryJobManager.cs:354-400` currently inspects whether the projection's columns set-equal the aggregation's `group_by` fields and, when they do, rebuilds `result.Data` from `grouped_counts` and sets `aggregation = null` (`:393`). Remove it. A plan whose projection columns equal its `group_by` fields keeps its computed aggregation like any other grouped plan. Revise `csharp/Configuration/prompt_template.txt:28` and its example at `:57`, which instruct the model to shape plans for this path.
+  2. **A grouped result's exportable artifact is the distribution table.** Value + count, ordered by count descending, as first-class rows in every export format — not a comment block appended beneath a row dump. Non-grouped result sets export their rows as today. A result whose answer is a single scalar or one record has no meaningful export (see the F04 export rule).
+- Rationale for the second half: deleting the transform alone makes the export strictly worse. For "most common value in extensionAttribute1" the plan projects one column over all Users, so `result.Data` becomes 47,388 single-column rows (one per user) with the bucket counts relegated to CSV comment lines (`QueryController.cs:391-402`), an HTML section (`:586-600`), or a separate xlsx sheet (`:691`). The transform's *output shape* was right; what was wrong was that it was a fragile column-matching guess, it destroyed the aggregation the headline classifier needs, and its keys were not case-folded (F04-D4). Making the distribution table an explicit property of grouped results keeps the good shape and drops all three defects.
+- Evidence: Deployed jobs `eed12d05` (Opus) and retry `173508149` (gpt-5.5) both emitted a **correct** plan — search all Users, `group_by: [extensionAttribute1], count: true` — and the engine discarded it, returning 26,625 rows. Parsing the emitted CSV: bucket counts sum to 47,388 (every user), with 26,612 buckets of count 1.
+- Constraints: One concern, landed with a red→green guard. The guard feeds an extensionAttribute1-shaped plan and result and asserts the settled result retains its grouped aggregation and does not expand to one row per distinct value, and that the export of a grouped result is the value+count table. Proven to fail against the pre-removal tree. Passes `scripts/verify.ps1`.
+- Consequence: Unique-list, distinct-values, and most-common questions return grouped counts and download as a distribution table. Implemented by F04 Slice 1 (with the export half landing alongside Slice 4's format work); `.agents/plans/F04-genuine-conversational-answers.md` D2 is ruled. `HeadlineClassifier`'s step-3 comment referencing the transform goes stale and is updated with the removal.
+
 ## F04-D1 — Two model calls per turn: Translate then Narrate
 
 - Status: Approved
