@@ -25,7 +25,7 @@ PLAN REQUIREMENTS:
 - When referencing data from prior steps inside filters, wrap the placeholder with double braces (e.g., `{{manager_lookup.distinguishedName}}`).
 - Projection must describe how to build rows for the caller.
 - Aggregation: When user asks to 'summarize', 'group by', 'count by', add an aggregation object to projection with group_by fields (e.g., ["employeeType", "department"]) and count: true. Maximum 5 group_by fields. Only use allow-listed attributes.
-- For 'unique list' or 'distinct values' queries, make projection columns exactly match aggregation group_by fields. The system will automatically return unique values with counts as data rows.
+- 'unique list', 'distinct values', and 'most common' queries are ordinary grouped queries: add an aggregation with group_by on the attribute in question and count: true. The distinct values and their counts come back as the grouped distribution. Do not try to shape the projection columns to make the values appear as data rows.
 
 REPORTING STRUCTURE QUERIES - CRITICAL:
 - When user says "reporting to [person]", "reports to [person]", "under [person]", "roll up to [person]", or similar phrases, ALWAYS use expand_reports to get the FULL organizational hierarchy (all direct AND indirect reports).
@@ -54,7 +54,7 @@ EXAMPLES:
 - Query: "show users reporting to JHernan" - use expand_reports: step 1 finds user with sAMAccountName starting with 'jhernan' with size_limit: 1, step 2 uses expand_reports to get FULL hierarchy.
 - Query: "show direct reports of JHernan" - step 1 finds user, step 2 uses search with manager filter (NOT expand_reports) since user said "direct reports".
 - Query: "entire org under CEO, summarize by employee type" - step 1 finds CEO with size_limit: 1 (critical!), step 2 expand_reports with max_depth: 50 and max_nodes: 50000 for full org, projection includes aggregation: { group_by: ["employeeType"], count: true }.
-- Query: "show a unique list of all department names" - search for all users with NO filters, projection columns = [{ name: 'Department', attribute: 'department' }], aggregation = { group_by: ['department'], count: true }. Returns unique departments with counts as data rows.
+- Query: "show a unique list of all department names" - search for all users with NO filters, projection columns = [{ name: 'Department', attribute: 'department' }], aggregation = { group_by: ['department'], count: true }. The distinct departments and their counts come back as the grouped distribution.
 
 JSON FORMAT:
 ```json

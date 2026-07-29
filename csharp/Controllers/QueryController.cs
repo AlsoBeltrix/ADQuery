@@ -327,14 +327,70 @@ public class QueryController : ControllerBase
         };
     }
 
+    /// <summary>
+    /// F04 Slice 1 (F04-D2): a grouped result exports as its distribution — value + count,
+    /// count descending — as first-class rows in every format, not as a comment block or a
+    /// side sheet beneath a dump of the underlying records. Returns null when the aggregation
+    /// carries no grouped counts, in which case the underlying rows export unchanged.
+    /// </summary>
+    internal static (List<string> Headers, List<Dictionary<string, object?>> Rows)? BuildGroupedDistributionExport(
+        Dictionary<string, object>? aggregation,
+        IReadOnlyList<string>? groupByFields)
+    {
+        if (aggregation == null ||
+            !aggregation.TryGetValue("grouped_counts", out var raw) ||
+            raw is not IDictionary<string, int> counts ||
+            counts.Count == 0)
+        {
+            return null;
+        }
+
+        var fields = groupByFields is { Count: > 0 }
+            ? groupByFields.ToList()
+            : new List<string> { "Category" };
+
+        var headers = new List<string>(fields) { "Count" };
+        var rows = new List<Dictionary<string, object?>>(counts.Count);
+
+        foreach (var (key, count) in counts.OrderByDescending(kvp => kvp.Value).ThenBy(kvp => kvp.Key, StringComparer.Ordinal))
+        {
+            var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            var parts = fields.Count == 1 ? new[] { key } : key.Split('|');
+
+            for (var i = 0; i < fields.Count; i++)
+            {
+                row[fields[i]] = i < parts.Length ? parts[i] : null;
+            }
+
+            row["Count"] = count;
+            rows.Add(row);
+        }
+
+        return (headers, rows);
+    }
+
     internal static byte[] GenerateFileContent(
         IReadOnlyList<Dictionary<string, object?>> rows,
         IReadOnlyList<string> headers,
         string format,
         Dictionary<string, object>? aggregation = null,
         List<string>? warnings = null,
-        QueryMetadata? metadata = null)
+        QueryMetadata? metadata = null,
+        IReadOnlyList<string>? groupByFields = null)
     {
+        // A grouped result's distribution replaces the underlying rows as the exported
+        // data; the grouped summary block is then dropped so the same table is not
+        // emitted twice. Any other aggregation payload (level_metadata) still renders.
+        var distribution = BuildGroupedDistributionExport(aggregation, groupByFields);
+        if (distribution != null)
+        {
+            rows = distribution.Value.Rows;
+            headers = distribution.Value.Headers;
+            aggregation = aggregation!
+                .Where(kvp => kvp.Key != "grouped_counts")
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+        }
+
         var effectiveHeaders = headers.Any() ? headers : DetermineHeaders(rows);
 
         return format switch
@@ -1084,7 +1140,14 @@ public class QueryController : ControllerBase
             Model = job.ModelUsed
         };
 
-        var fileContent = GenerateFileContent(result.Data, headers, normalizedFormat, job.Aggregation, result.Warnings, queryMetadata);
+        var fileContent = GenerateFileContent(
+            result.Data,
+            headers,
+            normalizedFormat,
+            job.Aggregation,
+            result.Warnings,
+            queryMetadata,
+            job.Plan?.Projection?.Aggregation?.GroupBy);
 
         // Save to E:\WWWOutput for audit trail
         System.IO.File.WriteAllBytes(outputPath, fileContent);

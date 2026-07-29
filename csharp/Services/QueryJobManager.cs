@@ -345,60 +345,7 @@ public class QueryJobManager : IQueryJobManager
             var resultsCacheKey = $"job_results_{jobId}";
             cache.Set(resultsCacheKey, result, TimeSpan.FromHours(2));
 
-            // Extract aggregation if present
-            Dictionary<string, object>? aggregation = null;
-            if (job.Plan.Projection?.Aggregation != null && result.Data.Any())
-            {
-                aggregation = ComputeAggregation(result.Data, job.Plan.Projection.Aggregation);
-
-                // If projection columns exactly match group_by fields, user wants unique values as data
-                var projectionColumns = job.Plan.Projection.Columns.Select(c => c.Attribute).Where(a => !string.IsNullOrWhiteSpace(a)).ToList();
-                var groupByFields = job.Plan.Projection.Aggregation.GroupBy;
-
-                if (projectionColumns.Count == groupByFields.Count &&
-                    projectionColumns.All(col => groupByFields.Contains(col, StringComparer.OrdinalIgnoreCase)))
-                {
-                    // Transform aggregation into data rows
-                    var counts = aggregation["grouped_counts"] as Dictionary<string, int>;
-                    if (counts != null)
-                    {
-                        var uniqueRows = new List<Dictionary<string, object?>>();
-
-                        foreach (var (key, count) in counts.OrderByDescending(kvp => kvp.Value))
-                        {
-                            var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-
-                            if (groupByFields.Count == 1)
-                            {
-                                row[groupByFields[0]] = key;
-                                row["Count"] = count;
-                            }
-                            else
-                            {
-                                var keyParts = key.Split('|');
-                                for (int i = 0; i < groupByFields.Count && i < keyParts.Length; i++)
-                                {
-                                    row[groupByFields[i]] = keyParts[i];
-                                }
-                                row["Count"] = count;
-                            }
-
-                            uniqueRows.Add(row);
-                        }
-
-                        result.Data.Clear();
-                        result.Data.AddRange(uniqueRows);
-
-                        // Clear aggregation since it's now the data itself (avoid duplication in downloads)
-                        aggregation = null;
-
-                        _logger.LogInformation(
-                            "Job {JobId}: Projection columns match group_by fields - returning {Count} unique values as data",
-                            jobId,
-                            uniqueRows.Count);
-                    }
-                }
-            }
+            var aggregation = ComputeSettledAggregation(job.Plan, result.Data);
 
             _store.SetCompleted(
                 jobId,
@@ -465,7 +412,26 @@ public class QueryJobManager : IQueryJobManager
         }
     }
 
-    private Dictionary<string, object> ComputeAggregation(
+    /// <summary>
+    /// Computes the aggregation a completed job settles with (F04 Slice 1, F04-D2).
+    /// A grouped plan keeps its grouped counts regardless of how its projection columns
+    /// relate to its <c>group_by</c> fields: a "unique list" plan is an ordinary grouped
+    /// plan, so the distribution stays the answer and the rows stay the underlying records.
+    /// Returns null when the plan requested no aggregation or produced no rows.
+    /// </summary>
+    internal static Dictionary<string, object>? ComputeSettledAggregation(
+        DirectoryQueryPlan plan,
+        List<Dictionary<string, object?>> rows)
+    {
+        if (plan.Projection?.Aggregation == null || rows.Count == 0)
+        {
+            return null;
+        }
+
+        return ComputeAggregation(rows, plan.Projection.Aggregation);
+    }
+
+    private static Dictionary<string, object> ComputeAggregation(
         List<Dictionary<string, object?>> rows,
         AggregationDefinition aggregation)
     {

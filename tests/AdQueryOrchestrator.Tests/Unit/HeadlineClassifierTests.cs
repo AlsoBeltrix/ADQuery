@@ -75,10 +75,10 @@ public sealed class HeadlineClassifierTests
     }
 
     [Fact]
-    public void DistinctList_ClearedAggregation_IsCount()
+    public void GroupedPlan_NoAggregationPayload_IsCount()
     {
-        // Distinct-list transform fired: aggregation was cleared (null) but the
-        // plan still requested aggregation; the rows are the answer.
+        // The plan requested grouping but no grouped payload reached the classifier
+        // (a legacy job, or an aggregation that produced nothing); the count answers.
         var result = HeadlineClassifier.Classify(AggregationPlan("title"), 42, null, null);
 
         Assert.Equal(HeadlineKind.Count, result.Kind);

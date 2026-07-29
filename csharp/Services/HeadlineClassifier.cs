@@ -23,16 +23,16 @@ public static class HeadlineClassifier
     /// <list type="number">
     ///   <item>zero rows → <c>none</c></item>
     ///   <item>grouped aggregation present → <c>grouped</c> (bounded)</item>
-    ///   <item>plan requested aggregation (distinct-list or pure-count) → <c>count</c></item>
+    ///   <item>plan requested aggregation but no grouped payload (pure-count) → <c>count</c></item>
     ///   <item>exactly one row, no expansion/aggregation → <c>record</c></item>
     ///   <item>otherwise → <c>count</c></item>
     /// </list>
     /// </summary>
     /// <param name="plan">The executed plan (may be null for legacy jobs).</param>
-    /// <param name="totalRows">Final result row count after any distinct-list transform.</param>
+    /// <param name="totalRows">Final result row count.</param>
     /// <param name="aggregation">
-    /// The job's runtime aggregation dictionary. Null when the distinct-list
-    /// transform cleared it or none was produced.
+    /// The job's runtime aggregation dictionary. Null when the plan requested no
+    /// aggregation or the result was empty.
     /// </param>
     /// <param name="firstRow">The first (only) result row, for the record kind.</param>
     public static HeadlineResult Classify(
@@ -47,8 +47,7 @@ public static class HeadlineClassifier
             return new HeadlineResult { Kind = HeadlineKind.None };
         }
 
-        // 2. Grouped — the runtime aggregation survived (was not cleared by the
-        //    distinct-list transform) and carries grouped counts.
+        // 2. Grouped — the runtime aggregation carries grouped counts.
         var groups = ExtractGroups(aggregation);
         if (groups != null && groups.Count > 0)
         {
@@ -60,9 +59,8 @@ public static class HeadlineClassifier
             };
         }
 
-        // 3. The plan requested aggregation but no grouped payload reached here:
-        //    either the distinct-list transform fired (rows are the answer) or a
-        //    pure-count plan (empty group_by). Both answer with a scalar count.
+        // 3. The plan requested aggregation but no grouped payload reached here —
+        //    a pure-count plan (empty group_by). The scalar count is the answer.
         if (plan?.Projection?.Aggregation != null)
         {
             return new HeadlineResult { Kind = HeadlineKind.Count, Count = totalRows };
