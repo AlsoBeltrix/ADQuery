@@ -1,6 +1,13 @@
 # F04 — Genuine Conversational Answers
 
-**Status: Draft (2026-07-29). Not approved; no code lands until the owner flips this status line to `Approved`.** Open owner decisions are listed under "Open owner decisions"; each must be ruled before the slice that depends on it starts. This draft replaces an earlier F04 draft that bolted a synthesis pass onto the existing pipeline; the owner rejected that shape ("you appear to be trying to salvage something of the old app … that will not be approved") and directed a from-scratch model. This is that model.
+**Status: Draft (2026-07-29). Not approved; no code lands until the owner flips this status line to `Approved`.** Open owner decisions are listed under "Open owner decisions"; each must be ruled before the slice that depends on it starts.
+
+**Design history (do not re-litigate).** Three architectures were explored and rejected by the owner before this one, each for a specific reason worth preserving:
+1. *Second synthesis pass bolted onto the existing pipeline* — rejected as salvaging the old app ("that will not be approved"); a call that merely reformats another call's output is the wrong shape.
+2. *Frozen membership + projection-only refinements* — rejected as brittle, and shown to be wrong: it cannot express legitimate membership changes ("add the users in China", "no, the Sanjay in Boston").
+3. *Delta/patch operations against a thread plan* — rejected as more brittle still; a grammar of named edit operations is more rules, not fewer.
+
+The through-line: each attempt tried to make misinterpretation *impossible* by encoding conversation semantics in code. This plan makes misinterpretation *visible and cheap to correct* instead, and holds no conversation-semantics rules in code at all.
 
 This plan is self-contained. A cold, less-capable agent can implement it without the originating conversation. It builds on F01 (`.agents/plans/F01-conversational-query.md`, Implemented) and F02 (mockup UI, Done); read the F01 Design contract for the chat/main-window tokens — F04 does not restate them.
 
@@ -20,45 +27,66 @@ Observed evidence (deployed logs read directly 2026-07-28/29, per-job `.log` and
 
 The F01/F02 work delivered the chat *surface*, the plan-shape headline (`HeadlineClassifier`), and the follow-up plumbing (`previousJobId`, byte-capped last-turn context via `FollowUpContextEnforcer.Compose`). What is missing is the assistant itself.
 
-## Architecture (the model the owner directed)
+## Architecture
 
 The app is a **natural-language conversation wrapped around a deterministic AD query engine.** The LLM is only ever two things, never a third:
 
-- a **translator** — your words → a structured query (this is why the app exists; only an LLM parses "just the ones in Seattle named Jane who started in December" into field/operator/value triples), and
-- a **narrator** — a *reduced* result → a sentence.
+- a **translator** — the conversation so far → one complete structured query (this is why the app exists; only an LLM reads "just the ones in Seattle named Jane who started in December" as field/operator/value triples), and
+- a **narrator** — a *bounded reduction* of the result → a sentence of text.
 
-The LLM **never executes** a query, **never filters rows**, and **never holds the result set.** All row-level work — search, expansion, filtering, aggregation, counting — is deterministic code. This split is what makes answers both smart (the model reasons over what AD actually returned) and safe (the full set never leaves the server, and the model cannot re-decide membership on a whim).
+The LLM **never executes** a query, **never filters rows**, and **never holds the result set.** All row-level work — search, expansion, filtering, aggregation, counting — is deterministic code.
 
-### A plan has two layers with different lifetimes
+### The whole state is the conversation
 
-- `steps[]` = **membership** — search, `expand_reports`, `expand_members`, `lookup`. This decides *who is in the set*.
-- `projection` = **shaping** — columns, projection filters, aggregation. This decides *how the set is presented/narrowed*.
+There is **no frozen base set, no delta/patch language, no membership-vs-projection split enforced on the model, and no refine-vs-fresh classification.** Those are all attempts to encode conversation semantics in code, and every one of them adds a rule that can be wrong. Instead:
+
+> **Every turn, the model re-plans the entire accumulated intent from scratch, given the conversation.**
+
+The thread's state is the *conversation text* — the questions asked so far, which is small. Each turn the model emits one complete, self-contained `DirectoryQueryPlan` for the cumulative intent, exactly as it does today for a single question. Code executes that plan and narrates the result.
+
+Every case this design was stress-tested against falls out with no special handling:
+
+| Turn | Plan the model emits |
+| --- | --- |
+| "everyone under Sanjay" | under-Sanjay |
+| "only with titles" | under-Sanjay AND title populated |
+| "add the users in China" | under-Sanjay AND title AND country = China |
+| "no, the Sanjay in Boston" | corrected seed, same shape |
+| "forget Sanjay, everyone in China" | country = China (subject deliberately replaced) |
+
+### Follow-ups are scoped to the conversation's subject
+
+The "add the users in China" row above is the load-bearing case. A literal reading — `(under-Sanjay AND title) OR (all China users)` — is technically faithful to the words and **useless in practice**: it would return Sanjay's titled reports *plus the entire China directory*. A conversation has a **subject**, and once established, follow-ups are understood *within* it. "Add the users in China" means "bring China into what we are discussing," i.e. *Sanjay's reports with titles who work in China*.
+
+So the default reading of any follow-up is: **scoped to the current subject** — narrowing or extending *within* it — never silently escaping to a directory-wide set. Escaping the subject requires the user to say so ("forget Sanjay…"). This is not a rule encoded in code; it is context supplied to the model in the Translate prompt, and it is the same natural-language interpretation job as mapping "started in December" to `whenCreated`.
+
+### Ambiguity is made visible, not made impossible
+
+Because every answer is text, **the app states the interpretation it used**: *"Sanjay's reports with titles who work in China: 12."* If that is not what the user meant, they see it immediately and correct it in one sentence, exactly as they would with a person.
+
+This is the design's central robustness property, and it replaces the earlier drafts' machinery. Freezing membership and delta-patching were both attempts to make misinterpretation *impossible*, which is precisely what made them rigid and unable to express "add China" or "no, the other Sanjay." Making misinterpretation **visible and cheap to correct** costs nothing, needs no rules, and handles cases no rule set would anticipate.
 
 ### A turn has three phases
 
-1. **Translate.** The model reads the thread state + the user message and emits structure.
-   - A **fresh question** → a full plan (`steps` + `projection`).
-   - A **refinement** of an existing thread → **projection changes only** (add/remove a filter, change aggregation, sort). The model is handed the frozen thread's plan as context and is constrained to reshaping — it does **not** re-emit `steps[]`.
+1. **Translate.** The model reads the conversation (prior questions + the new message) and emits **one complete plan** for the cumulative intent. It is never told "you may only change the projection" or "reuse these steps" — it always does the same simple thing.
 2. **Execute + reduce.** The engine runs the plan; the **full result** is persisted as the on-disk job artifact (already happens — `OutputFile` under `QueryLogHelper.OutputRoot`); a **bounded reduction** is computed (the existing B1 `HeadlineResult`: a scalar count, ≤10 grouped buckets, or one record).
-3. **Narrate.** The model reads {user question + the bounded reduction} and writes the answer. It reasons over *real reduced data*, so extensionAttribute1 yields *"near-unique — 26,612 of ~27k values appear once and 7,150 are blank, so there's no meaningful most-common value; the largest real bucket is Contractor at 6,100"* instead of a dump.
+3. **Narrate.** The model reads {the conversation + the bounded reduction} and writes the answer, stating the interpretation it used. It reasons over *real reduced data*, so extensionAttribute1 yields *"near-unique — 26,612 of ~27k values appear once and 7,150 are blank, so there is no meaningful most-common value; the largest real bucket is Contractor at 6,100"* instead of a dump.
 
-### Threads freeze the membership, not rows-in-RAM
+### Drift, and the only optimization
 
-A thread's identity is its **frozen `steps[]`** plus the on-disk artifact of the last result. A refinement:
+Re-planning every turn means the count could in principle change between turns for an unchanged intent (the "77 quietly became 74" concern). Two things resolve it:
 
-- reuses the frozen `steps[]` **verbatim** — the model cannot re-derive membership, so "the 77" stay exactly 77 across "only the ones with titles"; and
-- applies its projection change over the existing result. If every needed attribute is already in the artifact → filter/aggregate the artifact in code (no AD hit). If the refinement references an attribute the artifact does not carry (e.g. `city` for "only the ones in Seattle") → the engine **re-runs the frozen `steps[]` with that one attribute added** — a single directory search over the same membership, never a per-DN fan-out and never a model re-derivation.
-
-This is the crux the owner drove out: freezing *rows* alone fails (a missing column forces a re-query, which under model variation drifts membership); freezing the *plan's membership steps* guarantees the set is stable while still allowing attribute enrichment via one deterministic re-run.
+- **Correctness:** the plan changes only if the intent changed or the person-match is genuinely ambiguous. If a stable intent does *not* reproduce, that is a real ambiguity the conversation should surface — visible in the narrated answer — not something to freeze away.
+- **Cost:** re-executing a 40k-node org traversal on every refinement is a *performance* problem, not a correctness one. It is solved by an optimization invisible to the design: **when a turn's membership steps are byte-identical to a prior turn's in the same thread, reuse that turn's artifact instead of re-traversing** (a cache keyed on exact plan-step equality). Stable intent is cheap; changed intent re-executes correctly. The model is never constrained by this — code simply skips redundant directory work.
 
 ### Why two model calls per turn is the right shape (not the rejected one)
 
-The earlier draft's second call *reformatted* the first call's output — the owner correctly rejected that as "the wrong shape." This architecture's two calls are **different jobs**: Translate (words → structure) and Narrate (reduced data → words). Narrate is the *only* point at which the model sees what AD returned; without it the model must commit to answer wording before the data exists and cannot react when the data is degenerate (the extensionAttribute1 case). The value that crosses the wire on Narrate is the **bounded reduction** (a count, ≤10 buckets, or one record), never rows and never the full set — identical in size and sensitivity to what DATA-D1 already permits for follow-up context. See D1.
+An earlier draft's second call *reformatted* the first call's output — the owner correctly rejected that as "the wrong shape." This architecture's two calls are **different jobs**: Translate (conversation → structure) and Narrate (reduced data → words). Narrate is the *only* point at which the model sees what AD returned; without it the model must commit to answer wording before the data exists and cannot react when the data is degenerate (the extensionAttribute1 case). What crosses the wire on Narrate is the **bounded reduction** (a count, ≤10 buckets, or one record), never rows and never the full set — the same size and sensitivity DATA-D1 already permits for follow-up context. See D1.
 
 ## Relevant settled decisions (canonical in `.agents/decisions.md`; restated as constraints)
 
 - **DATA-D1 (amended 2026-07-27)** — bounded AD values may be sent to any configured model route (primary or alternate); only a minimal slice (preview slice or aggregation summary), never the full result set, never 10k rows; full downloads stay server-side. **Both F04 model phases are value-bounded by DATA-D1**; Narrate sends only the B1-bounded reduction.
-- **FOLLOWUP-D1 / FOLLOWUP-D2** — follow-up context is byte-capped by `FollowUp:MaxContextBytes` and carries the last turn only; no accumulated transcript reaches the model or is retained server-side. F04's thread state is exactly one frozen prior turn, consistent with this.
+- **FOLLOWUP-D1 / FOLLOWUP-D2** — follow-up context is byte-capped by `FollowUp:MaxContextBytes` and carries the **last turn only**; no accumulated transcript reaches the model or is retained server-side. **This directly conflicts with F04's "the whole state is the conversation" model, which needs the accumulated *questions* (not results) to re-plan cumulative intent.** The conflict is real and is raised as **D6** below; FOLLOWUP-D2 must be amended or F04's thread depth must be capped at one turn. No slice depending on multi-turn context starts before D6 is ruled.
 - **HEADLINE-D1** — the plan-shape headline (`HeadlineClassifier`, F01 B1) is derived server-side from plan + result, not user-selected. It **is** F04's "bounded reduction"; F04 reuses it as the Narrate input and layers answer text on top.
 - **MODEL-D1 / P02-D1** — two routes must both work: Claude Opus primary, gpt-5.5 alternate. Every prompt/parse path F04 adds must run through the existing route-neutral `LlmMessagesRequestBuilder`/`ClaudeService` machinery and be provider-agnostic (no Claude-only or GPT-only assumptions in prompt or response parsing).
 - Logging is unrestricted on the app's own server (F01 GATE-3 resolution): F04's prompts and responses are logged like existing raw model material.
@@ -76,19 +104,20 @@ Re-verify line numbers before editing; they are anchors, not contracts.
 - **Chat answer is code-templated.** `summariseJobForChat` (`csharp/wwwroot/js/app.js:1171`) → `resolveChatAnswer` (`:466`, `:1147-1152`); the pending bubble (`:1133`) is settled with the template. Slice 3 renders the model's real answer here.
 - **Export is cache-backed and model-free.** `DownloadAsync` (`csharp/Controllers/QueryController.cs:1032`) reads `job.ResultsCacheKey` (`:1057`) and serializes (`GenerateFileContent`, `:1087`); no model call. `downloadResults` (`csharp/wwwroot/js/app.js:907`) hits `download-async/{jobId}`. Slice 4 locks this with a guard and adds `html`/`xlsx` alongside `csv`.
 - **Full result persistence.** The completed result is written to disk (`OutputFile`, `QueryLogHelper.OutputRoot = E:\WWWOutput`, `QueryController.cs:1089-1104`) **and** held in an `IMemoryCache` entry for 2h (`QueryJobManager.cs:344-346`, keyed `job_results_{jobId}`). The in-RAM copy is what does not scale to 40k-row sets; F04 leans on the disk artifact as the frozen set of record and treats the cache as an optional fast path (see D5 / Slice 6).
-- **Follow-up plumbing exists.** Client sends only `previousJobId` (F01 C2); `QueryController.cs:855-869` resolves + ownership-checks it; `FollowUpContextBuilder.BuildFromPreviousTurn` + `FollowUpContextEnforcer.Compose` assemble the bounded last-turn context. F04's refinement path builds on this — it must additionally carry the frozen `steps[]` forward, which today's builder does not (it sends a plan *summary* string, not the executable steps).
+- **Follow-up plumbing exists, but carries one turn.** Client sends only `previousJobId` (F01 C2); `QueryController.cs:855-869` resolves + ownership-checks it; `FollowUpContextBuilder.BuildFromPreviousTurn` + `FollowUpContextEnforcer.Compose` assemble the bounded last-turn context (prior question, plan summary, value slice — dropped in that reverse priority under the byte cap). F04 needs the accumulated **question text** across the thread, which this does not currently provide; extending it is the subject of D6 and Slice 6.
 - **Validation rejects empty projection-filter values.** `PlanValidator.cs:229-233`. Fix for the negation-with-empty-value case (Slice 5 / D3).
 - **Automated browser harness (F01 T1, TEST-D1).** Playwright.NET headless Chromium over static `csharp/wwwroot` with `/api` stubbed (`tests/AdQueryOrchestrator.Tests/Browser/`, `StaticSiteFixture`). Front-end slices are guarded by it, not manual notes.
 - **Verification.** `pwsh -NoLogo -NoProfile -File scripts/verify.ps1` (locked-mode restore, format, build warnings-as-errors, full test suite, vuln audit). Every behavior-changing slice adds a red→green non-vacuous guard.
 
-## Known brittle edges (must carry guards, not just prompt hope)
+## Known risks
 
-Named so the plan builds defenses rather than discovering them in production:
+This design deliberately holds **no conversation-semantics rules in code**, so the earlier drafts' brittle edges (refine-vs-fresh classification, projection-only enforcement, delta grammars) no longer exist — there is nothing to misclassify. The remaining risks are inherent to interpretation, and the mitigation is the same one throughout: state the interpretation in the answer so a misread costs one turn.
 
-- **Refine-vs-fresh misclassification.** If "show me the *other* VP's org" is treated as a refinement, projection changes apply to the wrong frozen membership. Mitigation: the model emits an explicit turn-kind signal; code enforces the consequence (a fresh plan resets the thread and its frozen steps). A refinement that arrives with no active thread is treated as fresh. Guarded in Slice 6.
-- **Refinement smuggling membership change.** The "projection-only" constraint on refinements cannot rest on prompt discipline. Code must **reject or ignore** any `steps[]` a refinement emits and reuse the frozen steps; a refinement can only change `projection`. Guarded in Slice 6.
-- **Fuzzy attribute mapping + enrichment re-run drift.** "started in December" → `whenCreated`; a missing-attribute refinement re-runs the frozen steps, opening a live-AD delta window between the two runs. This is genuine AD change, not model drift, and is acceptable; it must be surfaced (the answer is over the re-run set), not hidden. Guarded in Slice 6.
-- **Two calls per turn** — accepted cost (D1); Narrate is isolated so its failure never fails the query (Slice 2).
+- **Subject-scope misread.** The model may read a follow-up as directory-wide instead of subject-scoped (the "add China" failure), or vice-versa. Mitigation: subject-scoping guidance in the Translate prompt, plus the narrated interpretation making it visible. Guarded in Slice 6 by asserting the plan for a scoped follow-up carries the prior constraints, not a bare union.
+- **Cumulative-intent decay over a long thread.** Re-planning from N prior questions may drop an early constraint. Mitigation: the conversation text is small and sent whole (subject to D6's cap); the narrated interpretation surfaces a dropped constraint immediately.
+- **Cost of re-planning + re-execution each turn.** Two model calls per turn (D1) plus a potential full re-traversal. Mitigated by the plan-step-equality artifact reuse (Slice 7); re-execution on genuinely changed intent is correct and intended.
+- **Live-AD change between turns.** Re-executing a changed intent reads AD as it is now, so a count may legitimately differ from a prior turn. This is reality, not drift; it must not be hidden.
+- **Narrate failure** must never fail the query — isolation is guarded in Slice 2.
 
 ## Open owner decisions
 
@@ -98,7 +127,8 @@ Each is presented in chat as a one-line plain-English ask, one at a time; the ru
 - **D2 — Delete the guess-transform and revise the prompt.** Remove the data-mutating branch at `QueryJobManager.cs:354-401` and rewrite `prompt_template.txt:28,57` so "unique list / distinct values / most common" queries use a normal `group_by` aggregation, presented as the grouped reduction. Consequence: such queries return grouped counts, never a bare distinct-row dump. Status: **pending owner y/n. Recommended: yes.**
 - **D3 — Fix the empty-value projection filter in F04.** Treat a negation operator with an empty value (`not_equals ""`) as "attribute is populated" (or drop the degenerate filter) instead of faulting the turn, keeping strict rejection for genuinely malformed filters. Status: **pending owner y/n. Recommended: yes** (it is the exact crash the Sanjay follow-up hit).
 - **D4 — Case-insensitive grouping.** Fold the aggregation group key to a case-insensitive form so `Contractor`/`contractor`/`CONTRACTOR` count as one bucket. Consequence: "most common value" reflects human intent; a display form (e.g. most-frequent original casing) is chosen deterministically. Status: **pending owner y/n. Recommended: yes.**
-- **D5 — On-disk artifact is the frozen set of record; drop the mandatory 2h RAM cache of full results.** Refinement and export read the disk artifact (streamed), not an in-RAM copy, so a 40k-row thread does not pin memory. The memory cache becomes an optional bounded fast path or is removed. Status: **pending owner y/n. Recommended: yes** (the owner raised the 40k-in-RAM objection directly).
+- **D5 — On-disk artifact is the result of record; drop the mandatory 2h RAM cache of full results.** Export and artifact reuse read the disk artifact (streamed), not an in-RAM copy, so a 40k-row thread does not pin memory. The memory cache becomes an optional bounded fast path or is removed. Status: **pending owner y/n. Recommended: yes** (the owner raised the 40k-in-RAM objection directly).
+- **D6 — Amend FOLLOWUP-D2 so a turn may carry the thread's accumulated question text.** F04 re-plans cumulative intent every turn, which requires the prior *questions* (small text), not just the immediately preceding one. FOLLOWUP-D2 currently permits the last turn only. The amendment carries **questions only** — never accumulated results, rows, or value slices, which stay last-turn-bounded under DATA-D1 — under a byte cap and a maximum thread depth. Without it, F04 degrades to single-turn refinement and "add the users in China" cannot see the "with titles" constraint. Status: **pending owner y/n. Recommended: yes, questions-only with a cap.**
 
 ## Slices
 
@@ -156,33 +186,38 @@ UI + backend + an invariant guard. **No decision dependency for the guard; forma
 
 > **xlsx library note (implementation decision, not an owner gate):** pick a maintained, permissively-licensed, zero-native-dependency writer (e.g. a pure-managed OOXML library) that passes the `verify.ps1` vulnerability-audit gate; if none qualifies cleanly, ship csv+html and raise xlsx as a separate decision. Do not add a native/interop Excel dependency.
 
-### Slice 6 — Threaded refinement over frozen membership
+### Slice 6 — Conversation-scoped re-planning (the conversational core)
 
-Backend-first; the conversational core. **Depends on Slices 1, 2. This is the largest slice and MAY be split** into 6a (turn-kind classification + frozen-steps carry-forward + membership-lock guard) and 6b (attribute-enrichment re-run) if that keeps each commit's guard focused.
+Backend-first. **Depends on Slices 1, 2, and decision D6.** MAY be split into 6a (accumulated-question context plumbing + cap) and 6b (subject-scoping prompt guidance + interpretation statement) if that keeps each commit's guard focused.
 
-- **Thread state.** Extend the follow-up path so a refinement carries forward the prior turn's **executable frozen `steps[]`** (not just today's plan-summary string in `FollowUpContextBuilder`). Source of truth for the frozen set is the prior job resolved and ownership-checked exactly as F01 C2 does (`QueryController.cs:855-869`); no new client trust.
-- **Turn-kind.** The Translate call emits an explicit `turnKind` (`fresh` | `refine`). Code enforces the consequence: `fresh` builds a new plan and resets the thread's frozen steps; `refine` reuses the frozen steps verbatim and accepts only `projection` changes. A `refine` with no active thread is treated as `fresh`.
-- **Membership lock (guard-critical).** Code **ignores/rejects** any `steps[]` a `refine` turn emits; membership comes only from the frozen steps. A refine turn can change projection filters, aggregation, columns, sort — nothing that alters who is in the set.
-- **Apply path.** If the refinement's referenced attributes are all present in the artifact → filter/aggregate the artifact in code, no AD hit. If an attribute is missing → re-run the **frozen steps** with that attribute added to the relevant step's `attributes`, one directory search, re-freeze the artifact. Never per-DN fan-out.
+- **Thread context.** Extend the follow-up path so a turn carries the thread's accumulated **question text** (questions only — never accumulated rows or value slices; the DATA-D1 value slice stays last-turn-bounded). Reuse the existing resolution and ownership check (`QueryController.cs:855-869`) and the `FollowUpContextEnforcer` byte-cap mechanic, extended to a capped list of prior questions with a maximum thread depth (D6). Oldest questions drop first when the cap binds.
+- **No turn classification.** There is no `turnKind`, no frozen steps, no projection-only constraint. Every turn the Translate call emits **one complete plan** for the cumulative intent. Code executes whatever plan comes back, exactly as it does for a single question today.
+- **Subject-scoping guidance** in the Translate prompt: a follow-up is interpreted within the conversation's established subject — narrowing or extending *within* it — and never silently escapes to a directory-wide set; leaving the subject requires an explicit statement from the user ("forget Sanjay…"). Include the "add the users in China" case as a worked example of the scoped reading.
+- **Interpretation statement.** The Narrate prompt (Slice 2) is extended so the answer states the interpretation used ("Sanjay's reports with titles who work in China: 12"), making a misread visible and one-turn correctable.
 - **Guards (each red→green, non-vacuous):**
-  - a `refine` turn that emits altered `steps[]` (different seed person, added membership filter) executes against the **frozen** membership and returns the frozen count, not a re-derived one — prove it fails if the frozen-steps lock is removed;
-  - "only the ones with titles" over a frozen 77-with-some-blank-titles set returns the in-code-filtered subset with **no second directory search** — prove it fails if refinement re-queries membership;
-  - a refinement referencing an attribute absent from the artifact triggers exactly **one** re-run of the frozen steps (+the attribute), same membership count — prove it fails if the path fans out per-DN or re-derives membership;
-  - a `fresh` turn after a thread resets the frozen steps — prove it fails if a fresh turn reuses stale frozen steps.
+  - a three-turn thread (`under Sanjay` → `only with titles` → `add the users in China`) produces a final plan carrying **all three** constraints conjunctively — prove it fails if the accumulated-question context is not supplied (the third turn loses the title constraint) and fails if the plan is a bare directory-wide union for China;
+  - a subject-replacing turn ("forget Sanjay, everyone in China") produces a plan **without** the Sanjay constraints — prove it fails if prior constraints are unconditionally carried;
+  - the accumulated-question context is capped: a thread beyond the configured depth/bytes drops oldest questions first and never exceeds the cap — prove it fails if the cap is removed;
+  - the context carries **no** accumulated result rows or value slices beyond the last-turn DATA-D1 bound — prove it fails if results accumulate.
 
-### Slice 7 — Frozen artifact as the set of record; unpin full results from RAM (D5)
+### Slice 7 — Artifact of record; plan-equality reuse; unpin full results from RAM (D5)
 
-Backend-only; **depends on Slice 6** (which establishes artifact-as-source-of-truth). Sequenced last so the conversational path is proven before the memory model changes underneath it.
+Backend-only; **depends on Slice 6.** Sequenced last so the conversational path is proven before the storage/performance model changes underneath it.
 
-- Make refinement (Slice 6) and export (Slice 4) read the on-disk artifact; drop the mandatory 2h full-result `IMemoryCache` entry (`QueryJobManager.cs:344-346`) or reduce it to an optional bounded fast path that never holds a large set resident.
-- **Guard:** a test with a large (e.g. 40k-row) result asserts export and refinement succeed reading the artifact while the full-set memory cache is absent/evicted — prove it fails if either path still requires the in-RAM full result.
+- Make export (Slice 4) and cross-turn reuse read the on-disk artifact; drop the mandatory 2h full-result `IMemoryCache` entry (`QueryJobManager.cs:344-346`) or reduce it to an optional bounded fast path that never holds a large set resident.
+- **Plan-equality artifact reuse (the only optimization):** when a turn's membership steps are byte-identical to a prior turn's in the same thread, reuse that turn's artifact instead of re-executing the directory traversal. Keyed on exact serialized step equality — never a fuzzy or semantic match. A changed intent re-executes normally.
+- **Guards:**
+  - a large (e.g. 40k-row) result: export succeeds reading the artifact while the full-set memory cache is absent/evicted — prove it fails if export still requires the in-RAM full result;
+  - two consecutive turns whose membership steps are identical (projection differs) trigger exactly **one** directory traversal — prove it fails if reuse is removed;
+  - two turns whose membership steps differ by any byte trigger **two** traversals — prove it fails if the equality check is loosened to a fuzzy match.
 
 ## Non-goals (F04)
 
-- No accumulated multi-turn transcript to the model (FOLLOWUP-D2 unchanged); thread state is one frozen prior turn + its artifact. Narrate sees only the current turn's question + bounded reduction.
+- No accumulated **results** transcript to the model. The thread carries accumulated *question text* only (D6); result values stay last-turn-bounded under DATA-D1/FOLLOWUP-D1.
 - No full result set, artifact, or download sent to the model — ever. Every model path is DATA-D1-bounded.
 - No change to the Translate route policy or the retry-with-alternate-model feature; Narrate uses the same route-neutral machinery but its own alternate-retry behavior is out of scope.
 - No agentic tool-calling loop; the model never live-queries AD in a loop (owner-directed: not agentic).
+- No conversation-semantics machinery in code: no turn-kind classifier, no frozen membership, no delta/patch grammar. These were explored and rejected as brittle; do not reintroduce them.
 - No new UI framework, web font, or palette (F01 Design contract + FONT-D1 govern).
 - No token-by-token answer streaming (possible later enhancement; out of scope).
 - No native/interop Excel dependency for xlsx.
