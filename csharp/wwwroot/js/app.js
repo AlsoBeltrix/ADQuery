@@ -1164,7 +1164,11 @@
     const chatState = {
         // The current exchange's answer bubble, awaiting the job result. Non-null
         // only while a chat-originated query is in flight.
-        pendingAnswer: null
+        pendingAnswer: null,
+        // The most recently settled answer bubble. An alternate-model retry re-answers
+        // the question that turn already asked, so the replacement job has to land
+        // there — see reopenLastChatAnswerForRetry().
+        lastAnswer: null
     };
 
     function initChat() {
@@ -1236,11 +1240,30 @@
         }
         chatState.pendingAnswer.classList.remove('pending');
         chatState.pendingAnswer.textContent = summariseJobForChat(job);
+        chatState.lastAnswer = chatState.pendingAnswer;
         chatState.pendingAnswer = null;
         updateChatRefineVisibility();
         if (chatLog) {
             chatLog.scrollTop = chatLog.scrollHeight;
         }
+    }
+
+    /**
+     * F04 finding slice3-or-1: an alternate-model retry replaces the answer to the
+     * question the last turn already asked, so it must land in that turn's bubble
+     * rather than nowhere. Re-arms the settled bubble as pending; the replacement
+     * job then settles it through the ordinary resolveChatAnswer path, keeping the
+     * chat and the main panel on the same job.
+     */
+    function reopenLastChatAnswerForRetry() {
+        if (chatState.pendingAnswer || !chatState.lastAnswer) {
+            return;
+        }
+        chatState.pendingAnswer = chatState.lastAnswer;
+        chatState.lastAnswer = null;
+        chatState.pendingAnswer.classList.add('pending');
+        chatState.pendingAnswer.textContent = 'Trying another model…';
+        updateChatRefineVisibility();
     }
 
     function failChatAnswer(message) {
@@ -1250,6 +1273,8 @@
         chatState.pendingAnswer.classList.remove('pending');
         chatState.pendingAnswer.textContent = message || 'Something went wrong. See the result panel.';
         chatState.pendingAnswer = null;
+        // A failed turn is not a retry target: nothing answered it.
+        chatState.lastAnswer = null;
         updateChatRefineVisibility();
     }
 
@@ -1302,6 +1327,7 @@
         // transmitted (FOLLOWUP-D2), so this is purely local.
         state.lastCompletedJobId = null;
         chatState.pendingAnswer = null;
+        chatState.lastAnswer = null;
         if (chatLog) {
             chatLog.innerHTML = '';
         }
@@ -1480,6 +1506,10 @@
 
                 // Update state to new job
                 state.currentJobId = result.job_id;
+
+                // The conversation must follow the replacement job too, or the chat
+                // keeps presenting the answer the user just rejected.
+                reopenLastChatAnswerForRetry();
 
                 // Start polling the new job ID returned by the server
                 startPolling(result.job_id);
