@@ -305,7 +305,7 @@ internal sealed class ClaudeService : IClaudeService
         promptBuilder.AppendLine("- For direct-report queries, locate the manager first, then search users with `manager` equals that manager's distinguished name.");
         promptBuilder.AppendLine("- Projection must describe how to build rows for the caller.");
         promptBuilder.AppendLine("- Aggregation: When user asks to 'summarize', 'group by', 'count by', add an aggregation object to projection with group_by fields (e.g., [\"employeeType\", \"department\"]) and count: true. Maximum 5 group_by fields. Only use allow-listed attributes.");
-        promptBuilder.AppendLine("- For 'unique list' or 'distinct values' queries, make projection columns exactly match aggregation group_by fields. The system will automatically return unique values with counts as data rows.");
+        promptBuilder.AppendLine("- 'unique list', 'distinct values', and 'most common' queries are ordinary grouped queries: add an aggregation with group_by on the attribute in question and count: true. The distinct values and their counts come back as the grouped distribution. Do not try to shape the projection columns to make the values appear as data rows.");
         promptBuilder.AppendLine();
         promptBuilder.AppendLine("RESULT LIMITS - DEFAULT IS UNLIMITED:");
         promptBuilder.AppendLine("- DEFAULT: Return ALL matching records. Set result_limit: null and omit size_limit from steps.");
@@ -326,7 +326,7 @@ internal sealed class ClaudeService : IClaudeService
         promptBuilder.AppendLine("- Query: \"show all IT Digital Workplace Services users\" – leave \"result_limit\" null (no limit) and avoid introducing a size_limit.");
         promptBuilder.AppendLine("- Query: \"show everyone under John Smith\" – use expand_reports: step 1 finds John Smith with size_limit: 1 (critical!), step 2 uses operation expand_reports with source pointing to step 1, omit max_depth/max_nodes to use defaults.");
         promptBuilder.AppendLine("- Query: \"entire org under CEO, summarize by employee type\" – step 1 finds CEO with size_limit: 1 (critical!), step 2 expand_reports with max_depth: 50 and max_nodes: 50000 for full org, projection includes aggregation: { group_by: [\"employeeType\"], count: true }.");
-        promptBuilder.AppendLine("- Query: \"show a unique list of all department names\" – search for all users with NO filters, projection columns = [{ name: 'Department', attribute: 'department' }], aggregation = { group_by: ['department'], count: true }. Returns unique departments with counts as data rows.");
+        promptBuilder.AppendLine("- Query: \"show a unique list of all department names\" – search for all users with NO filters, projection columns = [{ name: 'Department', attribute: 'department' }], aggregation = { group_by: ['department'], count: true }. The distinct departments and their counts come back as the grouped distribution.");
         promptBuilder.AppendLine();
 
         promptBuilder.AppendLine("JSON FORMAT:");

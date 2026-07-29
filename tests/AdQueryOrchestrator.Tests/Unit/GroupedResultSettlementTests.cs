@@ -21,36 +21,39 @@ public sealed class GroupedResultSettlementTests
 {
     private const string Attribute = "extensionAttribute1";
 
+    // Two large buckets plus three singletons — 8 records, 5 distinct values.
+    private static readonly string[] Values =
+        ["CC-100", "CC-100", "CC-100", "CC-200", "CC-200", "CC-301", "CC-302", "CC-303"];
+
     /// <summary>
     /// The extensionAttribute1 shape that motivated F04-D2: projection column equals the
     /// single group_by field, values near-unique with a few large buckets.
     /// </summary>
-    private static DirectoryQueryPlan DistinctListShapedPlan() => new()
+    private static DirectoryQueryPlan DistinctListShapedPlan(string? columnName = null) => new()
     {
         Steps = { new DirectoryPlanStep { Name = "s1", Operation = "search" } },
         Projection = new ProjectionDefinition
         {
             RowStep = "s1",
-            Columns = { new ProjectionColumn { Name = "Cost Center", Attribute = Attribute } },
+            Columns = { new ProjectionColumn { Name = columnName ?? Attribute, Attribute = Attribute } },
             Aggregation = new AggregationDefinition { Count = true, GroupBy = { Attribute } },
         },
     };
 
-    private static List<Dictionary<string, object?>> DistinctListShapedRows()
-    {
-        var rows = new List<Dictionary<string, object?>>();
-
-        // Two large buckets plus three singletons — 8 records, 5 distinct values.
-        foreach (var value in new[] { "CC-100", "CC-100", "CC-100", "CC-200", "CC-200", "CC-301", "CC-302", "CC-303" })
-        {
-            rows.Add(new Dictionary<string, object?>(System.StringComparer.OrdinalIgnoreCase)
+    /// <summary>
+    /// Rows shaped the way <c>DirectoryPlanExecutor.Project</c> shapes them: keyed by the
+    /// projection column's <c>Name</c>, never by its source attribute (slice1-or-1).
+    /// </summary>
+    private static List<Dictionary<string, object?>> ProjectedRows(string columnName)
+        => Values
+            .Select(value => new Dictionary<string, object?>(System.StringComparer.OrdinalIgnoreCase)
             {
-                [Attribute] = value,
-            });
-        }
+                [columnName] = value,
+            })
+            .ToList();
 
-        return rows;
-    }
+    private static List<Dictionary<string, object?>> DistinctListShapedRows()
+        => ProjectedRows(Attribute);
 
     private static Dictionary<string, int> GroupedCounts(Dictionary<string, object>? aggregation)
     {
@@ -94,6 +97,54 @@ public sealed class GroupedResultSettlementTests
 
         Assert.Equal(5, counts.Count);
         Assert.Equal(8, rows.Count);
+    }
+
+    // --- slice1-or-1: group_by names an attribute; rows are keyed by column name. ---
+
+    [Fact]
+    public void AliasedProjectionColumn_GroupsByTheProjectedValue()
+    {
+        // group_by is "extensionAttribute1"; the projection emits it as "Cost Center".
+        // Pre-fix, the attribute lookup missed every row and folded all 8 records into a
+        // single "(empty)" bucket — a fabricated distribution reported as the answer.
+        var plan = DistinctListShapedPlan(columnName: "Cost Center");
+        var rows = ProjectedRows("Cost Center");
+        var warnings = new List<string>();
+
+        var counts = GroupedCounts(QueryJobManager.ComputeSettledAggregation(plan, rows, warnings));
+
+        Assert.Equal(5, counts.Count);
+        Assert.Equal(3, counts["CC-100"]);
+        Assert.DoesNotContain("(empty)", counts.Keys);
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void CaseVariantColumnName_StillResolves()
+    {
+        // The shipped prompt example projects 'department' as "Department"; rows are
+        // case-insensitive, so the field resolves directly without alias mapping.
+        var plan = DistinctListShapedPlan(columnName: Attribute.ToUpperInvariant());
+        var rows = ProjectedRows(Attribute.ToUpperInvariant());
+
+        Assert.Equal(5, GroupedCounts(QueryJobManager.ComputeSettledAggregation(plan, rows)).Count);
+    }
+
+    [Fact]
+    public void UnprojectedGroupByField_WarnsRatherThanFabricatingAnEmptyBucket()
+    {
+        // Grouping on an attribute the projection never emits: the single "(empty)"
+        // bucket is unavoidable, but it must not be reported as a silent real answer.
+        var plan = DistinctListShapedPlan();
+        plan.Projection!.Aggregation!.GroupBy.Clear();
+        plan.Projection.Aggregation.GroupBy.Add("nowhere");
+        var warnings = new List<string>();
+
+        var counts = GroupedCounts(
+            QueryJobManager.ComputeSettledAggregation(plan, DistinctListShapedRows(), warnings));
+
+        Assert.Equal(new[] { "(empty)" }, counts.Keys);
+        Assert.Contains(warnings, w => w.Contains("nowhere") && w.Contains("not present"));
     }
 
     [Fact]
@@ -190,6 +241,9 @@ public sealed class GroupedResultSettlementTests
                 Aggregation = new AggregationDefinition { Count = true, GroupBy = { "department", "city" } },
             },
         };
+
+        plan.Projection!.Columns.Add(new ProjectionColumn { Name = "department", Attribute = "department" });
+        plan.Projection.Columns.Add(new ProjectionColumn { Name = "city", Attribute = "city" });
 
         var rows = new List<Dictionary<string, object?>>
         {

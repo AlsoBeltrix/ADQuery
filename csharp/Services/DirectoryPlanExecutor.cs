@@ -218,7 +218,8 @@ internal sealed class DirectoryPlanRuntime
 
         result.Data = Project(plan.Projection);
 
-        // Compute aggregation if requested
+        // Aggregation is computed once, on the settled result, by
+        // QueryJobManager.ComputeSettledAggregation — not here (slice1-or-1).
         if (plan.Projection?.Aggregation != null && result.Data.Any())
         {
             _progress?.Report(new PlanProgressUpdate
@@ -227,8 +228,6 @@ internal sealed class DirectoryPlanRuntime
                 CurrentDepth = 0,
                 Phase = "aggregation"
             });
-
-            result.Aggregation = ComputeAggregation(result.Data, plan.Projection.Aggregation);
         }
 
         if (plan.ResultLimit.HasValue && plan.ResultLimit.Value > 0 && result.Data.Count > plan.ResultLimit.Value)
@@ -502,35 +501,6 @@ internal sealed class DirectoryPlanRuntime
         var avgPerLevel = processed / currentDepth;
         var estimatedRemaining = avgPerLevel * 2;
         return processed + estimatedRemaining;
-    }
-
-    private Dictionary<string, object> ComputeAggregation(List<Dictionary<string, object?>> rows, AggregationDefinition aggregation)
-    {
-        var result = new Dictionary<string, object>();
-
-        if (aggregation.Count && aggregation.GroupBy.Any())
-        {
-            var grouped = rows
-                .GroupBy(row =>
-                {
-                    var keys = aggregation.GroupBy
-                        .Select(field =>
-                        {
-                            row.TryGetValue(field, out var value);
-                            return value?.ToString() ?? "(empty)";
-                        })
-                        .ToList();
-                    return string.Join("|", keys);
-                })
-                .ToDictionary(g => g.Key, g => g.Count());
-
-            result["grouped_counts"] = grouped;
-        }
-
-        // Note: level_metadata will be added when expand_reports stores it in step state
-        // For now, aggregation only includes grouped_counts from the final projected data
-
-        return result;
     }
 
     private StepRuntimeState GetSourceState(DirectoryPlanStep step)
@@ -1554,8 +1524,6 @@ internal sealed class DirectoryPlanRuntime
         public int StepsExecuted { get; set; }
 
         public int StepsSkipped { get; set; }
-
-        public Dictionary<string, object>? Aggregation { get; set; }
     }
 }
 

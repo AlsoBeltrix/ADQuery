@@ -345,7 +345,7 @@ public class QueryJobManager : IQueryJobManager
             var resultsCacheKey = $"job_results_{jobId}";
             cache.Set(resultsCacheKey, result, TimeSpan.FromHours(2));
 
-            var aggregation = ComputeSettledAggregation(job.Plan, result.Data);
+            var aggregation = ComputeSettledAggregation(job.Plan, result.Data, result.Warnings);
 
             _store.SetCompleted(
                 jobId,
@@ -421,31 +421,77 @@ public class QueryJobManager : IQueryJobManager
     /// </summary>
     internal static Dictionary<string, object>? ComputeSettledAggregation(
         DirectoryQueryPlan plan,
-        List<Dictionary<string, object?>> rows)
+        List<Dictionary<string, object?>> rows,
+        ICollection<string>? warnings = null)
     {
         if (plan.Projection?.Aggregation == null || rows.Count == 0)
         {
             return null;
         }
 
-        return ComputeAggregation(rows, plan.Projection.Aggregation);
+        return ComputeAggregation(rows, plan.Projection, warnings);
+    }
+
+    /// <summary>
+    /// Resolves a <c>group_by</c> field — an <em>attribute</em> name — to the key it
+    /// actually occupies in a projected row (slice1-or-1). Projection writes values under
+    /// <see cref="ProjectionColumn.Name"/> (`DirectoryPlanExecutor.Project`), so grouping
+    /// on the attribute misses whenever a column carries a display alias. Prefers the
+    /// field itself (rows are case-insensitive, so a case-variant alias resolves here),
+    /// then the name of a column projecting that attribute. Null means the field reaches
+    /// the projected rows under no key at all.
+    /// </summary>
+    private static string? ResolveGroupKey(
+        string field,
+        ProjectionDefinition projection,
+        Dictionary<string, object?> sampleRow)
+    {
+        if (sampleRow.ContainsKey(field))
+        {
+            return field;
+        }
+
+        var column = projection.Columns.FirstOrDefault(c =>
+            c.Attribute.Equals(field, StringComparison.OrdinalIgnoreCase) &&
+            sampleRow.ContainsKey(c.Name));
+
+        return column?.Name;
     }
 
     private static Dictionary<string, object> ComputeAggregation(
         List<Dictionary<string, object?>> rows,
-        AggregationDefinition aggregation)
+        ProjectionDefinition projection,
+        ICollection<string>? warnings)
     {
         var result = new Dictionary<string, object>();
+        var aggregation = projection.Aggregation!;
 
         if (aggregation.Count && aggregation.GroupBy.Any())
         {
+            // Resolution is per-field and fixed for the whole result: projected rows all
+            // carry the same key set, so one sample settles it.
+            var resolved = aggregation.GroupBy
+                .Select(field => (Field: field, Key: ResolveGroupKey(field, projection, rows[0])))
+                .ToList();
+
+            foreach (var (field, key) in resolved.Where(r => r.Key is null))
+            {
+                // Surfacing this beats folding every record into one "(empty)" bucket and
+                // reporting that fabricated distribution as the answer.
+                warnings?.Add($"Aggregation field '{field}' is not present in the projected results; its grouping component is empty.");
+            }
+
             var grouped = rows
                 .GroupBy(row =>
                 {
-                    var keys = aggregation.GroupBy
-                        .Select(field =>
+                    var keys = resolved
+                        .Select(r =>
                         {
-                            row.TryGetValue(field, out var value);
+                            object? value = null;
+                            if (r.Key is not null)
+                            {
+                                row.TryGetValue(r.Key, out value);
+                            }
                             return value?.ToString() ?? "(empty)";
                         })
                         .ToList();
