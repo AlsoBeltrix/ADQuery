@@ -1,5 +1,16 @@
 # Settled Decisions
 
+## F04-D5 — The completion-time disk artifact is the result of record; full results leave RAM
+
+- Status: Approved
+- Date: 2026-07-29
+- Authority: Repository owner ("yes", to the one-line ask "Move results to disk?"; the underlying objection was the owner's own — "so if the query was who rolls up to the CEO, we'd have 40k+ results in memory? that's not going to work")
+- Decision: A completed query's full result is persisted to disk as a canonical artifact and that artifact is the authoritative result of record. The mandatory 2-hour full-result `IMemoryCache` entry (`csharp/Services/QueryJobManager.cs:344-346`, keyed `job_results_{jobId}`) is dropped, or reduced to an optional bounded fast path that never holds a large set resident.
+- Scope and required order: **create the artifact, migrate every reader, then drop the cache.** No artifact exists at completion today — `QueryController.cs:1090` is the only result write in the codebase and it runs *inside* `DownloadAsync`, after that method has already read the cached result (`:1057-1062`), so the artifact is produced *by* a download rather than before one. Write it atomically (temp path in the user's `QueryLogHelper` directory, then move into place) before the job is marked `Completed`, and record its path on `QueryJob`. **Four readers depend on the cache and all move together:** preview (`QueryController.cs:984-992`, which 404s without it), single-record headline construction (`:1275-1282`, which silently downgrades a `record` headline to `count` without it), download (`:1057-1062`), and F04's cross-turn artifact reuse. Preview and headline need only the first rows, so they stream or seek rather than materializing the set.
+- Evidence: Raised by the openreview reviewer as finding `f04-or-1` (HIGH) and verified against the code; the plan's prior evidence bullet wrongly asserted a completion-time artifact already existed. Record: `.agents/review/findings/f04-or-1.md`.
+- Constraints: Landed with red→green guards: a freshly completed job with the cache absent or evicted still serves preview, a single-record headline that stays `record` rather than degrading to `count`, download, and cross-turn reuse — proven to fail when any single reader is left on the cache; and a large (e.g. 40k-row) result exports from the artifact with no full-set in-RAM copy. Passes `scripts/verify.ps1`.
+- Consequence: A 40k-row thread no longer pins server memory, and export stops depending on a cache entry that can expire. Implemented by F04 Slice 7, sequenced last so the conversational path is proven before the storage model changes underneath it; `.agents/plans/F04-genuine-conversational-answers.md` D5 is ruled. Artifact retention and cleanup on `E:\WWWOutput` are not addressed here and remain an open implementation-time question.
+
 ## F04-D4 — Grouping is case-insensitive by default, with a model-settable case-sensitive mode
 
 - Status: Approved
