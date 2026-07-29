@@ -71,7 +71,7 @@ This is the design's central robustness property, and it replaces the earlier dr
 ### A turn has three phases
 
 1. **Translate.** The model reads the conversation (prior questions + the new message) and emits **one complete plan** for the cumulative intent. It is never told "you may only change the projection" or "reuse these steps" — it always does the same simple thing.
-2. **Execute + reduce.** The engine runs the plan; the **full result** is persisted as the on-disk job artifact (already happens — `OutputFile` under `QueryLogHelper.OutputRoot`); a **bounded reduction** is computed (the existing B1 `HeadlineResult` — a scalar count, ≤10 grouped buckets, or one record — plus a scalar distribution summary for grouped plans; see Slice 2).
+2. **Execute + reduce.** The engine runs the plan; the **full result** is persisted as the on-disk job artifact (**does not exist yet** — Slice 7 creates it under `QueryLogHelper.OutputRoot`; today the only result write happens inside `DownloadAsync`, see the current-state evidence bullet on result persistence); a **bounded reduction** is computed (the existing B1 `HeadlineResult` — a scalar count, ≤10 grouped buckets, or one record — plus a scalar distribution summary for grouped plans; see Slice 2).
 3. **Narrate.** The model reads {the conversation + the bounded reduction} and writes the answer, stating the interpretation it used. It reasons over *real reduced data*, so extensionAttribute1 yields *"near-unique — 26,612 of ~27k values appear once and 7,150 are blank, so there is no meaningful most-common value; the largest real bucket is Contractor at 6,100"* instead of a dump.
 
 ### Drift, and the only optimization
