@@ -17,13 +17,17 @@ namespace AdQuery.Orchestrator.Tests.Unit;
 ///
 /// The guard walks the whole call graph reachable from <c>DownloadAsync</c> through the
 /// application assembly and asserts that no method in it calls <see cref="IClaudeService"/>
-/// or <see cref="IDirectoryPlanExecutor"/>, and that the controller's model and executor
-/// fields are never even loaded. A "fail the test if the model is invoked" stub cannot be
-/// used here: <c>DownloadAsync</c> writes its audit copy under
-/// <see cref="QueryLogHelper.OutputRoot"/> (a hard-coded <c>E:\</c> path), which does not
-/// exist on a build agent, so the method cannot be driven end to end portably. Reading the
-/// call graph proves the stronger claim anyway — not merely that this input made no model
-/// call, but that no input can.
+/// or <see cref="IDirectoryPlanExecutor"/>, and that no field holding either service is even
+/// loaded. Virtual and interface calls descend into every application-assembly implementation,
+/// so routing export through an injected service does not hide what that service calls
+/// (slice4-or-2). A "fail the test if the model is invoked" stub cannot be used here:
+/// <c>DownloadAsync</c> writes its audit copy under <see cref="QueryLogHelper.OutputRoot"/>
+/// (a hard-coded <c>E:\</c> path), which does not exist on a build agent, so the method cannot
+/// be driven end to end portably. Reading the call graph proves the stronger claim anyway —
+/// not merely that this input made no model call, but that no input can.
+///
+/// The companion claim, that the bytes come from the settled artifact, is guarded separately by
+/// <c>ExportSerializesTheSettledArtifactTests</c>, which drives the real serializer.
 /// </summary>
 public sealed class ExportIsModelFreeTests
 {
@@ -35,11 +39,17 @@ public sealed class ExportIsModelFreeTests
         typeof(IDirectoryPlanExecutor),
     ];
 
-    private static readonly string[] ForbiddenControllerFields =
-    [
-        "_claudeService",
-        "_planExecutor",
-    ];
+    /// <summary>
+    /// Every field in the application assembly that holds a forbidden service, discovered by
+    /// type rather than named literally (slice4-or-2): a renamed field, or a new one on a
+    /// service extracted out of the controller, is caught without editing this test.
+    /// </summary>
+    private static readonly HashSet<FieldInfo> ForbiddenFields = AppAssembly
+        .GetTypes()
+        .SelectMany(t => t.GetFields(
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static))
+        .Where(f => ForbiddenTypes.Any(forbidden => forbidden.IsAssignableFrom(f.FieldType)))
+        .ToHashSet();
 
     [Fact]
     public void DownloadAsync_CallGraph_NeverReachesTheModelOrThePlanExecutor()
@@ -83,10 +93,11 @@ public sealed class ExportIsModelFreeTests
         {
             foreach (var field in LoadedFields(method))
             {
-                if (field.DeclaringType == typeof(QueryController) &&
-                    ForbiddenControllerFields.Contains(field.Name))
+                if (ForbiddenFields.Contains(field))
                 {
-                    offenders.Add($"{method.DeclaringType?.Name}.{method.Name} → {field.Name}");
+                    offenders.Add(
+                        $"{method.DeclaringType?.Name}.{method.Name} → "
+                        + $"{field.DeclaringType?.Name}.{field.Name}");
                 }
             }
         }
@@ -120,6 +131,13 @@ public sealed class ExportIsModelFreeTests
     /// Every method in the application assembly transitively reachable from <paramref name="root"/>.
     /// Calls out of the assembly (BCL, ClosedXML) are recorded as callees by
     /// <see cref="CalledMembers"/> but not descended into.
+    /// <para>
+    /// A call to an interface or abstract method descends into **every** application-assembly
+    /// implementation of it (slice4-or-2). Ordinary DI dispatch would otherwise stop the walk at
+    /// an empty interface body, so extracting export into an injected service would silently
+    /// hide whatever that service calls. Over-approximating — walking implementations the runtime
+    /// might never select — is the safe direction for an invariant this guard must not miss.
+    /// </para>
     /// </summary>
     private static IReadOnlyCollection<MethodBase> ReachableMethods(MethodBase root)
     {
@@ -133,18 +151,75 @@ public sealed class ExportIsModelFreeTests
             var current = queue.Dequeue();
             foreach (var callee in CalledMembers(current))
             {
-                if (callee is not MethodBase method ||
-                    method.DeclaringType?.Assembly != AppAssembly ||
-                    !seen.Add(method))
+                if (callee is not MethodBase method || method.DeclaringType?.Assembly != AppAssembly)
                 {
                     continue;
                 }
 
-                queue.Enqueue(method);
+                foreach (var target in Enumerable.Repeat(method, 1).Concat(ImplementationsOf(method)))
+                {
+                    if (seen.Add(target))
+                    {
+                        queue.Enqueue(target);
+                    }
+                }
             }
         }
 
         return seen;
+    }
+
+    /// <summary>
+    /// Application-assembly overrides and interface implementations of a virtual, abstract, or
+    /// interface method. Empty for an ordinary concrete call.
+    /// </summary>
+    private static IEnumerable<MethodBase> ImplementationsOf(MethodBase method)
+    {
+        var declaring = method.DeclaringType;
+        if (declaring == null || method is not MethodInfo declared ||
+            !(declaring.IsInterface || declared.IsAbstract || declared.IsVirtual))
+        {
+            yield break;
+        }
+
+        foreach (var type in AppAssembly.GetTypes())
+        {
+            if (type.IsInterface || type.IsAbstract || !declaring.IsAssignableFrom(type))
+            {
+                continue;
+            }
+
+            var target = declaring.IsInterface
+                ? MapInterfaceMethod(type, declaring, declared)
+                : type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                    .FirstOrDefault(m => m.GetBaseDefinition() == declared.GetBaseDefinition());
+
+            if (target != null && target != declared && target.DeclaringType?.Assembly == AppAssembly)
+            {
+                yield return target;
+            }
+        }
+    }
+
+    private static MethodInfo? MapInterfaceMethod(Type implementation, Type iface, MethodInfo declared)
+    {
+        if (implementation.IsGenericTypeDefinition)
+        {
+            // An open generic has no runtime interface map; its methods are unreachable as
+            // written and any concrete instantiation is reached through its own type.
+            return null;
+        }
+
+        var map = implementation.GetInterfaceMap(iface);
+        for (var i = 0; i < map.InterfaceMethods.Length; i++)
+        {
+            if (map.InterfaceMethods[i] == declared)
+            {
+                return map.TargetMethods[i];
+            }
+        }
+
+        return null;
     }
 
     private static IEnumerable<MemberInfo> CalledMembers(MethodBase method) =>
