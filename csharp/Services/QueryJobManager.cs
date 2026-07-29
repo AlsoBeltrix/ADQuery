@@ -481,25 +481,56 @@ public class QueryJobManager : IQueryJobManager
                 warnings?.Add($"Aggregation field '{field}' is not present in the projected results; its grouping component is empty.");
             }
 
-            var grouped = rows
-                .GroupBy(row =>
-                {
-                    var keys = resolved
-                        .Select(r =>
+            var keys = rows
+                .Select(row => GroupKey.Compose(resolved
+                    .Select(r =>
+                    {
+                        object? value = null;
+                        if (r.Key is not null)
                         {
-                            object? value = null;
-                            if (r.Key is not null)
-                            {
-                                row.TryGetValue(r.Key, out value);
-                            }
-                            return value?.ToString() ?? "(empty)";
-                        })
-                        .ToList();
-                    return GroupKey.Compose(keys);
-                })
-                .ToDictionary(g => g.Key, g => g.Count());
+                            row.TryGetValue(r.Key, out value);
+                        }
+                        return value?.ToString() ?? "(empty)";
+                    })
+                    .ToList()))
+                .ToList();
+
+            // The fold goes on GroupBy, never on the result dictionary's comparer
+            // (f04-or-4): an ordinal GroupBy followed by a case-insensitive ToDictionary
+            // throws on the first pair of case-variant keys.
+            var comparer = aggregation.CaseSensitive ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
+            var grouped = new Dictionary<string, int>();
+            var spellings = new Dictionary<string, int>();
+
+            foreach (var fold in keys.GroupBy(key => key, comparer))
+            {
+                // The display key is the bucket's most frequent original spelling — a
+                // property of the group's members, which is why the fold cannot be a
+                // dictionary comparer. Ties break ordinally so the choice is stable.
+                var bySpelling = fold
+                    .GroupBy(key => key, StringComparer.Ordinal)
+                    .OrderByDescending(g => g.Count())
+                    .ThenBy(g => g.Key, StringComparer.Ordinal)
+                    .ToList();
+
+                var display = bySpelling[0].Key;
+                grouped[display] = fold.Count();
+
+                // Only multi-spelling buckets are carried: a "1" for every bucket would
+                // duplicate the distribution at no information gain (a near-unique
+                // attribute has tens of thousands of single-spelling buckets).
+                if (bySpelling.Count > 1)
+                {
+                    spellings[display] = bySpelling.Count;
+                }
+            }
 
             result["grouped_counts"] = grouped;
+
+            if (spellings.Count > 0)
+            {
+                result["grouped_spellings"] = spellings;
+            }
         }
 
         return result;

@@ -345,11 +345,23 @@ public class QueryController : ControllerBase
             return null;
         }
 
+        // Case-folded buckets that merged more than one spelling (F04 Slice 1b). Absent
+        // when every bucket is spelled one way, so the column appears only where it says
+        // something — that is what makes case inconsistency discoverable in a download.
+        var spellings = aggregation.TryGetValue("grouped_spellings", out var rawSpellings)
+            ? rawSpellings as IDictionary<string, int>
+            : null;
+
         var fields = groupByFields is { Count: > 0 }
             ? groupByFields.ToList()
             : new List<string> { "Category" };
 
         var headers = new List<string>(fields) { "Count" };
+        if (spellings is { Count: > 0 })
+        {
+            headers.Add("Spellings");
+        }
+
         var rows = new List<Dictionary<string, object?>>(counts.Count);
 
         foreach (var (key, count) in counts.OrderByDescending(kvp => kvp.Value).ThenBy(kvp => kvp.Key, StringComparer.Ordinal))
@@ -363,6 +375,12 @@ public class QueryController : ControllerBase
             }
 
             row["Count"] = count;
+
+            if (spellings is { Count: > 0 })
+            {
+                row["Spellings"] = spellings.TryGetValue(key, out var distinct) ? distinct : 1;
+            }
+
             rows.Add(row);
         }
 
@@ -387,7 +405,7 @@ public class QueryController : ControllerBase
             rows = distribution.Value.Rows;
             headers = distribution.Value.Headers;
             aggregation = aggregation!
-                .Where(kvp => kvp.Key != "grouped_counts")
+                .Where(kvp => kvp.Key != "grouped_counts" && kvp.Key != "grouped_spellings")
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
         }
 
@@ -1358,6 +1376,9 @@ public class QueryController : ControllerBase
         {
             grouped_counts = job.Aggregation.ContainsKey("grouped_counts")
                 ? job.Aggregation["grouped_counts"]
+                : null,
+            grouped_spellings = job.Aggregation.ContainsKey("grouped_spellings")
+                ? job.Aggregation["grouped_spellings"]
                 : null,
             level_metadata = job.Aggregation.ContainsKey("level_metadata")
                 ? job.Aggregation["level_metadata"]

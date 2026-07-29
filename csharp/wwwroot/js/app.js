@@ -646,6 +646,10 @@
         const counts = aggregation.grouped_counts;
         const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
         const groupByFields = aggregation.group_by_fields || [];
+        // Case-folded buckets that merged more than one spelling; absent when there are
+        // none, so the column only appears where it says something.
+        const spellings = aggregation.grouped_spellings || null;
+        const hasSpellings = spellings && Object.keys(spellings).length > 0;
         const totalEntries = entries.length;
         const displayLimit = state.summaryRowCount || 20;
         const entriesToShow = entries.slice(0, displayLimit);
@@ -670,6 +674,11 @@
         const countHeader = document.createElement('th');
         countHeader.textContent = 'Count';
         headerRow.appendChild(countHeader);
+        if (hasSpellings) {
+            const spellingHeader = document.createElement('th');
+            spellingHeader.textContent = 'Spellings';
+            headerRow.appendChild(spellingHeader);
+        }
         aggregationHead.appendChild(headerRow);
 
         // Determine if we have multi-field grouping
@@ -696,6 +705,13 @@
             countCell.textContent = count.toLocaleString();
             countCell.style.textAlign = 'right';
             row.appendChild(countCell);
+
+            if (hasSpellings) {
+                const spellingCell = document.createElement('td');
+                spellingCell.textContent = (spellings[key] || 1).toLocaleString();
+                spellingCell.style.textAlign = 'right';
+                row.appendChild(spellingCell);
+            }
 
             aggregationBody.appendChild(row);
         });

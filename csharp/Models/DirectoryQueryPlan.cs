@@ -226,5 +226,15 @@ public class AggregationDefinition
     /// </summary>
     [JsonPropertyName("include_level_metadata")]
     public bool IncludeLevelMetadata { get; set; }
+
+    /// <summary>
+    /// Group values by exact case (F04 Slice 1b, F04-D4). Default false: case variants of
+    /// one value (<c>Contractor</c> / <c>contractor</c> / <c>CONTRACTOR</c>) fold into a
+    /// single bucket, because they are one value to a human asking "how many contractors".
+    /// The model sets this when the user is asking *about* the case variants themselves —
+    /// exact-case counts, spelling inconsistencies, normalization targets.
+    /// </summary>
+    [JsonPropertyName("case_sensitive")]
+    public bool CaseSensitive { get; set; }
 }
 
