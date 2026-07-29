@@ -1104,7 +1104,13 @@ public class QueryController : ControllerBase
     }
 
     /// <summary>
-    /// Downloads results from a completed async job
+    /// Downloads results from a completed async job.
+    /// <para>
+    /// F04 Slice 4 invariant: this path serializes the settled result artifact and never
+    /// reaches a model or re-executes a plan — exporting must not risk producing a different
+    /// result than the answer the user already read. Locked by
+    /// <c>ExportIsModelFreeTests</c>, which walks the call graph from here.
+    /// </para>
     /// </summary>
     [HttpGet("download-async/{jobId}")]
     public IActionResult DownloadAsync(string jobId, [FromQuery] string? format = null)
