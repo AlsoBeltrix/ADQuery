@@ -177,7 +177,6 @@ public sealed class NarrateIsolationTests : IDisposable
         public Task<ClaudeResponse> GenerateExecutionPlanAsync(
             string userQuery,
             string? context = null,
-            int? requestedResultLimit = null,
             CancellationToken cancellationToken = default,
             string? modelOverride = null)
             => Task.FromResult(new ClaudeResponse

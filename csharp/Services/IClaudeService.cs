@@ -7,10 +7,20 @@ namespace AdQuery.Orchestrator.Services;
 /// </summary>
 public interface IClaudeService
 {
+    /// <summary>
+    /// Translate (F04-D1): the conversation becomes one <see cref="DirectoryQueryPlan"/>.
+    /// <para>
+    /// The server's configured result ceiling is deliberately not a parameter (slice3r2-or-1).
+    /// The model translates the *user's* intent; a safety cap is not part of that intent, and
+    /// describing one to the model as a count the user asked for makes the resulting
+    /// <c>result_limit</c> indistinguishable from a real user request — which is the fact
+    /// <see cref="PlanPreprocessor.EnsurePlanLimit"/> reads to decide whether a truncated
+    /// answer is incomplete. The cap is applied deterministically after translation instead.
+    /// </para>
+    /// </summary>
     Task<ClaudeResponse> GenerateExecutionPlanAsync(
         string userQuery,
         string? context = null,
-        int? requestedResultLimit = null,
         CancellationToken cancellationToken = default,
         string? modelOverride = null);
 

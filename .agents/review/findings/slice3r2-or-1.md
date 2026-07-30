@@ -3,9 +3,9 @@
 **Severity**: HIGH — it defeats the primary arm of the `ci-or-1` fix in the only configuration
 where that arm is live, and it does so silently: the classification looks correct in code and
 is wrong only because of what the prompt told the model to return.
-**Status**: Open
+**Status**: Fixed
 **Branch**: — (repo policy: commit on `master`, one finding per commit)
-**Commit**: —
+**Commit**: `<this commit>`
 
 ## Evidence
 `QueryController:939-940` reads the configured `QueryDefaults:MaxResults` ceiling and passes it
@@ -76,10 +76,32 @@ Guard in the shape this repo already uses for a retired prompt phrase
 prompt path, plus a classification test driving the plan the model now returns.
 
 ## Files changed
-—
+- `csharp/Services/IClaudeService.cs` — `GenerateExecutionPlanAsync` loses `requestedResultLimit`;
+  the reason is stated on the contract, where the next caller will read it.
+- `csharp/Services/ClaudeService.cs` — both prompt builders lose the guidance block;
+  `BuildExecutionPlanPrompt` and `BuildPromptFromTemplate` lose the parameter. The template path
+  still replaces `{{RESULT_LIMIT_GUIDANCE}}` with the empty string, so a template file deployed
+  before this change does not render the literal token to the model.
+- `csharp/Configuration/prompt_template.txt` — the placeholder line removed.
+- `csharp/Services/QueryJobManager.cs` — the Translate call stops passing the ceiling;
+  `PrepareForExecution` at `:327` still applies it.
+- `csharp/Models/QueryJob.cs` — `RequestedResultLimit` documented for what it holds (the
+  configured ceiling, never a user request) and what may now read it.
+- `tests/.../Unit/TheServerCapNeverEntersThePromptTests.cs` (new, 5 tests).
+- `tests/.../Unit/NarrateIsolationTests.cs`, `Unit/ResultArtifactLifecycleTests.cs` — the two
+  `IClaudeService` stubs follow the signature.
 
 ## Guard proof
-—
+The injection restored in both prompt paths and the placeholder restored in the template → 3 red
+of 5 in `TheServerCapNeverEntersThePromptTests`
+(`TheBuiltInPrompt_NeverDescribesAServerCapAsAUserRequest`,
+`TheCheckedInTemplatePath_DoesTheSame`,
+`ADeployedTemplateStillCarryingThePlaceholder_RendersNothingForIt`). The two classification
+tests stay green by design — they assert the `EnsurePlanLimit` boundary, which this fix does not
+move; what the fix removes is the prompt that manufactured the wrong input to it.
+
+`scripts/verify.ps1` green with everything restored: exit 0, 347 tests, 0 failures, 0 warnings,
+publish smoke and vulnerability audit passed.
 
 ## Coder dispute (if any)
 None on the defect.

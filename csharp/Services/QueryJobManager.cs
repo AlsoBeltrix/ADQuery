@@ -301,11 +301,11 @@ public class QueryJobManager : IQueryJobManager
 
             jobToken.ThrowIfCancellationRequested();
 
-            // Generate plan with context and limit (same as sync endpoint)
+            // Translate: the conversation becomes a plan. The configured result ceiling is
+            // deliberately not sent (slice3r2-or-1) — PrepareForExecution applies it below.
             var planResponse = await claude.GenerateExecutionPlanAsync(
                 job.Query,
                 contextToUse,
-                job.RequestedResultLimit,
                 jobToken,
                 modelOverride);
 

@@ -104,7 +104,6 @@ internal sealed class ClaudeService : IClaudeService
     public async Task<ClaudeResponse> GenerateExecutionPlanAsync(
       string userQuery,
       string? context = null,
-      int? requestedResultLimit = null,
       CancellationToken cancellationToken = default,
       string? modelOverride = null)
     {
@@ -127,7 +126,7 @@ internal sealed class ClaudeService : IClaudeService
 
             _logger.LogInformation("Generating directory plan using model {Model}", effectiveModel);
 
-            var prompt = BuildExecutionPlanPrompt(userQuery, context, requestedResultLimit);
+            var prompt = BuildExecutionPlanPrompt(userQuery, context);
             var systemGuidance = BuildSystemGuidance(_configuration);
 
             var claudeRequest = _requestBuilder.Build(
@@ -387,7 +386,6 @@ internal sealed class ClaudeService : IClaudeService
             var testResponse = await GenerateExecutionPlanAsync(
               "Return a simple confirmation",
               context: null,
-              requestedResultLimit: null,
               cancellationToken: cancellationToken);
             result.IsHealthy = testResponse.Success && testResponse.Plan is not null;
             result.JsonParsingWorking = testResponse.Plan is not null;
@@ -412,12 +410,12 @@ internal sealed class ClaudeService : IClaudeService
         return result;
     }
 
-    private string BuildExecutionPlanPrompt(string userQuery, string? context, int? requestedResultLimit)
+    private string BuildExecutionPlanPrompt(string userQuery, string? context)
     {
         // Use external template if loaded, otherwise fall back to built-in
         if (!string.IsNullOrWhiteSpace(_promptTemplate))
         {
-            return BuildPromptFromTemplate(userQuery, context, requestedResultLimit);
+            return BuildPromptFromTemplate(userQuery, context);
         }
 
         var promptBuilder = new StringBuilder();
@@ -571,11 +569,9 @@ internal sealed class ClaudeService : IClaudeService
         promptBuilder.AppendLine("}");
         promptBuilder.AppendLine("```");
         promptBuilder.AppendLine();
-        if (requestedResultLimit.HasValue && requestedResultLimit.Value > 0)
-        {
-            promptBuilder.AppendLine($"The user explicitly requested only {requestedResultLimit.Value} rows. Ensure the plan sets \"result_limit\": {requestedResultLimit.Value} and that the search step supplying those rows uses \"size_limit\": {requestedResultLimit.Value}.");
-            promptBuilder.AppendLine();
-        }
+
+        // slice3r2-or-1: no server-side result ceiling is described here. See
+        // IClaudeService.GenerateExecutionPlanAsync.
 
         if (!string.IsNullOrWhiteSpace(context))
         {
@@ -592,16 +588,14 @@ internal sealed class ClaudeService : IClaudeService
         return promptBuilder.ToString();
     }
 
-    private string BuildPromptFromTemplate(string userQuery, string? context, int? requestedResultLimit)
+    private string BuildPromptFromTemplate(string userQuery, string? context)
     {
         var prompt = _promptTemplate!;
 
-        // Build result limit guidance
+        // slice3r2-or-1: the placeholder is still replaced — with nothing — because a deployed
+        // template file predating this change would otherwise render the literal token to the
+        // model. See IClaudeService.GenerateExecutionPlanAsync for why nothing goes here.
         var resultLimitGuidance = "";
-        if (requestedResultLimit.HasValue && requestedResultLimit.Value > 0)
-        {
-            resultLimitGuidance = $"The user explicitly requested only {requestedResultLimit.Value} rows. Ensure the plan sets \"result_limit\": {requestedResultLimit.Value} and that the search step supplying those rows uses \"size_limit\": {requestedResultLimit.Value}.\n";
-        }
 
         // Build context section
         var contextSection = "";

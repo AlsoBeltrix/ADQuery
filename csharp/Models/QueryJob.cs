@@ -21,6 +21,12 @@ public class QueryJob
     /// </summary>
     public string? PreviousJobId { get; set; }
 
+    /// <summary>
+    /// The configured <c>QueryDefaults:MaxResults</c> ceiling in force for this job, or null
+    /// when unlimited. Despite the name it is never a user request — the controller derives it
+    /// from configuration alone — and since slice3r2-or-1 it reaches only
+    /// <see cref="PlanPreprocessor.EnsurePlanLimit"/> and the audit log, never the prompt.
+    /// </summary>
     public int? RequestedResultLimit { get; set; }
     public DirectoryQueryPlan? Plan { get; set; }
 
