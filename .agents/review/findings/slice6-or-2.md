@@ -1,9 +1,9 @@
 # slice6-or-2: The prompt treats any "instead of" correction as abandoning the conversation subject
 
 **Severity**: MEDIUM — the scoping block's own exit condition licenses the escape it exists to prevent, for a phrasing users reach for constantly.
-**Status**: Open
+**Status**: Fixed
 **Branch**: — (repo policy: commit on `master`, one finding per commit)
-**Commit**: `<filled in after commit>`
+**Commit**: `f0b6df3` (status recorded late — see [slice5r2-or-2](slice5r2-or-2.md))
 
 ## Evidence
 `csharp/Configuration/prompt_template.txt:36` and the built-in fallback at

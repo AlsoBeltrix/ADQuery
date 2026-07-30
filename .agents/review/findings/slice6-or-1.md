@@ -1,9 +1,9 @@
 # slice6-or-1: Alternate-model retries discard the accumulated thread ancestry
 
 **Severity**: MEDIUM — a retried turn becomes a thread root, so the next follow-up is re-planned without the subject the conversation established; the failure is a silently wrong result set, not an error.
-**Status**: Open
+**Status**: Fixed
 **Branch**: — (repo policy: commit on `master`, one finding per commit)
-**Commit**: `<filled in after commit>`
+**Commit**: `7e94872` (status recorded late — see [slice5r2-or-2](slice5r2-or-2.md))
 
 ## Evidence
 `csharp/Controllers/QueryController.cs:1329-1338` builds the replacement job for
