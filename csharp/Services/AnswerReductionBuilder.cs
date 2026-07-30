@@ -22,6 +22,12 @@ namespace AdQuery.Orchestrator.Services;
 /// hand Narrate a question and no facts to answer it with. When neither evidence-bearing
 /// component fits, the reduction is null and Narrate is skipped.
 /// </para>
+/// <para>
+/// That floor is enforced on the composition's <em>contents</em>, not on its position in
+/// the drop order (slice2-or-1): <see cref="Distribution"/> is null for every result that
+/// is not a grouped aggregation, so on a count or a single record the headline-dropping
+/// step already lands on the factless composition.
+/// </para>
 /// </summary>
 public sealed record AnswerReductionComponents(
     string? Headline,
@@ -81,22 +87,35 @@ public sealed class AnswerReductionBuilder : IAnswerReductionBuilder
 
         // Assembly order is fixed and independent of which components survive: question,
         // plan description, distribution, headline. Drop order is the reverse.
-        var q = Normalize(components.Question);
-        var d = Normalize(components.PlanDescription);
-        var s = Normalize(components.Distribution);
-        var h = Normalize(components.Headline);
+        var normalized = new AnswerReductionComponents(
+            Headline: Normalize(components.Headline),
+            Distribution: Normalize(components.Distribution),
+            PlanDescription: Normalize(components.PlanDescription),
+            Question: Normalize(components.Question));
 
-        string?[] keepAll = { q, d, s, h };
-        string?[] dropHeadline = { q, d, s };
+        AnswerReductionComponents[] ladder =
+        {
+            normalized,
+            normalized with { Headline = null },
+        };
 
         // The ladder ends at the last rung still carrying result evidence (slice7-or-4).
-        // Shedding the distribution too would leave {question, plan description} — what was
-        // asked, twice over, and nothing about what came back — so Narrate would answer from
-        // nothing and the invented answer would sit above a correct headline and table.
-        // Returning null instead skips Narrate and completes the job with headline, table,
-        // and export, which is the documented behaviour for a null reduction.
-        foreach (var candidate in new[] { keepAll, dropHeadline })
+        // A composition of {question, plan description} alone is what was asked, twice over,
+        // and nothing about what came back — so Narrate would answer from nothing and the
+        // invented answer would sit above a correct headline and table. Returning null
+        // instead skips Narrate and completes the job with headline, table, and export,
+        // which is the documented behaviour for a null reduction.
+        //
+        // The floor is decided by what a composition contains, not by which rung produced it
+        // (slice2-or-1): the distribution is null for every non-grouped result, so the
+        // headline-dropping rung is itself factless on the count and single-record shapes.
+        foreach (var candidate in ladder)
         {
+            if (!CarriesResultEvidence(candidate))
+            {
+                continue;
+            }
+
             var assembled = Assemble(candidate);
             if (assembled is not null && FitsCap(assembled))
             {
@@ -107,14 +126,30 @@ public sealed class AnswerReductionBuilder : IAnswerReductionBuilder
         return null;
     }
 
+    /// <summary>
+    /// True when the composition says something about the <em>result</em>. Only the headline
+    /// and the distribution do; the question and the plan description both describe what was
+    /// asked.
+    /// </summary>
+    private static bool CarriesResultEvidence(AnswerReductionComponents components)
+        => components.Headline is not null || components.Distribution is not null;
+
     private bool FitsCap(string value) => Encoding.UTF8.GetByteCount(value) <= MaxBytes;
 
     private static string? Normalize(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value;
 
-    private static string? Assemble(string?[] components)
+    private static string? Assemble(AnswerReductionComponents components)
     {
-        var present = components.Where(component => component is not null).ToArray();
+        string?[] ordered =
+        {
+            components.Question,
+            components.PlanDescription,
+            components.Distribution,
+            components.Headline,
+        };
+
+        var present = ordered.Where(component => component is not null).ToArray();
         return present.Length == 0 ? null : string.Join('\n', present);
     }
 

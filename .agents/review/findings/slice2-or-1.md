@@ -3,9 +3,9 @@
 **Severity**: MEDIUM — the same fabricated-answer failure `slice7-or-4` closed, still open on
 the two most common result shapes; and unlike that finding it needs no unusual configuration
 value to be *shaped* wrongly, only a small one.
-**Status**: Open
+**Status**: Fixed
 **Branch**: — (repo policy: commit on `master`, one finding per commit)
-**Commit**: `<filled in after commit>`
+**Commit**: `<this commit>`
 
 ## Evidence
 `csharp/Services/AnswerReductionBuilder.cs:89-105`. The ladder is two rungs:
@@ -49,10 +49,27 @@ reduction is emitted only when it carries at least one component that describes 
 this makes it true for every result shape rather than for grouped results only.
 
 ## Files changed
-- (to be filled in)
+- `csharp/Services/AnswerReductionBuilder.cs` — the ladder is now
+  `AnswerReductionComponents` values rather than `string?[]` positional arrays, so a rung can
+  be inspected for what it carries. `CarriesResultEvidence` skips any candidate holding
+  neither headline nor distribution; `Assemble` owns the fixed emission order that the arrays
+  used to encode positionally. The type's doc comment records the contents-not-position rule.
+- `tests/AdQueryOrchestrator.Tests/Unit/AnswerReductionTests.cs` — the guard.
 
 ## Guard proof
-- (to be filled in)
+`NonGroupedResult_UnderACapThatExcludesTheHeadline_YieldsNoReduction`, a `[Theory]` over
+`count` and `record`. Both cases build with a null distribution under a cap sized to exactly
+`{question, plan description}` and assert `Build` returns null.
+
+Temporarily removed the `CarriesResultEvidence` guard clause from the loop (the rest of the
+refactor left in place, so the revert isolates the behavior and not the restructuring):
+both cases fail — `Assert.Null() Failure: Value is not null / Actual: "QUESTION: how many
+contractors are in Bangalore?\n"···`, i.e. the factless composition, reproduced. Restored:
+11/11 in the class. `scripts/verify.ps1` green, 325 tests.
+
+(Note: `Copy-Item` restoring the file preserved its older timestamp, so the first rerun
+reused the stale build and looked red. Touching the file and rerunning gave the real green —
+worth knowing for any future revert-restore proof on this repo.)
 
 ## Coder dispute (if any)
 None. The finding is correct and it is a gap in my own `slice7-or-4` fix (`daacd2a`), not in

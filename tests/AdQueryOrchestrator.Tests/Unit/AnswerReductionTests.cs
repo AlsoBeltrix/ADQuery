@@ -239,6 +239,40 @@ public sealed class AnswerReductionTests
             .Build(Question, plan, headline, distribution));
     }
 
+    [Theory]
+    [InlineData(HeadlineKind.Count)]
+    [InlineData(HeadlineKind.Record)]
+    public void NonGroupedResult_UnderACapThatExcludesTheHeadline_YieldsNoReduction(string kind)
+    {
+        // slice2-or-1. The evidence floor is a property of the composition, not of the rung
+        // that produced it. DistributionSummarizer returns null for every result that is not
+        // a grouped aggregation, so on a count or a single record the headline is the only
+        // evidence there is — and dropping it leaves exactly the factless composition
+        // slice7-or-4 ruled out, at a cap the validator accepts.
+        var plan = new DirectoryQueryPlan
+        {
+            Description = "Count all contractors in Bangalore",
+            Steps = { new DirectoryPlanStep { Step = 1, Name = "s1", Operation = "search" } },
+        };
+
+        var headline = string.Equals(kind, HeadlineKind.Count, System.StringComparison.Ordinal)
+            ? new HeadlineResult { Kind = HeadlineKind.Count, Count = 412 }
+            : new HeadlineResult
+            {
+                Kind = HeadlineKind.Record,
+                Record = new Dictionary<string, object?> { ["displayName"] = "Priya Raman" },
+            };
+
+        const string Asked = "how many contractors are in Bangalore?";
+        var factless = "QUESTION: " + Asked + "\nQUERY RUN: " + plan.Description;
+
+        // Fits the question and the description; short of anything carrying the headline.
+        var reduction = Builder(Encoding.UTF8.GetByteCount(factless))
+            .Build(Asked, plan, headline, distribution: null);
+
+        Assert.Null(reduction);
+    }
+
     [Fact]
     public void CapTooSmallForEvenTheQuestion_YieldsNoReduction()
     {
