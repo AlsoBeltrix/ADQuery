@@ -36,7 +36,13 @@ public class QueryJob
     public string? Phase { get; set; }
 
     // Results
-    public string? ResultsCacheKey { get; set; }
+    /// <summary>
+    /// The completion-time artifact of record holding this job's full result (F04 Slice 7,
+    /// F04-D5). Written atomically before the job is marked completed, so a reader that sees
+    /// <see cref="JobStatus.Completed"/> sees a path that either resolves to a complete
+    /// artifact or to nothing at all. Null when the write failed — the job still completes.
+    /// </summary>
+    public string? ResultArtifactPath { get; set; }
     public int? TotalRows { get; set; }
     public string? ModelUsed { get; set; }
     public Dictionary<string, object>? Aggregation { get; set; }

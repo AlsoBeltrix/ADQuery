@@ -237,7 +237,8 @@ public sealed class QueryControllerFollowUpProvenanceTests
             manager,
             builder,
             null!,
-            null!)
+            null!,
+            new NoResultArtifactStore())
         {
             ControllerContext = new ControllerContext
             {
@@ -294,7 +295,6 @@ public sealed class QueryControllerFollowUpProvenanceTests
             IClaudeService claude,
             IPlanValidator validator,
             IDirectoryPlanExecutor executor,
-            IMemoryCache cache,
             CancellationToken cancellationToken) => Task.CompletedTask;
     }
 }

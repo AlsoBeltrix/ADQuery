@@ -72,14 +72,12 @@ public class QueryJobExecutorHostedService : BackgroundService
                             var claude = execScope.ServiceProvider.GetRequiredService<IClaudeService>();
                             var validator = execScope.ServiceProvider.GetRequiredService<IPlanValidator>();
                             var executor = execScope.ServiceProvider.GetRequiredService<IDirectoryPlanExecutor>();
-                            var cache = execScope.ServiceProvider.GetRequiredService<IMemoryCache>();
 
                             await execJobManager.ExecuteJobWithServicesAsync(
                                 jobId,
                                 claude,
                                 validator,
                                 executor,
-                                cache,
                                 stoppingToken);
                         }
                         catch (Exception ex)

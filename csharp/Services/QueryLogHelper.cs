@@ -16,10 +16,19 @@ internal static class QueryLogHelper
 
     private static readonly Regex InvalidPathChars = new Regex(@"[^\w\.-]", RegexOptions.Compiled);
 
-    internal static string GetUserDirectory(string? samAccountName)
+    internal static string GetUserDirectory(string? samAccountName) =>
+        GetUserDirectory(OutputRoot, samAccountName);
+
+    /// <summary>
+    /// The per-user output directory beneath an explicit root. F04 Slice 7 stores the
+    /// completion-time result artifact under a configurable root so the storage model is
+    /// exercisable off a machine that has <see cref="OutputRoot"/>; path sanitization stays
+    /// here rather than being duplicated by each writer.
+    /// </summary>
+    internal static string GetUserDirectory(string root, string? samAccountName)
     {
         var accountSegment = SanitizePathSegment(string.IsNullOrWhiteSpace(samAccountName) ? "unknown" : samAccountName!);
-        var directory = Path.Combine(OutputRoot, accountSegment);
+        var directory = Path.Combine(root, accountSegment);
         Directory.CreateDirectory(directory);
         return directory;
     }

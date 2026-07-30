@@ -4,7 +4,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using AdQuery.Orchestrator.Models;
 using AdQuery.Orchestrator.Security;
-using Microsoft.Extensions.Caching.Memory;
 
 namespace AdQuery.Orchestrator.Services;
 
@@ -31,12 +30,13 @@ public interface IQueryJobManager
     List<QueryJob> GetQueuedJobs();
     void CleanupCompletedJobs(TimeSpan olderThan);
 
-    // Called by hosted service with scoped dependencies
+    // Called by hosted service with scoped dependencies.
+    // No results cache: F04 Slice 7 (F04-D5) replaced the 2h full-result IMemoryCache entry
+    // with the completion-time artifact of record, so the job path no longer takes one.
     Task ExecuteJobWithServicesAsync(
         string jobId,
         IClaudeService claude,
         IPlanValidator validator,
         IDirectoryPlanExecutor executor,
-        IMemoryCache cache,
         CancellationToken cancellationToken);
 }

@@ -74,7 +74,7 @@ public sealed class ExportPolicyIsServerEnforcedTests
     {
         // A multi-row list IS the artifact. The policy gate must let it through — proving the
         // refusals above are the rule firing, not the endpoint being broken for everything.
-        // Execution stops at the cache lookup (this job's results are absent), which is the
+        // Execution stops at the artifact lookup (this job's results are absent), which is the
         // next check after the gate and well before any file is written.
         var (controller, _) = CreateController(SearchPlan(), totalRows: 42);
 
@@ -136,8 +136,8 @@ public sealed class ExportPolicyIsServerEnforcedTests
                     Status = JobStatus.Completed,
                     Plan = plan,
                     TotalRows = totalRows,
-                    // No ResultsCacheKey: an exportable job therefore stops at the cache check,
-                    // which is the first thing after the policy gate.
+                    // No ResultArtifactPath: an exportable job therefore stops at the artifact
+                    // lookup, which is the first thing after the policy gate.
                 },
             },
         };
@@ -151,7 +151,8 @@ public sealed class ExportPolicyIsServerEnforcedTests
             manager,
             null!,
             null!,
-            null!)
+            null!,
+            new NoResultArtifactStore())
         {
             ControllerContext = new ControllerContext
             {
@@ -190,7 +191,6 @@ public sealed class ExportPolicyIsServerEnforcedTests
             IClaudeService claude,
             IPlanValidator validator,
             IDirectoryPlanExecutor executor,
-            IMemoryCache cache,
             CancellationToken cancellationToken) => Task.CompletedTask;
     }
 }

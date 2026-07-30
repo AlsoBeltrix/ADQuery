@@ -90,8 +90,12 @@ builder.Services.AddSingleton<IQueryJobQueue, InMemoryQueryJobQueue>();
 builder.Services.AddSingleton<IFollowUpContextEnforcer, FollowUpContextEnforcer>();
 builder.Services.AddSingleton<IFollowUpContextBuilder, FollowUpContextBuilder>();
 builder.Services.AddSingleton<IAnswerReductionBuilder, AnswerReductionBuilder>();
+builder.Services.AddSingleton<IResultArtifactStore, JsonLinesResultArtifactStore>();
 builder.Services.AddSingleton<IQueryJobManager, QueryJobManager>();
 builder.Services.AddHostedService<QueryJobExecutorHostedService>();
+// F04 Slice 7 (f04-or-7): artifacts outlive the process, job metadata does not, so a restart
+// leaves every artifact and every interrupted-write temp file orphaned. Sweep them at startup.
+builder.Services.AddHostedService<ResultArtifactSweeper>();
 
 // Register feedback storage
 builder.Services.AddSingleton<IFeedbackStore, JsonLinesFeedbackStore>();

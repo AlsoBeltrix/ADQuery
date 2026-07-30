@@ -24,6 +24,7 @@ public class QueryJobManager : IQueryJobManager
     private readonly IPlanPreprocessor _planPreprocessor;
     private readonly IFollowUpContextEnforcer _followUpContextEnforcer;
     private readonly IAnswerReductionBuilder _answerReductionBuilder;
+    private readonly IResultArtifactStore _resultArtifacts;
     private readonly int _maxJobsPerUser;
 
     // Server-generated internal control directive appended to a job's context to force a
@@ -39,6 +40,7 @@ public class QueryJobManager : IQueryJobManager
         IPlanPreprocessor planPreprocessor,
         IFollowUpContextEnforcer followUpContextEnforcer,
         IAnswerReductionBuilder answerReductionBuilder,
+        IResultArtifactStore resultArtifacts,
         IConfiguration configuration)
     {
         _store = store;
@@ -47,6 +49,7 @@ public class QueryJobManager : IQueryJobManager
         _planPreprocessor = planPreprocessor;
         _followUpContextEnforcer = followUpContextEnforcer;
         _answerReductionBuilder = answerReductionBuilder;
+        _resultArtifacts = resultArtifacts;
         _maxJobsPerUser = Math.Max(0, configuration.GetValue<int>("Jobs:MaxJobsPerUser", 0));
     }
 
@@ -166,7 +169,6 @@ public class QueryJobManager : IQueryJobManager
         IClaudeService claude,
         IPlanValidator validator,
         IDirectoryPlanExecutor executor,
-        IMemoryCache cache,
         CancellationToken cancellationToken)
     {
         var job = _store.GetJob(jobId);
@@ -332,7 +334,14 @@ public class QueryJobManager : IQueryJobManager
                     jobId, update.CurrentDepth, update.NodesProcessed, update.EstimatedRemainingNodes, update.Phase);
             });
 
-            var result = await executor.ExecutePlanAsync(
+            // F04 Slice 7 (F04-D5): the only optimization. A turn whose complete plan is
+            // byte-identical to an earlier turn's in the same thread reuses that turn's
+            // artifact instead of re-traversing. Exact whole-plan equality only — steps and
+            // projection, filters, aggregation, limit — because the artifact holds rows
+            // already filtered and reduced to one projection's shape.
+            var (reusedResult, reusedArtifactPath) = TryReuseThreadArtifact(job, executedPlanJson);
+
+            var result = reusedResult ?? await executor.ExecutePlanAsync(
                 job.Plan,
                 progress,
                 job.CancellationSource.Token);
@@ -346,9 +355,17 @@ public class QueryJobManager : IQueryJobManager
                 return;
             }
 
-            // Store results in cache
-            var resultsCacheKey = $"job_results_{jobId}";
-            cache.Set(resultsCacheKey, result, TimeSpan.FromHours(2));
+            // F04 Slice 7 (F04-D5): the artifact of record is written atomically *before* the
+            // job is marked Completed, so every reader that acts on Completed finds it. The
+            // mandatory 2h full-result IMemoryCache entry that used to live here is gone —
+            // holding a 40k-row set resident is exactly what did not scale — and all four
+            // readers (preview, single-record headline, download, cross-turn reuse) now read
+            // the artifact instead.
+            //
+            // A reused artifact is pointed at, not rewritten: two jobs then share one file,
+            // and retention keeps it until the last of them expires (IsArtifactStillOwned).
+            job.ResultArtifactPath = reusedArtifactPath
+                ?? await WriteResultArtifactAsync(job, result, jobToken);
 
             var aggregation = ComputeSettledAggregation(
                 job.Plan, result.Data, result.GroupValues, result.Warnings);
@@ -360,8 +377,8 @@ public class QueryJobManager : IQueryJobManager
                 result.Data.Count,
                 aggregation,
                 result.Warnings,
-                resultsCacheKey,
-                answer);
+                answer,
+                job.ResultArtifactPath);
 
             WriteJobLog(success: true, recordCount: result.Data.Count, warnings: result.Warnings, errorMessage: null);
 
@@ -382,6 +399,96 @@ public class QueryJobManager : IQueryJobManager
             _store.UpdateStatus(jobId, JobStatus.Failed, ex.Message);
             _logger.LogError(ex, "Job {JobId} failed with exception", jobId);
             WriteJobLog(success: false, recordCount: 0, warnings: null, errorMessage: ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Whole-plan artifact reuse (F04 Slice 7, F04-D5). Walks this job's thread and returns the
+    /// nearest completed ancestor whose *serialized plan is byte-identical* to this turn's,
+    /// together with that ancestor's artifact path.
+    /// <para>
+    /// Exact equality only, never fuzzy or semantic, and never membership-step equality:
+    /// <c>DirectoryPlanExecutor.Project</c> stores rows already filtered and reduced to that
+    /// turn's columns, so "everyone under Sanjay" → "only those with titles" would otherwise
+    /// reuse an artifact with no Title column and unfiltered rows. The comparison reads the
+    /// plan recorded *in the artifact*, not in-memory job state, so a rewritten or replaced
+    /// file cannot be reused under a stale plan.
+    /// </para>
+    /// </summary>
+    private (PlanExecutionResult? Result, string? ArtifactPath) TryReuseThreadArtifact(
+        QueryJob job,
+        string? executedPlanJson)
+    {
+        if (string.IsNullOrWhiteSpace(executedPlanJson))
+        {
+            return (null, null);
+        }
+
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { job.JobId };
+        var ancestorId = job.PreviousJobId;
+
+        while (!string.IsNullOrWhiteSpace(ancestorId) && visited.Add(ancestorId))
+        {
+            var ancestor = _store.GetJob(ancestorId);
+            if (ancestor == null)
+            {
+                return (null, null);
+            }
+
+            // Same guards the thread walk applies elsewhere: a foreign or incomplete turn is
+            // not reusable material.
+            if (ancestor.Status == JobStatus.Completed &&
+                ancestor.UserName.Equals(job.UserName, StringComparison.OrdinalIgnoreCase))
+            {
+                var artifact = _resultArtifacts.Read(ancestor.ResultArtifactPath);
+                if (artifact != null &&
+                    string.Equals(artifact.PlanJson, executedPlanJson, StringComparison.Ordinal))
+                {
+                    _logger.LogInformation(
+                        "Job {JobId} reuses the artifact of turn {AncestorId}: identical plan, no traversal",
+                        job.JobId, ancestor.JobId);
+
+                    return (
+                        new PlanExecutionResult
+                        {
+                            Success = true,
+                            Data = artifact.Rows,
+                            GroupValues = artifact.GroupValues,
+                            Warnings = artifact.Warnings,
+                        },
+                        ancestor.ResultArtifactPath);
+                }
+            }
+
+            ancestorId = ancestor.PreviousJobId;
+        }
+
+        return (null, null);
+    }
+
+    /// <summary>
+    /// Writes the completion-time artifact of record (F04 Slice 7, F04-D5), returning its path
+    /// or null when the write failed. A failed artifact write degrades the job to the behavior
+    /// it had before this slice — cache-backed, expiring — rather than failing a query whose
+    /// directory work already succeeded.
+    /// </summary>
+    private async Task<string?> WriteResultArtifactAsync(
+        QueryJob job,
+        PlanExecutionResult result,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _resultArtifacts.WriteAsync(job, result, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Job {JobId} result artifact write failed; completing without one", job.JobId);
+            return null;
         }
     }
 
@@ -470,16 +577,39 @@ public class QueryJobManager : IQueryJobManager
     public void CleanupCompletedJobs(TimeSpan olderThan)
     {
         var cutoff = DateTime.UtcNow - olderThan;
-        var completedJobs = _store.GetJobsByStatus(JobStatus.Completed)
+        var allCompleted = _store.GetJobsByStatus(JobStatus.Completed);
+        var expired = allCompleted
             .Where(j => j.CompletedAt.HasValue && j.CompletedAt.Value < cutoff)
             .ToList();
 
-        foreach (var job in completedJobs)
+        var expiring = expired.Select(j => j.JobId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // F04 Slice 7 (f04-or-7): D5 moved results from a store with automatic expiry to one
+        // with none, so retention has to delete the file too — and *before* RemoveJob drops
+        // the metadata that names it, or the artifact is orphaned permanently.
+        foreach (var job in expired)
         {
+            if (!string.IsNullOrWhiteSpace(job.ResultArtifactPath) &&
+                !IsArtifactStillOwned(job, expiring))
+            {
+                _resultArtifacts.Delete(job.ResultArtifactPath);
+            }
+
             _store.RemoveJob(job.JobId);
             _logger.LogDebug("Cleaned up completed job {JobId}", job.JobId);
         }
     }
+
+    /// <summary>
+    /// Reuse ownership (f04-or-7): whole-plan reuse points a later turn's job at an earlier
+    /// turn's artifact, so the originating job's expiry must not delete a file a surviving job
+    /// still reads. The artifact outlives its writer for exactly as long as some job that is
+    /// not itself expiring references the same path.
+    /// </summary>
+    private bool IsArtifactStillOwned(QueryJob expiring, HashSet<string> expiringJobIds) =>
+        _store.GetUserJobs(expiring.UserName).Any(other =>
+            !expiringJobIds.Contains(other.JobId) &&
+            string.Equals(other.ResultArtifactPath, expiring.ResultArtifactPath, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Computes the aggregation a completed job settles with (F04 Slice 1, F04-D2).

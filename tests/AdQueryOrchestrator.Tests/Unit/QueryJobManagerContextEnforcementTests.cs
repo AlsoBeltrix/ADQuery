@@ -32,6 +32,7 @@ public sealed class QueryJobManagerContextEnforcementTests
             new PlanPreprocessor(configuration),
             enforcer,
             new AnswerReductionBuilder(Options.Create(new AnswerOptions())),
+            new NoResultArtifactStore(),
             configuration);
     }
 

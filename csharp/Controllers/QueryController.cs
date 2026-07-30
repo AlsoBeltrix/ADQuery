@@ -45,6 +45,7 @@ public class QueryController : ControllerBase
     private readonly IFollowUpContextBuilder _followUpContextBuilder;
     private readonly IPlanPreprocessor _planPreprocessor;
     private readonly IPlanValidator _planValidator;
+    private readonly IResultArtifactStore _resultArtifacts;
     private readonly string _defaultModelId;
     private readonly string _defaultModelDisplayName;
     private readonly string _alternateModelId;
@@ -59,7 +60,8 @@ public class QueryController : ControllerBase
         IQueryJobManager jobManager,
         IFollowUpContextBuilder followUpContextBuilder,
         IPlanPreprocessor planPreprocessor,
-        IPlanValidator planValidator)
+        IPlanValidator planValidator,
+        IResultArtifactStore resultArtifacts)
     {
         _logger = logger;
         _claudeService = claudeService;
@@ -70,6 +72,7 @@ public class QueryController : ControllerBase
         _followUpContextBuilder = followUpContextBuilder;
         _planPreprocessor = planPreprocessor;
         _planValidator = planValidator;
+        _resultArtifacts = resultArtifacts;
 
         _defaultModelId = configuration.GetValue<string>("Claude:Model", "claude-3-sonnet-20240229")!;
         _defaultModelDisplayName = DeriveModelDisplayName(_defaultModelId);
@@ -921,6 +924,18 @@ public class QueryController : ControllerBase
         }
 
         var userName = GetSamAccountName(HttpContext.User);
+
+        // F04 Slice 7 (f04-or-7): every completed job now writes a full-result artifact, so
+        // disk exhaustion is a refusal at admission rather than an atomic write that fails
+        // partway through directory work the user already waited for.
+        if (!_resultArtifacts.HasRoomForAnotherResult())
+        {
+            _logger.LogError("Refusing query for {UserName}: result artifact storage is out of space", userName);
+            return StatusCode(
+                StatusCodes.Status507InsufficientStorage,
+                new { error = "Result storage is full. Contact an administrator before running more queries." });
+        }
+
         var maxResults = _configuration.GetValue<int>("QueryDefaults:MaxResults", 0);
         var requestedLimit = maxResults > 0 ? (int?)maxResults : null;
 
@@ -1097,21 +1112,21 @@ public class QueryController : ControllerBase
             return BadRequest(new { error = $"Job status is {job.Status.ToString().ToLower()}, not completed" });
         }
 
-        if (string.IsNullOrWhiteSpace(job.ResultsCacheKey) ||
-            !_cache.TryGetValue(job.ResultsCacheKey, out PlanExecutionResult? result) ||
-            result == null)
+        // F04 Slice 7: read the artifact of record, bounded to the preview size — the file is
+        // line-oriented, so this stops after that many rows instead of materializing a 40k-row
+        // set to show ten of them.
+        var previewRowCount = _configuration.GetValue<int>("QueryDefaults:PreviewRowCount", 10);
+        var artifact = _resultArtifacts.Read(job.ResultArtifactPath, previewRowCount);
+        if (artifact == null)
         {
             return NotFound(new { error = "Results expired or not available" });
         }
 
-        var previewRowCount = _configuration.GetValue<int>("QueryDefaults:PreviewRowCount", 10);
-        var previewRows = result.Data.Take(previewRowCount).ToList();
-
         return Ok(new
         {
-            rows = previewRows,
-            totalRows = result.Data.Count,
-            hasMore = result.Data.Count > 10
+            rows = artifact.Rows,
+            totalRows = artifact.TotalRows,
+            hasMore = artifact.TotalRows > 10
         });
     }
 
@@ -1184,9 +1199,11 @@ public class QueryController : ControllerBase
             return BadRequest(new { error = "This answer has no exportable result set." });
         }
 
-        if (string.IsNullOrWhiteSpace(job.ResultsCacheKey) ||
-            !_cache.TryGetValue(job.ResultsCacheKey, out PlanExecutionResult? result) ||
-            result == null)
+        // F04 Slice 7: export serializes the artifact of record. Unbounded here by necessity —
+        // an export is the whole set — but it is streamed off disk rather than requiring a
+        // full in-RAM copy to have survived since completion.
+        var result = _resultArtifacts.Read(job.ResultArtifactPath);
+        if (result == null)
         {
             return NotFound(new { error = "Results expired or not available" });
         }
@@ -1197,7 +1214,7 @@ public class QueryController : ControllerBase
             return BadRequest("Unsupported download format.");
         }
 
-        var headers = DetermineHeaders(result.Data);
+        var headers = DetermineHeaders(result.Rows);
         var metadata = GetFormatMetadata(normalizedFormat);
         var timestampUtc = DateTime.UtcNow;
         var userDirectory = QueryLogHelper.GetUserDirectory(userName);
@@ -1210,12 +1227,12 @@ public class QueryController : ControllerBase
             Query = job.Query,
             User = userName,
             Timestamp = timestampUtc,
-            RecordCount = result.Data.Count,
+            RecordCount = result.TotalRows,
             Model = job.ModelUsed
         };
 
         var fileContent = GenerateFileContent(
-            result.Data,
+            result.Rows,
             headers,
             normalizedFormat,
             job.Aggregation,
@@ -1236,7 +1253,7 @@ public class QueryController : ControllerBase
             logBuilder.AppendLine($"JobId: {jobId}");
             logBuilder.AppendLine($"User: {userName}");
             logBuilder.AppendLine($"Success: True");
-            logBuilder.AppendLine($"Records: {result.Data.Count}");
+            logBuilder.AppendLine($"Records: {result.TotalRows}");
             logBuilder.AppendLine($"Query: {job.Query}");
             logBuilder.AppendLine($"OutputFile: {outputPath}");
             logBuilder.AppendLine("DownloadHistory:");
@@ -1415,12 +1432,13 @@ public class QueryController : ControllerBase
         var totalRows = job.TotalRows ?? 0;
 
         IReadOnlyDictionary<string, object?>? firstRow = null;
-        if (totalRows == 1 &&
-            !string.IsNullOrWhiteSpace(job.ResultsCacheKey) &&
-            _cache.TryGetValue(job.ResultsCacheKey, out PlanExecutionResult? result) &&
-            result?.Data.Count > 0)
+        if (totalRows == 1)
         {
-            firstRow = result.Data[0];
+            var artifact = _resultArtifacts.Read(job.ResultArtifactPath, maxRows: 1);
+            if (artifact?.Rows.Count > 0)
+            {
+                firstRow = artifact.Rows[0];
+            }
         }
 
         return HeadlineClassifier.Classify(job.Plan, totalRows, job.Aggregation, firstRow);

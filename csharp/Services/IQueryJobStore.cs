@@ -16,7 +16,13 @@ public interface IQueryJobStore
     /// still completes. Set here rather than afterwards so a client that observes
     /// <see cref="JobStatus.Completed"/> never sees a job whose answer is still in flight.
     /// </param>
-    void SetCompleted(string jobId, int totalRows, Dictionary<string, object>? aggregation, List<string> warnings, string resultsCacheKey, string? answer = null);
+    /// <param name="resultArtifactPath">
+    /// The completion-time artifact of record (F04 Slice 7). Set here, with the rest of the
+    /// completed state, so a reader that observes <see cref="JobStatus.Completed"/> already
+    /// sees the path — the artifact itself is written before this call. Null when the write
+    /// failed; the job still completes.
+    /// </param>
+    void SetCompleted(string jobId, int totalRows, Dictionary<string, object>? aggregation, List<string> warnings, string? answer = null, string? resultArtifactPath = null);
     List<QueryJob> GetUserJobs(string userName);
     List<QueryJob> GetJobsByStatus(JobStatus status);
     bool RemoveJob(string jobId);

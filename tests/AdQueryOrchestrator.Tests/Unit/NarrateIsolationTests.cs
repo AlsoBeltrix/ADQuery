@@ -111,6 +111,7 @@ public sealed class NarrateIsolationTests
                 Options.Create(new FollowUpOptions()),
                 NullLogger<FollowUpContextEnforcer>.Instance),
             new AnswerReductionBuilder(Options.Create(new AnswerOptions())),
+            new NoResultArtifactStore(),
             configuration);
 
         var jobId = await manager.CreateJobAsync(
@@ -123,7 +124,6 @@ public sealed class NarrateIsolationTests
             claude,
             new PermissiveValidator(),
             new StubExecutor(),
-            new MemoryCache(new MemoryCacheOptions()),
             TestContext.Current.CancellationToken);
 
         return store.GetJob(jobId)!;
