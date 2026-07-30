@@ -123,7 +123,9 @@ public sealed class QueryControllerFollowUpProvenanceTests
     private static QueryController CreateController(StubJobManager manager)
     {
         var configuration = new ConfigurationBuilder().Build();
-        var enforcer = new FollowUpContextEnforcer(Options.Create(new FollowUpOptions { MaxContextBytes = 2000 }));
+        var enforcer = new FollowUpContextEnforcer(
+            Options.Create(new FollowUpOptions { MaxContextBytes = 2000 }),
+            NullLogger<FollowUpContextEnforcer>.Instance);
         var builder = new FollowUpContextBuilder(enforcer, configuration);
 
         return new QueryController(

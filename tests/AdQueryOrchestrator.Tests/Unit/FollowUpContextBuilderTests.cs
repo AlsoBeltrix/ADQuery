@@ -4,6 +4,7 @@ using AdQuery.Orchestrator.Configuration;
 using AdQuery.Orchestrator.Models;
 using AdQuery.Orchestrator.Services;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -27,7 +28,8 @@ public sealed class FollowUpContextBuilderTests
             })
             .Build();
         var enforcer = new FollowUpContextEnforcer(
-            Options.Create(new FollowUpOptions { MaxContextBytes = maxBytes }));
+            Options.Create(new FollowUpOptions { MaxContextBytes = maxBytes }),
+            NullLogger<FollowUpContextEnforcer>.Instance);
         return new FollowUpContextBuilder(enforcer, configuration);
     }
 

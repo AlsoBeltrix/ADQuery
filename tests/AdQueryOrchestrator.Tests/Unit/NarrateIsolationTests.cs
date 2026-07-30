@@ -107,7 +107,9 @@ public sealed class NarrateIsolationTests
             new InMemoryQueryJobQueue(),
             NullLogger<QueryJobManager>.Instance,
             new PlanPreprocessor(configuration),
-            new FollowUpContextEnforcer(Options.Create(new FollowUpOptions())),
+            new FollowUpContextEnforcer(
+                Options.Create(new FollowUpOptions()),
+                NullLogger<FollowUpContextEnforcer>.Instance),
             new AnswerReductionBuilder(Options.Create(new AnswerOptions())),
             configuration);
 

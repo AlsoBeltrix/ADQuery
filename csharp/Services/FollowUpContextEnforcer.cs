@@ -1,16 +1,18 @@
 using System.Text;
 using AdQuery.Orchestrator.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace AdQuery.Orchestrator.Services;
 
 /// <summary>
 /// The three last-turn components that may compose follow-up context (F01 Slice C1,
-/// FOLLOWUP-D2). Ordered here by drop priority: when the composition exceeds the byte
-/// cap, whole components are dropped in the fixed order <see cref="Values"/> →
-/// <see cref="PlanSummary"/> → <see cref="PriorQuestion"/>, so the prior question is
-/// retained longest. Values (the DATA-D1 minimal AD slice) are the most sensitive and
-/// least load-bearing for refinement, so they go first.
+/// FOLLOWUP-D2), in assembly order: prior question, plan summary, values.
+/// <para>
+/// Each component carries its own semantic bound and the byte cap is only a backstop
+/// (F04-D6), so there is no drop priority among them — an over-cap composition means a
+/// component bound is broken, not that the context needs trimming.
+/// </para>
 /// </summary>
 public sealed record FollowUpContextComponents(
     string? Values,
@@ -20,16 +22,23 @@ public sealed record FollowUpContextComponents(
 /// <summary>
 /// The authoritative server-side bound on follow-up context (F01 Slice C1, FOLLOWUP-D1).
 /// It never persists, logs, or transmits context above <c>FollowUp:MaxContextBytes</c>
-/// UTF-8 bytes. It drops whole components in a fixed order and never splits a UTF-8 code
-/// point; it never emits a fragment.
+/// UTF-8 bytes, and never emits a fragment or splits a UTF-8 code point.
 /// </summary>
 public interface IFollowUpContextEnforcer
 {
     /// <summary>
-    /// Composes the largest prefix of components (in fixed keep-priority: prior
-    /// question, then plan summary, then values) whose UTF-8 encoding fits the cap,
-    /// dropping whole components — never a fragment, never a split code point. Returns
-    /// <c>null</c> if even the highest-priority single component overflows the cap.
+    /// Assembles the components in fixed order and returns the result when it fits the
+    /// byte cap.
+    /// <para>
+    /// F04 Slice 6a (F04-D6): the cap is a backstop, not a shaper. The component bounds —
+    /// the max-prior-questions knob, the value slice's bucket bound, the headline's group
+    /// bound — decide how much context is sent, and
+    /// <see cref="Configuration.FollowUpOptionsValidator"/> rejects at startup any cap
+    /// below what those bounds can compose. Overflow is therefore a broken component
+    /// bound, so this <em>logs an error and returns <c>null</c></em> rather than quietly
+    /// returning a smaller context. The earlier silent values → plan → question drop
+    /// ladder is retired: it made the failure look routine.
+    /// </para>
     /// </summary>
     string? Compose(FollowUpContextComponents components);
 
@@ -46,10 +55,14 @@ public interface IFollowUpContextEnforcer
 public sealed class FollowUpContextEnforcer : IFollowUpContextEnforcer
 {
     private readonly IOptions<FollowUpOptions> _options;
+    private readonly ILogger<FollowUpContextEnforcer> _logger;
 
-    public FollowUpContextEnforcer(IOptions<FollowUpOptions> options)
+    public FollowUpContextEnforcer(
+        IOptions<FollowUpOptions> options,
+        ILogger<FollowUpContextEnforcer> logger)
     {
         _options = options;
+        _logger = logger;
     }
 
     private int MaxBytes => _options.Value.MaxContextBytes;
@@ -58,29 +71,35 @@ public sealed class FollowUpContextEnforcer : IFollowUpContextEnforcer
     {
         ArgumentNullException.ThrowIfNull(components);
 
-        // Assembly order is fixed and independent of which components survive: prior
-        // question, then plan summary, then values. Drop order is the reverse (values
-        // first), so we try the candidate subsets from most- to least-complete.
-        var question = Normalize(components.PriorQuestion);
-        var plan = Normalize(components.PlanSummary);
-        var values = Normalize(components.Values);
+        var assembled = Assemble(
+        [
+            Normalize(components.PriorQuestion),
+            Normalize(components.PlanSummary),
+            Normalize(components.Values),
+        ]);
 
-        string?[] keepAll = { question, plan, values };
-        string?[] dropValues = { question, plan };
-        string?[] dropPlan = { question };
-
-        foreach (var candidate in new[] { keepAll, dropValues, dropPlan })
+        if (assembled is null || FitsCap(assembled))
         {
-            var assembled = Assemble(candidate);
-            if (assembled is not null && FitsCap(assembled))
-            {
-                return assembled;
-            }
+            return assembled;
         }
 
-        // Even the prior question alone overflows: drop context entirely.
+        // F04-D6: startup validation sizes the cap above what the component bounds can
+        // compose, so reaching here means one of those bounds is broken. Log it as the
+        // defect it is — sizes only, never the context itself (FOLLOWUP-D1 governs what
+        // may be logged) — and fail closed rather than send a quietly smaller context.
+        _logger.LogError(
+            "Follow-up context composed {ComposedBytes} UTF-8 bytes, above the {MaxContextBytes}-byte cap; a component bound is broken (question {QuestionBytes}, plan summary {PlanBytes}, values {ValuesBytes}). Context dropped.",
+            Encoding.UTF8.GetByteCount(assembled),
+            MaxBytes,
+            ByteCount(components.PriorQuestion),
+            ByteCount(components.PlanSummary),
+            ByteCount(components.Values));
+
         return null;
     }
+
+    private static int ByteCount(string? value)
+        => value is null ? 0 : Encoding.UTF8.GetByteCount(value);
 
     public string? EnforceStored(string? context)
     {

@@ -22,7 +22,8 @@ public sealed class QueryJobManagerContextEnforcementTests
         var configuration = new ConfigurationBuilder().Build();
         store = new InMemoryQueryJobStore();
         var enforcer = new FollowUpContextEnforcer(
-            Options.Create(new FollowUpOptions { MaxContextBytes = maxBytes }));
+            Options.Create(new FollowUpOptions { MaxContextBytes = maxBytes }),
+            NullLogger<FollowUpContextEnforcer>.Instance);
 
         return new QueryJobManager(
             store,
