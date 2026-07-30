@@ -5,7 +5,7 @@ swallowed write leaves a job reporting Completed with a result that exists nowhe
 404s, the single-record headline degrades to a count, and the download is refused.
 **Status**: Verified
 **Branch**: — (repo policy: commit on `master`, one finding per commit)
-**Commit**: `<filled in after commit>`
+**Commit**: `469270b`
 
 ## Evidence
 `csharp/Services/QueryJobManager.cs:488-492`. `WriteResultArtifactAsync` rethrows

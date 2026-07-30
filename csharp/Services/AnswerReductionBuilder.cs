@@ -11,10 +11,17 @@ namespace AdQuery.Orchestrator.Services;
 /// <summary>
 /// The four components that compose a Narrate reduction (F04 Slice 2, F04-D1). Ordered
 /// here by drop priority: when the composition exceeds the byte cap, whole components are
-/// dropped in the fixed order <see cref="Headline"/> → <see cref="Distribution"/> →
-/// <see cref="PlanDescription"/> → <see cref="Question"/>, so the question is retained
-/// longest. The headline carries the AD values, so it goes first — the same drop ordering
-/// principle as <see cref="FollowUpContextComponents"/>.
+/// dropped in the fixed order <see cref="Headline"/> → <see cref="Distribution"/>, so the
+/// question is retained longest. The headline carries the AD values, so it goes first — the
+/// same drop ordering principle as <see cref="FollowUpContextComponents"/>.
+/// <para>
+/// Dropping stops there (slice7-or-4). <see cref="Headline"/> and <see cref="Distribution"/>
+/// are the only components carrying evidence about the <em>result</em>;
+/// <see cref="PlanDescription"/> states what was asked of the directory and
+/// <see cref="Question"/> what the user asked, so a composition of those two alone would
+/// hand Narrate a question and no facts to answer it with. When neither evidence-bearing
+/// component fits, the reduction is null and Narrate is skipped.
+/// </para>
 /// </summary>
 public sealed record AnswerReductionComponents(
     string? Headline,
@@ -81,10 +88,14 @@ public sealed class AnswerReductionBuilder : IAnswerReductionBuilder
 
         string?[] keepAll = { q, d, s, h };
         string?[] dropHeadline = { q, d, s };
-        string?[] dropDistribution = { q, d };
-        string?[] dropDescription = { q };
 
-        foreach (var candidate in new[] { keepAll, dropHeadline, dropDistribution, dropDescription })
+        // The ladder ends at the last rung still carrying result evidence (slice7-or-4).
+        // Shedding the distribution too would leave {question, plan description} — what was
+        // asked, twice over, and nothing about what came back — so Narrate would answer from
+        // nothing and the invented answer would sit above a correct headline and table.
+        // Returning null instead skips Narrate and completes the job with headline, table,
+        // and export, which is the documented behaviour for a null reduction.
+        foreach (var candidate in new[] { keepAll, dropHeadline })
         {
             var assembled = Assemble(candidate);
             if (assembled is not null && FitsCap(assembled))

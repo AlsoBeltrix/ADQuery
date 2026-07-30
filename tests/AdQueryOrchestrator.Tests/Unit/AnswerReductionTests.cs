@@ -216,15 +216,27 @@ public sealed class AnswerReductionTests
         Assert.DoesNotContain("LARGEST VALUES", tight);
         Assert.Contains("DISTRIBUTION:", tight);
         Assert.Contains("QUESTION:", tight);
+    }
 
-        // Tighter still keeps only the question — never a fragment of a dropped component.
-        var tightest = Builder(Encoding.UTF8.GetByteCount("QUESTION: " + Question) + 1)
-            .Build(Question, plan, headline, distribution);
+    [Fact]
+    public void CapTooSmallForAnyResultEvidence_YieldsNoReduction_RatherThanAFactlessQuestion()
+    {
+        // slice7-or-4. The plan description states what was asked of the directory, never
+        // what came back, so {question, plan description} is a question and no facts to
+        // answer it with — and Narrate treats any non-blank reduction as narratable, so the
+        // model's invention would render above a correct headline and table. The ladder
+        // therefore stops at the last rung carrying result evidence.
+        var plan = GroupedPlan("extensionAttribute1");
+        var (aggregation, totalRows) = NearUnique();
+        var headline = HeadlineFor(plan, aggregation, totalRows);
+        var distribution = DistributionSummarizer.Summarize(aggregation, 1, totalRows);
 
-        Assert.NotNull(tightest);
-        Assert.StartsWith("QUESTION:", tightest);
-        Assert.DoesNotContain("DISTRIBUTION:", tightest);
-        Assert.DoesNotContain("QUERY RUN:", tightest);
+        // Exactly the size of the factless composition: enough for it, short of every
+        // composition that carries the distribution or the headline.
+        var factless = "QUESTION: " + Question + "\nQUERY RUN: " + plan.Description;
+
+        Assert.Null(Builder(Encoding.UTF8.GetByteCount(factless))
+            .Build(Question, plan, headline, distribution));
     }
 
     [Fact]

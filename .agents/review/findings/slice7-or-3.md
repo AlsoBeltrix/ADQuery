@@ -5,7 +5,7 @@ in-process reclamation, and the only sweep is at startup, so a long-running serv
 accumulates them against the same volume the admission check is protecting.
 **Status**: Verified
 **Branch**: — (repo policy: commit on `master`, one finding per commit)
-**Commit**: `<filled in after commit>`
+**Commit**: `86e6b77`
 
 ## Evidence
 `csharp/Services/JsonLinesResultArtifactStore.cs:78-103`. `WriteAsync` streams the header

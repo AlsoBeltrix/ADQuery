@@ -5,7 +5,7 @@ job, so an ancestor artifact can be deleted between the reusing turn's read and 
 leaving a Completed job pointing at a file that is gone.
 **Status**: Verified
 **Branch**: — (repo policy: commit on `master`, one finding per commit)
-**Commit**: `<filled in after commit>`
+**Commit**: `5cc6e7b`
 
 ## Evidence
 `csharp/Services/QueryJobManager.cs:443` reads the ancestor's artifact inside

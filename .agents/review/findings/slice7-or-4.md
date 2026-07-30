@@ -4,7 +4,7 @@
 which the checked-in default avoids; but when reached, Narrate is asked to answer a question
 it was given no facts about, and the failure is a confident fabricated answer rather than an
 error.
-**Status**: Open
+**Status**: Verified
 **Branch**: — (repo policy: commit on `master`, one finding per commit)
 **Commit**: `<filled in after commit>`
 
@@ -59,14 +59,22 @@ singletons, blanks) and carries no AD values, which makes it the correct floor f
 concerns at once.
 
 ## Files changed
-- `csharp/Services/AnswerReductionBuilder.cs:82-94` — the ladder ends at `dropHeadline`.
-- `csharp/Services/AnswerReductionBuilder.cs:11-23` — the components record documents the
+- `csharp/Services/AnswerReductionBuilder.cs:87-101` — the ladder ends at `dropHeadline`.
+- `csharp/Services/AnswerReductionBuilder.cs:11-29` — the components record documents the
   evidence floor alongside the drop order.
+- `tests/AdQueryOrchestrator.Tests/Unit/AnswerReductionTests.cs:220-228` —
+  `OverCapReduction_DropsWholeComponents_KeepingTheQuestionLongest` asserted the removed
+  `dropDescription` rung; that half is replaced by the new guard below. Its remaining
+  assertions (headline dropped first, distribution and question retained) are unchanged.
 
 ## Guard proof
-- `tests/AdQueryOrchestrator.Tests/Unit/AnswerReductionBuilderTests.cs` — under a cap too
-  small for any evidence-bearing composition, `Build` returns null rather than a
-  question-only reduction. Restoring the two rungs makes it FAIL.
+- `AnswerReductionTests.CapTooSmallForAnyResultEvidence_YieldsNoReduction_RatherThanAFactlessQuestion`
+  — with the cap set to exactly the byte size of `{question, plan description}`, `Build`
+  returns null rather than that factless composition.
+- Restoring `dropDistribution` and `dropDescription`: **Failed 1, Passed 8, Total 9**.
+  Restored: 9/9 pass.
+- `pwsh -NoLogo -NoProfile -File scripts/verify.ps1` — passed. 322 tests, 0 warnings,
+  published Production and Development smokes passed, vulnerability audit clean.
 
 ## Coder dispute (if any)
 Partial, on framing rather than on the defect. The reviewer describes this as evidence being
