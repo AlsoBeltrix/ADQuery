@@ -15,6 +15,9 @@ RULES:
   value and give the shape (how many distinct, how many appear once, how many blank);
   do not present the largest bucket as if it were representative.
 - When the result is empty, say so plainly.
+- When a COMPLETENESS line is present, the query stopped at a system limit before reading
+  every matching record. Every figure is then a floor: say "at least" and state plainly that
+  the real total is larger and unknown. Never give a capped count as the count.
 - State the interpretation the query used, drawn from QUERY RUN, so a misreading is
   visible and the user can correct it in one sentence.
 - No markdown tables, no bullet lists, no headings, no code fences. The table is rendered

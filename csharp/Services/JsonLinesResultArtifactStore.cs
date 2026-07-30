@@ -91,6 +91,7 @@ public sealed class JsonLinesResultArtifactStore : IResultArtifactStore
                     TotalRows = result.Data.Count,
                     Warnings = result.Warnings,
                     PlanJson = QueryLogHelper.SerializePlan(job.Plan),
+                    ResultIsIncomplete = result.ResultIsIncomplete,
                 };
                 await writer.WriteLineAsync(JsonSerializer.Serialize(header, SerializerOptions));
 
@@ -178,6 +179,7 @@ public sealed class JsonLinesResultArtifactStore : IResultArtifactStore
                 GroupValues = groupValues,
                 Warnings = header.Warnings ?? [],
                 PlanJson = header.PlanJson,
+                ResultIsIncomplete = header.ResultIsIncomplete,
             };
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
@@ -290,6 +292,7 @@ public sealed class JsonLinesResultArtifactStore : IResultArtifactStore
         public int TotalRows { get; set; }
         public List<string>? Warnings { get; set; }
         public string? PlanJson { get; set; }
+        public bool ResultIsIncomplete { get; set; }
     }
 
     private sealed class ArtifactRow

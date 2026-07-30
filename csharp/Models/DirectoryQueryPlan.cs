@@ -20,6 +20,24 @@ public class DirectoryQueryPlan
     [JsonPropertyName("result_limit")]
     public int? ResultLimit { get; set; }
 
+    /// <summary>
+    /// True when <see cref="ResultLimit"/> is a cap the server imposed rather than a count the
+    /// user asked for (ci-or-1). Set by <c>PlanPreprocessor.EnsurePlanLimit</c> when the
+    /// configured <c>QueryDefaults:MaxResults</c> is what the plan ends up limited by.
+    /// <para>
+    /// The distinction decides whether truncation is incompleteness: "the first ten
+    /// contractors" is completely answered by ten rows, so caveating it would be noise, while
+    /// a set cut down to a system ceiling means the count the user reads is a floor.
+    /// </para>
+    /// <para>
+    /// Server-side execution state, not part of the plan the model authors: excluded from
+    /// serialization so the plan JSON — which whole-plan artifact reuse compares byte for byte
+    /// (F04-D5) and the artifact records — is unchanged by it.
+    /// </para>
+    /// </summary>
+    [JsonIgnore]
+    public bool ResultLimitIsSystemImposed { get; set; }
+
     [Required]
     [JsonPropertyName("projection")]
     public ProjectionDefinition Projection { get; set; } = new();

@@ -29,11 +29,18 @@ namespace AdQuery.Orchestrator.Services;
 /// step already lands on the factless composition.
 /// </para>
 /// </summary>
+/// <param name="Completeness">
+/// The fixed one-line statement that the result is a subset (ci-or-1), or null when it is
+/// whole. Never dropped: it is a fact about the headline it qualifies, so a composition that
+/// keeps the headline and drops this would state a floor as a total — the precise failure the
+/// finding names. It is a server-written constant, so it costs a fixed handful of bytes.
+/// </param>
 public sealed record AnswerReductionComponents(
     string? Headline,
     string? Distribution,
     string? PlanDescription,
-    string? Question);
+    string? Question,
+    string? Completeness);
 
 /// <summary>
 /// Builds the bounded reduction the Narrate call sees (F04 Slice 2, F04-D1).
@@ -52,11 +59,17 @@ public interface IAnswerReductionBuilder
     /// survives the cap, in which case Narrate is skipped and the job completes without an
     /// answer.
     /// </summary>
+    /// <param name="resultIsIncomplete">
+    /// True when the executor stopped short of every matching record at a system limit
+    /// (ci-or-1). The reduction then carries a fixed line saying the figures are floors, so
+    /// the model cannot narrate a capped count as the count.
+    /// </param>
     string? Build(
         string question,
         DirectoryQueryPlan? plan,
         HeadlineResult headline,
-        DistributionSummary? distribution);
+        DistributionSummary? distribution,
+        bool resultIsIncomplete = false);
 }
 
 /// <inheritdoc />
@@ -71,11 +84,23 @@ public sealed class AnswerReductionBuilder : IAnswerReductionBuilder
 
     private int MaxBytes => _options.Value.MaxReductionBytes;
 
+    /// <summary>
+    /// The fixed line an incomplete result carries (ci-or-1). Server-written and constant:
+    /// the executor's own warnings are free-text and unbounded in number, so putting them in
+    /// the reduction would break the byte accounting
+    /// <see cref="AnswerOptions.ReductionCeilingBytes"/> derives from fixed component maxima.
+    /// What Narrate needs is the fact, not the diagnostics.
+    /// </summary>
+    internal const string IncompleteLine =
+        "COMPLETENESS: partial — the query stopped at a system limit before reading every "
+        + "matching record. Every figure below is a floor, not a total. Say so in the answer.";
+
     public string? Build(
         string question,
         DirectoryQueryPlan? plan,
         HeadlineResult headline,
-        DistributionSummary? distribution)
+        DistributionSummary? distribution,
+        bool resultIsIncomplete = false)
     {
         System.ArgumentNullException.ThrowIfNull(headline);
 
@@ -83,15 +108,18 @@ public sealed class AnswerReductionBuilder : IAnswerReductionBuilder
             Headline: BuildHeadline(headline, plan),
             Distribution: BuildDistribution(distribution),
             PlanDescription: BuildPlanDescription(plan),
-            Question: BuildQuestion(question));
+            Question: BuildQuestion(question),
+            Completeness: resultIsIncomplete ? IncompleteLine : null);
 
         // Assembly order is fixed and independent of which components survive: question,
-        // plan description, distribution, headline. Drop order is the reverse.
+        // plan description, completeness, distribution, headline. Drop order is the reverse,
+        // and completeness is not in it.
         var normalized = new AnswerReductionComponents(
             Headline: Normalize(components.Headline),
             Distribution: Normalize(components.Distribution),
             PlanDescription: Normalize(components.PlanDescription),
-            Question: Normalize(components.Question));
+            Question: Normalize(components.Question),
+            Completeness: Normalize(components.Completeness));
 
         AnswerReductionComponents[] ladder =
         {
@@ -145,6 +173,9 @@ public sealed class AnswerReductionBuilder : IAnswerReductionBuilder
         {
             components.Question,
             components.PlanDescription,
+            // Before the figures it qualifies (ci-or-1), so the model reads that they are
+            // floors before it reads them.
+            components.Completeness,
             components.Distribution,
             components.Headline,
         };

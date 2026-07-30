@@ -56,6 +56,15 @@ public class QueryJob
 
     public List<string> Warnings { get; set; } = new();
 
+    /// <summary>
+    /// True when this job's result stopped short of every matching record at a system limit
+    /// (ci-or-1), so <see cref="TotalRows"/> and every figure derived from it is a floor.
+    /// Shipped on the completed-job DTO because the chat surface caveats the answer from it
+    /// deterministically — the model is told the same fact in the reduction, but a model
+    /// instruction is not what stands between a truncated count and a confident sentence.
+    /// </summary>
+    public bool ResultIsIncomplete { get; set; }
+
     // Error handling
     public string? ErrorMessage { get; set; }
 

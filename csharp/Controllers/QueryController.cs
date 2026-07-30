@@ -1071,6 +1071,11 @@ public class QueryController : ControllerBase
             // F04 Slice 2: only the model-authored answer string ships, never the raw
             // model response and never rows. Absent when Narrate failed or was skipped.
             answer = job.Answer,
+            // ci-or-1: a result stopped at a system limit is a floor, and the chat surface
+            // caveats it from this flag in code. The warnings below say the same thing in
+            // free text, but they render only in the result panel — the surface F04 made
+            // primary is the one that was hiding the correction.
+            incomplete = job.ResultIsIncomplete,
             warnings = job.Warnings.Any() ? job.Warnings : null,
             downloadUrl = exportable ? $"/api/query/download-async/{job.JobId}" : null
         };

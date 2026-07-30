@@ -38,6 +38,25 @@ public class PlanExecutionResult
 
     public List<string> Warnings { get; set; } = new();
 
+    /// <summary>
+    /// True when the traversal stopped short of every matching record because it hit a
+    /// safety limit (ci-or-1), so <see cref="Data"/> is a subset of what the plan asked for
+    /// and any count derived from it is a floor rather than a total.
+    /// <para>
+    /// Set by the executor at the points where it actually truncates, not inferred by
+    /// parsing <see cref="Warnings"/> text back out: the warnings are free-text operator
+    /// diagnostics, while this is a fact about the answer that Narrate and the chat surface
+    /// both have to act on. False by default, so a result is complete unless something
+    /// deliberately says otherwise.
+    /// </para>
+    /// <para>
+    /// A limit the <em>user</em> asked for is not incompleteness: "the first ten
+    /// contractors" is completely answered by ten rows. Only system-imposed stops set this —
+    /// see <see cref="DirectoryQueryPlan.ResultLimitIsSystemImposed"/>.
+    /// </para>
+    /// </summary>
+    public bool ResultIsIncomplete { get; set; }
+
     public long ExecutionTimeMs { get; set; }
 
     public int StepsExecuted { get; set; }

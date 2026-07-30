@@ -74,6 +74,14 @@ public sealed class ResultArtifact
     public required List<string> Warnings { get; init; }
 
     /// <summary>
+    /// Whether the recorded result stopped at a system limit (ci-or-1). Persisted with the
+    /// rows because whole-plan reuse rebuilds a later turn's result from this artifact: a
+    /// reused partial set is still partial, and dropping the fact here would give the second
+    /// turn a confident answer the first turn correctly caveated.
+    /// </summary>
+    public bool ResultIsIncomplete { get; init; }
+
+    /// <summary>
     /// The serialized plan that produced these rows, as written at completion. Whole-plan
     /// reuse compares against this rather than trusting in-memory job state.
     /// </summary>

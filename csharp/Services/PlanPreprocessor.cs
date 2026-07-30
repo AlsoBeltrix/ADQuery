@@ -71,6 +71,16 @@ public class PlanPreprocessor : IPlanPreprocessor
             ? Math.Min(plan.ResultLimit.Value, limit)
             : limit;
 
+        // ci-or-1: whether truncation at this limit is incompleteness depends on whose limit
+        // it is. The model sets result_limit only when the user named a count ("the first ten
+        // contractors"), and that answer is complete at ten rows. The ceiling passed in here
+        // is the server's configured QueryDefaults:MaxResults, so a plan that ends up limited
+        // by it — because the user named no count, or named a larger one — returns a subset
+        // nobody asked to be cut, which is what makes the resulting count a floor. A user who
+        // named exactly the ceiling still gets the answer they asked for.
+        plan.ResultLimitIsSystemImposed =
+            !plan.ResultLimit.HasValue || plan.ResultLimit.Value <= 0 || plan.ResultLimit.Value > limit;
+
         plan.ResultLimit = appliedLimit;
 
         var targetStepName = plan.Projection?.RowStep;

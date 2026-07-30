@@ -88,6 +88,67 @@ public sealed class AnswerRenderingTests
         }
     }
 
+    /// <summary>
+    /// ci-or-1. The warnings that explain a truncated traversal render only in the result
+    /// panel — the surface the chat exists to let the user not read. The caveat is therefore
+    /// appended in code on both answer surfaces, not left to the model that was also told.
+    /// </summary>
+    [Fact]
+    public async Task AnIncompleteResult_IsCaveatedOnBothAnswerSurfaces()
+    {
+        var page = await RunQueryAsync(answerJson: $"\"{Answer}\"", incomplete: true);
+        try
+        {
+            await Assertions.Expect(page.Locator("#answer .prose"))
+                .ToContainTextAsync("stopped at a system limit");
+            await Assertions.Expect(page.Locator("#chatLog .exchange .turn.bot"))
+                .ToContainTextAsync("stopped at a system limit");
+
+            // The model's sentence is still there; the caveat qualifies it, never replaces it.
+            await Assertions.Expect(page.Locator("#chatLog .exchange .turn.bot"))
+                .ToContainTextAsync(Answer);
+        }
+        finally
+        {
+            await page.CloseAsync();
+        }
+    }
+
+    [Fact]
+    public async Task AnIncompleteResultWithNoAnswer_StillCaveatsTheFallbackSummary()
+    {
+        // Narrate failing is exactly when the deterministic caveat matters most: the bubble
+        // then falls back to a code-templated count, which is a floor just the same.
+        var page = await RunQueryAsync(answerJson: null, incomplete: true);
+        try
+        {
+            var bot = page.Locator("#chatLog .exchange .turn.bot");
+            await Assertions.Expect(bot).ToContainTextAsync("42 matches.");
+            await Assertions.Expect(bot).ToContainTextAsync("the real total is higher");
+        }
+        finally
+        {
+            await page.CloseAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ACompleteResult_CarriesNoCaveat()
+    {
+        var page = await RunQueryAsync(answerJson: $"\"{Answer}\"");
+        try
+        {
+            await Assertions.Expect(page.Locator("#answer .prose"))
+                .Not.ToContainTextAsync("system limit");
+            await Assertions.Expect(page.Locator("#chatLog .exchange .turn.bot"))
+                .Not.ToContainTextAsync("system limit");
+        }
+        finally
+        {
+            await page.CloseAsync();
+        }
+    }
+
     [Fact]
     public async Task BlankAnswer_IsTreatedAsAbsent()
     {
@@ -112,7 +173,7 @@ public sealed class AnswerRenderingTests
     /// at all when <paramref name="answerJson"/> is null), then submits from the chat so both
     /// surfaces render.
     /// </summary>
-    private async Task<IPage> RunQueryAsync(string? answerJson)
+    private async Task<IPage> RunQueryAsync(string? answerJson, bool incomplete = false)
     {
         var page = await _fixture.Browser.NewPageAsync(new BrowserNewPageOptions
         {
@@ -136,12 +197,13 @@ public sealed class AnswerRenderingTests
         }));
 
         var answerField = answerJson is null ? string.Empty : $"\"answer\":{answerJson},";
+        var incompleteField = $"\"incomplete\":{(incomplete ? "true" : "false")},";
         await page.RouteAsync("**/api/query/jobs/test-job", route => route.FulfillAsync(new RouteFulfillOptions
         {
             ContentType = "application/json",
             Body = $$$"""
                 {"status":"completed","jobId":"test-job","query":"q","result":{"totalRows":42,
-                "headline":{"kind":"count","count":42},{{{answerField}}}"warnings":[]}}
+                "headline":{"kind":"count","count":42},{{{answerField}}}{{{incompleteField}}}"warnings":[]}}
                 """,
         }));
         await page.RouteAsync("**/api/query/jobs/test-job/preview", route => route.FulfillAsync(new RouteFulfillOptions

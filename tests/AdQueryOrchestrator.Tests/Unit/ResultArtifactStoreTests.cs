@@ -58,6 +58,32 @@ public sealed class ResultArtifactStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Incompleteness_SurvivesTheRoundTrip()
+    {
+        // ci-or-1. Whole-plan reuse rebuilds a later turn's result from this artifact, so a
+        // partial set that read back as whole would give the second turn the confident answer
+        // the first turn correctly caveated.
+        var store = CreateStore();
+        var partial = Result(3);
+        partial.ResultIsIncomplete = true;
+
+        var path = await store.WriteAsync(
+            Job("job-1", Plan("capped")), partial, TestContext.Current.CancellationToken);
+
+        Assert.True(store.Read(path)!.ResultIsIncomplete);
+    }
+
+    [Fact]
+    public async Task ACompleteResult_ReadsBackComplete()
+    {
+        var store = CreateStore();
+        var path = await store.WriteAsync(
+            Job("job-1", Plan("whole")), Result(3), TestContext.Current.CancellationToken);
+
+        Assert.False(store.Read(path)!.ResultIsIncomplete);
+    }
+
+    [Fact]
     public async Task BoundedRead_StopsAtTheRequestedRowCount_ButStillReportsTheRealTotal()
     {
         // Preview takes ten rows and the single-record headline takes one. A bounded read that

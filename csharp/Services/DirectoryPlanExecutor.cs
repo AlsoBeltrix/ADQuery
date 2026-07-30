@@ -61,6 +61,7 @@ public class DirectoryPlanExecutor : IDirectoryPlanExecutor
             result.Warnings.AddRange(execution.Warnings);
             result.Data = execution.Data;
             result.GroupValues = execution.GroupValues;
+            result.ResultIsIncomplete = execution.ResultIsIncomplete;
             result.StepsExecuted = execution.StepsExecuted;
             result.StepsSkipped = execution.StepsSkipped;
         }
@@ -172,6 +173,12 @@ internal sealed class DirectoryPlanRuntime
     private readonly List<string> _errors = new();
     private readonly List<string> _warnings = new();
 
+    /// <summary>
+    /// Set wherever a step stops short of the records it was asked for because of a safety
+    /// limit (ci-or-1). Carried out on <see cref="RuntimeResult.ResultIsIncomplete"/>.
+    /// </summary>
+    private bool _resultIsIncomplete;
+
     public DirectoryPlanRuntime(IActiveDirectoryService directoryService, ILogger logger, IProgress<PlanProgressUpdate>? progress = null)
     {
         _directoryService = directoryService;
@@ -238,6 +245,18 @@ internal sealed class DirectoryPlanRuntime
             result.GroupValues = result.GroupValues.Take(plan.ResultLimit.Value).ToList();
             _warnings.Add($"Result set truncated to {plan.ResultLimit.Value} rows.");
         }
+
+        // ci-or-1: only a *system* limit makes the answer incomplete. A user who asked for
+        // ten rows is completely answered by ten. Sitting exactly on the server's ceiling
+        // counts, and not only the strict overshoot above: EnsurePlanLimit pushes the same
+        // ceiling down onto the row step's size_limit, so the directory can cut the set
+        // before it ever reaches this method and the row count then lands on the limit with
+        // nothing here having truncated. At the ceiling the total is unknowable either way.
+        result.ResultIsIncomplete = _resultIsIncomplete ||
+            (plan.ResultLimitIsSystemImposed &&
+             plan.ResultLimit is > 0 &&
+             result.Data.Count >= plan.ResultLimit.Value);
+
         result.Errors.AddRange(_errors);
         result.Warnings.AddRange(_warnings);
         result.Success = !result.Errors.Any();
@@ -451,6 +470,8 @@ internal sealed class DirectoryPlanRuntime
             {
                 var remaining = maxNodes - totalProcessed;
                 _warnings.Add($"Stopped at {maxNodes} nodes (limit reached, {directReports.Count - remaining} nodes truncated)");
+                // ci-or-1: a safety valve, never something the user asked for.
+                _resultIsIncomplete = true;
                 directReports = directReports.Take(remaining).ToList();
                 levelResults[depth] = directReports.ToList();
                 break;
@@ -469,6 +490,8 @@ internal sealed class DirectoryPlanRuntime
             if (depth == maxDepth && currentLevelDNs.Any())
             {
                 _warnings.Add($"Stopped at depth {maxDepth} (safety limit, {currentLevelDNs.Count} unexplored nodes)");
+                // ci-or-1: the subtree continues below this depth and was not walked.
+                _resultIsIncomplete = true;
             }
         }
 
@@ -1568,6 +1591,9 @@ internal sealed class DirectoryPlanRuntime
 
         /// <summary>See <see cref="PlanExecutionResult.GroupValues"/>.</summary>
         public List<IReadOnlyList<string?>> GroupValues { get; set; } = new();
+
+        /// <summary>See <see cref="PlanExecutionResult.ResultIsIncomplete"/>.</summary>
+        public bool ResultIsIncomplete { get; set; }
 
         public List<string> Errors { get; set; } = new();
 

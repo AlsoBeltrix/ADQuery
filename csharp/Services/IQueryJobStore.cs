@@ -22,7 +22,12 @@ public interface IQueryJobStore
     /// sees the path — the artifact itself is written before this call. Null when the write
     /// failed; the job still completes.
     /// </param>
-    void SetCompleted(string jobId, int totalRows, Dictionary<string, object>? aggregation, List<string> warnings, string? answer = null, string? resultArtifactPath = null);
+    /// <param name="resultIsIncomplete">
+    /// True when the result stopped at a system limit (ci-or-1). Set here with the rest of the
+    /// completed state so no reader can observe a completed job whose row count is a floor
+    /// without also seeing that it is one.
+    /// </param>
+    void SetCompleted(string jobId, int totalRows, Dictionary<string, object>? aggregation, List<string> warnings, string? answer = null, string? resultArtifactPath = null, bool resultIsIncomplete = false);
     List<QueryJob> GetUserJobs(string userName);
     List<QueryJob> GetJobsByStatus(JobStatus status);
     bool RemoveJob(string jobId);

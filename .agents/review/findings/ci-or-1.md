@@ -3,9 +3,9 @@
 **Severity**: HIGH — the answer is confidently wrong about the one thing the user asked, on
 exactly the large queries the safety limits exist for, and the surface that hides the
 correction (the chat bubble) is the one F04 made primary.
-**Status**: Open
+**Status**: Fixed
 **Branch**: — (repo policy: commit on `master`, one finding per commit)
-**Commit**: `<filled in after commit>`
+**Commit**: `<this commit>`
 
 ## Evidence
 The executor records incompleteness as free-text warnings and nothing else:
@@ -65,10 +65,42 @@ Two halves, both server-decided:
    count and a confident sentence.
 
 ## Files changed
-- (to be filled in)
+- `csharp/Services/IDirectoryPlanExecutor.cs` — `PlanExecutionResult.ResultIsIncomplete`.
+- `csharp/Models/DirectoryQueryPlan.cs` — `ResultLimitIsSystemImposed`, `[JsonIgnore]` so the
+  serialized plan whole-plan reuse compares byte for byte (F04-D5) is unchanged.
+- `csharp/Services/PlanPreprocessor.cs` — `EnsurePlanLimit` records whose limit applied.
+- `csharp/Services/DirectoryPlanExecutor.cs` — sets the flag at the node-limit and depth-limit
+  stops, and on a result standing at a system-imposed `result_limit`.
+- `csharp/Services/AnswerReductionBuilder.cs` — a fifth component, `Completeness`, carrying one
+  fixed server-written line. It is not on the drop ladder.
+- `csharp/Configuration/AnswerOptions.cs` — `MaxCompletenessChars`, folded into
+  `ReductionCeilingBytes`; `csharp/appsettings.json` follows the ceiling (13652 → 14420).
+- `csharp/Configuration/answer_prompt_template.txt` — the "say at least" rule.
+- `csharp/Services/QueryJobManager.cs`, `IQueryJobStore.cs`, `InMemoryQueryJobStore.cs`,
+  `Models/QueryJob.cs`, `Controllers/QueryController.cs` — the fact rides completion onto the
+  DTO as `result.incomplete`.
+- `csharp/Services/IResultArtifactStore.cs`, `JsonLinesResultArtifactStore.cs` — persisted in
+  the artifact header, so a reused partial set stays partial.
+- `csharp/wwwroot/js/app.js` — the deterministic caveat on both answer surfaces.
+- `tests/.../Unit/IncompleteResultsAreNarratedAsFloorsTests.cs` (new, 8 tests),
+  `Unit/ResultArtifactStoreTests.cs` (+2), `Browser/AnswerRenderingTests.cs` (+3).
 
 ## Guard proof
-- (to be filled in)
+Each half proven red with only that half's fix disabled, then restored.
+
+- Executor: `result.ResultIsIncomplete = _resultIsIncomplete && false` → 2 red of 8 in
+  `IncompleteResultsAreNarratedAsFloorsTests` (`ASystemCappedResult_IsMarkedIncomplete`,
+  `AResultSittingExactlyOnTheCeiling_IsIncomplete`).
+- Reduction: `Completeness: null` in the builder → the same count red, this time the
+  reduction-side pair.
+- Artifact: `ResultIsIncomplete = false` in the header write → `Incompleteness_SurvivesTheRoundTrip`
+  red, 1 of 11.
+- Browser: both caveat sites reverted → 2 red of 7 in `AnswerRenderingTests`
+  (`AnIncompleteResult_IsCaveatedOnBothAnswerSurfaces`,
+  `AnIncompleteResultWithNoAnswer_StillCaveatsTheFallbackSummary`).
+
+`scripts/verify.ps1` green with everything restored: 342 tests, 0 failures, publish smoke and
+vulnerability audit passed.
 
 ## Coder dispute (if any)
 None on the defect. One scoping note: the reviewer described this as a gap in the F04 design
@@ -77,10 +109,27 @@ only makes the artifact root configurable). That is correct — the round's ques
 whole-change one, and the finding is filed under the round that produced it.
 
 ## Known gaps
-`plan.ResultLimit` truncation at `:239` is a *requested* limit as well as a safety one — a
-user who asks for the top 10 is not getting an incomplete answer. The fix must distinguish
-"you asked for fewer" from "we could not get them all", or it will caveat ordinary answers
-into noise.
+Resolved during the fix: `plan.ResultLimit` truncation at `:239` is a *requested* limit as
+well as a safety one — a user who asks for the top 10 is not getting an incomplete answer.
+The distinction is drawn in `PlanPreprocessor.EnsurePlanLimit`, which is the one place both
+limits meet: the model sets `result_limit` only when the user named a count
+(`prompt_template.txt:48-53`), and `QueryController:939-940` passes the configured
+`QueryDefaults:MaxResults` ceiling. A plan that ends up limited by the ceiling — no user
+count, or a larger one — is system-imposed; a user count at or under it is not.
+
+Two gaps remain, both narrower than the defect:
+
+- **The shipped default does not exercise this.** `QueryDefaults:MaxResults` is `0` in
+  `appsettings.json`, so `PrepareForExecution` never calls `EnsurePlanLimit` and the
+  system-cap arm is dead on a default deployment. The node-limit and depth-limit arms are
+  live regardless, and those are the org-traversal case the finding's scenario names. The
+  arm exists because the setting is documented as supported (`>0=cap all queries`).
+- **A directory-side `size_limit` cut is inferred, not observed.** `EnsurePlanLimit` pushes
+  the same ceiling onto the row step, so the directory can return exactly the ceiling with
+  the executor truncating nothing. That is why the flag triggers at `>=` rather than `>`,
+  which means a set whose real size lands exactly on the ceiling is caveated although it is
+  in fact whole. Over-caveating at one exact size is the safe side of a fact that is
+  genuinely unknowable without asking the directory for one more row than it will return.
 
 ## Reviewer comments
 `Reviewer: codex / gpt-5.6-sol / xhigh / frontier` (openreview CI-range round, inline

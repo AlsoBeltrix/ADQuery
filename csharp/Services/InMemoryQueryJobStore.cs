@@ -56,7 +56,7 @@ public class InMemoryQueryJobStore : IQueryJobStore
         }
     }
 
-    public void SetCompleted(string jobId, int totalRows, Dictionary<string, object>? aggregation, List<string> warnings, string? answer = null, string? resultArtifactPath = null)
+    public void SetCompleted(string jobId, int totalRows, Dictionary<string, object>? aggregation, List<string> warnings, string? answer = null, string? resultArtifactPath = null, bool resultIsIncomplete = false)
     {
         if (_jobs.TryGetValue(jobId, out var job))
         {
@@ -65,6 +65,7 @@ public class InMemoryQueryJobStore : IQueryJobStore
             job.Warnings = warnings ?? new List<string>();
             job.Answer = answer;
             job.ResultArtifactPath = resultArtifactPath;
+            job.ResultIsIncomplete = resultIsIncomplete;
 
             // Status last: a reader that sees Completed sees a fully populated job.
             job.CompletedAt = DateTime.UtcNow;

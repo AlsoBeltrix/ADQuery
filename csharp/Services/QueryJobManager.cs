@@ -414,7 +414,8 @@ public class QueryJobManager : IQueryJobManager
                 aggregation,
                 result.Warnings,
                 answer,
-                job.ResultArtifactPath);
+                job.ResultArtifactPath,
+                result.ResultIsIncomplete);
 
             WriteJobLog(success: true, recordCount: result.Data.Count, warnings: result.Warnings, errorMessage: null);
 
@@ -506,6 +507,8 @@ public class QueryJobManager : IQueryJobManager
                             Data = artifact.Rows,
                             GroupValues = artifact.GroupValues,
                             Warnings = artifact.Warnings,
+                            // A reused partial set is still partial (ci-or-1).
+                            ResultIsIncomplete = artifact.ResultIsIncomplete,
                         },
                         ancestor.ResultArtifactPath);
                 }
@@ -606,7 +609,8 @@ public class QueryJobManager : IQueryJobManager
                 job.Plan?.Projection?.Aggregation?.GroupBy?.Count ?? 1,
                 totalRows);
 
-            var reduction = _answerReductionBuilder.Build(job.Query, job.Plan, headline, distribution);
+            var reduction = _answerReductionBuilder.Build(
+                job.Query, job.Plan, headline, distribution, result.ResultIsIncomplete);
             if (string.IsNullOrWhiteSpace(reduction))
             {
                 _logger.LogWarning(

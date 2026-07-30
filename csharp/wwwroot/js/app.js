@@ -411,7 +411,7 @@
         state.lastCompletedJobId = job.jobId;
         state.recordCount = job.result.totalRows || 0;
 
-        renderAnswer(job.result.answer);
+        renderAnswer(job.result.answer, job.result.incomplete === true);
         renderHeadline(job.result.headline);
         renderWarnings(job.result.warnings);
         renderAggregation(job.result.aggregation);
@@ -472,8 +472,11 @@
      * Narrate string carried on the status DTO). Absent whenever Narrate failed,
      * was skipped, or the job predates F04 — the block then stays hidden and the
      * F01 headline leads the panel exactly as it did before.
+     *
+     * ci-or-1: when the result stopped at a system limit the caveat is appended here in
+     * code, not left to the model that was also told. Same sentence as the chat bubble's.
      */
-    function renderAnswer(answer) {
+    function renderAnswer(answer, incomplete) {
         const container = document.getElementById('answer');
         if (!container) {
             return;
@@ -491,7 +494,7 @@
 
         const prose = document.createElement('div');
         prose.className = 'prose';
-        prose.textContent = text;
+        prose.textContent = incomplete === true ? `${text} ${INCOMPLETE_CAVEAT}` : text;
         container.appendChild(prose);
 
         container.hidden = false;
@@ -1295,14 +1298,30 @@
     // The code-templated headline summary below survives only as the fallback for
     // a job that has no answer — Narrate failed, was skipped, or the job predates
     // F04. The result panel remains authoritative for the detail either way.
+    // ci-or-1: a result stopped at a system limit is a floor, and the bubble is the surface
+    // the user reads instead of the result panel where the warnings render. Narrate is told
+    // the same fact, but a model instruction must not be the only thing between a truncated
+    // count and a confident sentence, so the caveat is appended here in code either way.
+    const INCOMPLETE_CAVEAT =
+        'This stopped at a system limit before reading every match, so the real total is '
+        + 'higher. See the warnings in the result panel.';
+
+    function withIncompleteCaveat(result, text) {
+        return result && result.incomplete === true ? `${text} ${INCOMPLETE_CAVEAT}` : text;
+    }
+
     function summariseJobForChat(job) {
         const result = job && job.result ? job.result : null;
 
         const answer = result && typeof result.answer === 'string' ? result.answer.trim() : '';
         if (answer.length > 0) {
-            return answer;
+            return withIncompleteCaveat(result, answer);
         }
 
+        return withIncompleteCaveat(result, headlineSummaryForChat(result));
+    }
+
+    function headlineSummaryForChat(result) {
         const headline = result ? result.headline : null;
         const kind = headline && typeof headline.kind === 'string' ? headline.kind : 'none';
 

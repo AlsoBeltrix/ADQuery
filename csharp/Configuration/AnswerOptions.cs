@@ -35,6 +35,14 @@ public sealed class AnswerOptions
     public const int MaxGroupBuckets = 10;
 
     /// <summary>
+    /// Ceiling on the completeness line an incomplete result carries (ci-or-1). The line is a
+    /// server-written constant rather than the executor's free-text warnings — which are
+    /// unbounded in number and would make the derivation below impossible —
+    /// so this is a bound on a fixed string. <c>AnswerReductionTests</c> asserts it holds.
+    /// </summary>
+    public const int MaxCompletenessChars = 256;
+
+    /// <summary>
     /// Worst-case UTF-8 bytes per UTF-16 code unit. A BMP code unit encodes to at most three
     /// bytes; a surrogate pair is two code units encoding to four bytes, so three is the
     /// per-unit maximum.
@@ -50,12 +58,15 @@ public sealed class AnswerOptions
     /// the validator's ceiling rather than an estimate of what a reduction usually costs.
     /// The headline contributes the larger of its two value-bearing shapes (a single record
     /// or the grouped buckets); the distribution summary contributes only integers, covered
-    /// by <see cref="LabelOverheadBytes"/>.
+    /// by <see cref="LabelOverheadBytes"/>. The completeness line (ci-or-1) is a fixed string
+    /// and contributes its own bound, so an incomplete result cannot overflow the cap that a
+    /// complete one fits.
     /// </summary>
     public const int ReductionCeilingBytes =
         (QuestionTransportCodeUnitLimit * Utf8BytesPerCodeUnit) +
         (MaxDescriptionChars * Utf8BytesPerCodeUnit) +
         (MaxRecordFields * 2 * MaxValueChars * Utf8BytesPerCodeUnit) +
+        (MaxCompletenessChars * Utf8BytesPerCodeUnit) +
         LabelOverheadBytes;
 
     /// <summary>
