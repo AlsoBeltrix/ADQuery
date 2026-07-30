@@ -161,6 +161,35 @@ public sealed class ResultArtifactLifecycleTests : IDisposable
         Assert.Equal(10, artifacts.Read(job.ResultArtifactPath, maxRows: 10)!.Rows.Count);
     }
 
+    [Fact]
+    public async Task AJobWhoseArtifactWriteFails_Fails_AndIsNeverNarrated()
+    {
+        // The artifact is the only place a completed result lives, so completing without one
+        // would mean Completed with nothing readable: preview 404s, download is refused, and a
+        // single-record headline degrades to a count — with nothing saying the result was lost.
+        var artifacts = new FailingWriteArtifactStore();
+        var (manager, store, _) = CreateManager(artifacts);
+        var claude = new StubClaude("everyone under Sanjay", "displayName");
+
+        var jobId = await manager.CreateJobAsync(
+            User, "everyone under Sanjay", cancellationToken: TestContext.Current.CancellationToken);
+
+        await manager.ExecuteJobWithServicesAsync(
+            jobId,
+            claude,
+            new PermissiveValidator(),
+            new CountingExecutor(),
+            TestContext.Current.CancellationToken);
+
+        var job = store.GetJob(jobId);
+        Assert.NotNull(job);
+        Assert.Equal(JobStatus.Failed, job!.Status);
+        Assert.Null(job.ResultArtifactPath);
+
+        // Narrate is the expensive half of a turn; describing a result already lost buys nothing.
+        Assert.Equal(0, claude.AnswerCalls);
+    }
+
     private async Task<QueryJob> RunTurnAsync(
         QueryJobManager manager,
         IQueryJobStore store,
@@ -188,14 +217,15 @@ public sealed class ResultArtifactLifecycleTests : IDisposable
         return job;
     }
 
-    private (QueryJobManager Manager, IQueryJobStore Store, IResultArtifactStore Artifacts) CreateManager()
+    private (QueryJobManager Manager, IQueryJobStore Store, IResultArtifactStore Artifacts) CreateManager(
+        IResultArtifactStore? artifactStore = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["Results:ArtifactRoot"] = _root })
             .Build();
 
         var store = new InMemoryQueryJobStore();
-        var artifacts = new JsonLinesResultArtifactStore(
+        var artifacts = artifactStore ?? new JsonLinesResultArtifactStore(
             NullLogger<JsonLinesResultArtifactStore>.Instance, configuration);
 
         var manager = new QueryJobManager(
@@ -249,11 +279,29 @@ public sealed class ResultArtifactLifecycleTests : IDisposable
     }
 
     /// <summary>
+    /// Fails every artifact write the way a transient IO error, a permissions change on the
+    /// artifact root, or a volume filling after the admission check would.
+    /// </summary>
+    private sealed class FailingWriteArtifactStore : IResultArtifactStore
+    {
+        public Task<string> WriteAsync(
+            QueryJob job, PlanExecutionResult result, CancellationToken cancellationToken = default) =>
+            throw new IOException("the artifact volume went away mid-write");
+
+        public ResultArtifact? Read(string? artifactPath, int? maxRows = null) => null;
+        public void Delete(string? artifactPath) { }
+        public int SweepOrphans(IReadOnlySet<string> livePaths) => 0;
+        public bool HasRoomForAnotherResult() => true;
+    }
+
+    /// <summary>
     /// Translates every turn to the same deterministic plan for a given description and
     /// projection, which is what makes whole-plan equality — and its absence — testable.
     /// </summary>
     private sealed class StubClaude(string description, string projectedAttribute) : IClaudeService
     {
+        public int AnswerCalls { get; private set; }
+
         public Task<ClaudeResponse> GenerateExecutionPlanAsync(
             string userQuery,
             string? context = null,
@@ -281,7 +329,10 @@ public sealed class ResultArtifactLifecycleTests : IDisposable
 
         public Task<ClaudeAnswerResponse> GenerateAnswerAsync(
             string reduction, CancellationToken cancellationToken = default, string? modelOverride = null)
-            => Task.FromResult(new ClaudeAnswerResponse { Success = true, Answer = "ok" });
+        {
+            AnswerCalls++;
+            return Task.FromResult(new ClaudeAnswerResponse { Success = true, Answer = "ok" });
+        }
 
         public Task<ClaudeHealthResult> CheckHealthAsync(CancellationToken cancellationToken = default)
             => Task.FromResult(new ClaudeHealthResult { IsHealthy = true });

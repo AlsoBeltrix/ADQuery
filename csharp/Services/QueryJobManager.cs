@@ -364,6 +364,10 @@ public class QueryJobManager : IQueryJobManager
             //
             // A reused artifact is pointed at, not rewritten: two jobs then share one file,
             // and retention keeps it until the last of them expires (IsArtifactStillOwned).
+            //
+            // The write either produces a path or throws (slice7-or-1): with no cache behind
+            // it, a job that completed without an artifact would report a result nobody can
+            // read. Failing here also spends no Narrate call describing a lost result.
             job.ResultArtifactPath = reusedArtifactPath
                 ?? await WriteResultArtifactAsync(job, result, jobToken);
 
@@ -468,11 +472,18 @@ public class QueryJobManager : IQueryJobManager
 
     /// <summary>
     /// Writes the completion-time artifact of record (F04 Slice 7, F04-D5), returning its path
-    /// or null when the write failed. A failed artifact write degrades the job to the behavior
-    /// it had before this slice — cache-backed, expiring — rather than failing a query whose
-    /// directory work already succeeded.
+    /// or throwing.
+    /// <para>
+    /// Persistence is part of completion, not an optimization after it (slice7-or-1). The
+    /// artifact is the only place a completed result lives — this slice removed the 2h
+    /// <c>IMemoryCache</c> entry and migrated all four readers to the store — so a job that
+    /// completed without one would report Completed while preview 404'd, the download was
+    /// refused, and a single-record headline degraded to a count. A failed write therefore
+    /// fails the job, which is what the outer handler in
+    /// <see cref="ExecuteJobWithServicesAsync"/> already does with any thrown exception.
+    /// </para>
     /// </summary>
-    private async Task<string?> WriteResultArtifactAsync(
+    private async Task<string> WriteResultArtifactAsync(
         QueryJob job,
         PlanExecutionResult result,
         CancellationToken cancellationToken)
@@ -487,8 +498,8 @@ public class QueryJobManager : IQueryJobManager
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Job {JobId} result artifact write failed; completing without one", job.JobId);
-            return null;
+            _logger.LogError(ex, "Job {JobId} result artifact write failed; failing the job", job.JobId);
+            throw;
         }
     }
 

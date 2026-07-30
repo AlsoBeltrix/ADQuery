@@ -3,7 +3,7 @@
 **Severity**: HIGH — Slice 7 made the artifact the *only* place a completed result lives, so a
 swallowed write leaves a job reporting Completed with a result that exists nowhere: preview
 404s, the single-record headline degrades to a count, and the download is refused.
-**Status**: Open
+**Status**: Verified
 **Branch**: — (repo policy: commit on `master`, one finding per commit)
 **Commit**: `<filled in after commit>`
 
@@ -54,14 +54,17 @@ The reused-artifact branch (`:367`) is unaffected: reuse points at a file that a
 exists, and its own lifecycle risk is `slice7-or-2`.
 
 ## Files changed
-- `csharp/Services/QueryJobManager.cs:469-493` — `WriteResultArtifactAsync` returns
-  a non-null path or throws; doc comment corrected.
-- `csharp/Services/QueryJobManager.cs:358-368` — the call site no longer accepts null.
+- `csharp/Services/QueryJobManager.cs:469-498` — `WriteResultArtifactAsync` returns
+  `Task<string>` and rethrows instead of returning null; doc comment corrected.
+- `csharp/Services/QueryJobManager.cs:358-372` — the call site records why.
 
 ## Guard proof
-- `tests/AdQueryOrchestrator.Tests/Unit/ResultArtifactLifecycleTests.cs` — a turn whose
-  artifact store throws on write ends `Failed`, not `Completed`, and never reaches
-  Narrate. Restoring the swallow makes it FAIL.
+- `ResultArtifactLifecycleTests.AJobWhoseArtifactWriteFails_Fails_AndIsNeverNarrated` —
+  a turn driven through a `FailingWriteArtifactStore` ends `Failed` with a null
+  `ResultArtifactPath` and zero Narrate calls. Restoring the swallow (`return null!`)
+  makes it **FAIL** (1 red); restored → 6/6 pass.
+- Canonical verification: `pwsh -NoLogo -NoProfile -File scripts/verify.ps1` — passed,
+  319 tests, 0 warnings, published smoke passed, audit clean.
 
 ## Coder dispute (if any)
 None. Verified against the cited lines; the cited justification is falsified by the same
