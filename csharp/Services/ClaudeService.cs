@@ -70,35 +70,71 @@ internal sealed class ClaudeService : IClaudeService
             _httpClient.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
         }
 
-        // Load prompt template from file if it exists
-        var promptTemplatePath = _providerOptions.PromptTemplate ?? "Configuration/prompt_template.txt";
-        if (File.Exists(promptTemplatePath))
+        _promptTemplate = LoadTemplate(
+            _providerOptions.PromptTemplate ?? "Configuration/prompt_template.txt",
+            "prompt template",
+            UserQueryPlaceholder);
+
+        _answerPromptTemplate = LoadTemplate(
+            _providerOptions.AnswerPromptTemplate ?? "Configuration/answer_prompt_template.txt",
+            "answer prompt template",
+            ReductionPlaceholder);
+    }
+
+    /// <summary>The Translate template's slot for the user's question.</summary>
+    private const string UserQueryPlaceholder = "{{USER_QUERY}}";
+
+    /// <summary>The Narrate template's slot for the bounded reduction.</summary>
+    private const string ReductionPlaceholder = "{{REDUCTION}}";
+
+    /// <summary>
+    /// Reads a prompt template, returning null — so the built-in fallback runs — when the file is
+    /// absent, unreadable, or missing the placeholder its payload is substituted into
+    /// (slice6r2-or-1).
+    /// <para>
+    /// Substitution is a blind <see cref="string.Replace(string, string)"/>, which is a silent
+    /// no-op when the token is absent. A template without its slot therefore loads, wins over the
+    /// fallback, and sends the model instructions with no question and no evidence — while the
+    /// call succeeds, the tokens are spent, and the invented answer renders above a correct table.
+    /// Rejecting the file costs the operator their wording and keeps the app working; accepting it
+    /// costs correctness with nothing in the logs.
+    /// </para>
+    /// <para>
+    /// Only payload slots are required. <c>{{RESULT_LIMIT_GUIDANCE}}</c> is substituted with the
+    /// empty string (slice3r2-or-1), so its absence loses nothing and it is deliberately not
+    /// checked; <c>{{CONTEXT}}</c> is empty on a first turn by design.
+    /// </para>
+    /// </summary>
+    private string? LoadTemplate(string path, string description, string requiredPlaceholder)
+    {
+        if (!File.Exists(path))
         {
-            try
-            {
-                _promptTemplate = File.ReadAllText(promptTemplatePath);
-                _logger.LogInformation("Loaded prompt template from {Path}", promptTemplatePath);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to load prompt template from {Path}, using built-in template", promptTemplatePath);
-            }
+            return null;
         }
 
-        var answerTemplatePath = _providerOptions.AnswerPromptTemplate
-            ?? "Configuration/answer_prompt_template.txt";
-        if (File.Exists(answerTemplatePath))
+        string content;
+        try
         {
-            try
-            {
-                _answerPromptTemplate = File.ReadAllText(answerTemplatePath);
-                _logger.LogInformation("Loaded answer prompt template from {Path}", answerTemplatePath);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to load answer prompt template from {Path}, using built-in template", answerTemplatePath);
-            }
+            content = File.ReadAllText(path);
         }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load {Description} from {Path}, using built-in template", description, path);
+            return null;
+        }
+
+        if (!content.Contains(requiredPlaceholder, StringComparison.Ordinal))
+        {
+            _logger.LogError(
+                "The {Description} at {Path} does not contain {Placeholder}, so it cannot carry what the model must be given. Using the built-in template instead; restore the placeholder to use this file.",
+                description,
+                path,
+                requiredPlaceholder);
+            return null;
+        }
+
+        _logger.LogInformation("Loaded {Description} from {Path}", description, path);
+        return content;
     }
 
     public async Task<ClaudeResponse> GenerateExecutionPlanAsync(
@@ -607,7 +643,7 @@ internal sealed class ClaudeService : IClaudeService
         // Replace placeholders
         prompt = prompt.Replace("{{RESULT_LIMIT_GUIDANCE}}", resultLimitGuidance);
         prompt = prompt.Replace("{{CONTEXT}}", contextSection);
-        prompt = prompt.Replace("{{USER_QUERY}}", userQuery);
+        prompt = prompt.Replace(UserQueryPlaceholder, userQuery);
 
         return prompt;
     }
@@ -628,7 +664,7 @@ internal sealed class ClaudeService : IClaudeService
     {
         if (!string.IsNullOrWhiteSpace(_answerPromptTemplate))
         {
-            return _answerPromptTemplate.Replace("{{REDUCTION}}", reduction);
+            return _answerPromptTemplate.Replace(ReductionPlaceholder, reduction);
         }
 
         var builder = new StringBuilder();
