@@ -427,12 +427,14 @@ public class QueryJobManager : IQueryJobManager
         catch (OperationCanceledException)
         {
             _store.UpdateStatus(jobId, JobStatus.Cancelled);
+            ReleaseArtifactOfUncompletedJob(job);
             _logger.LogInformation("Job {JobId} cancelled", jobId);
             WriteJobLog(success: false, recordCount: 0, warnings: null, errorMessage: "Job cancelled");
         }
         catch (Exception ex)
         {
             _store.UpdateStatus(jobId, JobStatus.Failed, ex.Message);
+            ReleaseArtifactOfUncompletedJob(job);
             _logger.LogError(ex, "Job {JobId} failed with exception", jobId);
             WriteJobLog(success: false, recordCount: 0, warnings: null, errorMessage: ex.Message);
         }
@@ -690,6 +692,53 @@ public class QueryJobManager : IQueryJobManager
     }
 
     /// <summary>
+    /// Releases the artifact of a job that ended in a terminal state other than Completed
+    /// (slice2-or-2).
+    /// <para>
+    /// F04-D5 writes the artifact <em>before</em> <c>SetCompleted</c>, so a job cancelled or
+    /// failed during Narrate leaves a file on disk with a job pointing at it. Neither
+    /// reclamation path covers that: retention sweeps <see cref="JobStatus.Completed"/> only,
+    /// and <c>ResultArtifactSweeper</c> treats a path named by any job in the store as live.
+    /// Reclaiming on the transition keeps both of those rules unchanged and true.
+    /// </para>
+    /// <para>
+    /// Shares <see cref="_artifactLifecycleLock"/> with retention and the reuse claim for the
+    /// same reason they share it: a <em>reused</em> path belongs to the ancestor that wrote
+    /// it, and possibly to sibling turns, so this deletes only a path no surviving job still
+    /// names. Clearing the path unconditionally is what hands the file back to the sweeper in
+    /// the shared case.
+    /// </para>
+    /// </summary>
+    private void ReleaseArtifactOfUncompletedJob(QueryJob job)
+    {
+        if (string.IsNullOrWhiteSpace(job.ResultArtifactPath))
+        {
+            return;
+        }
+
+        try
+        {
+            lock (_artifactLifecycleLock)
+            {
+                var path = job.ResultArtifactPath;
+                job.ResultArtifactPath = null;
+
+                if (!IsArtifactStillOwned(job, path))
+                {
+                    _resultArtifacts.Delete(path);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // The job is already terminal and the caller is a catch handler: a failed
+            // reclamation must not replace the real outcome. The startup sweep is the
+            // backstop — the path is cleared, so the file is orphaned and collectable.
+            _logger.LogWarning(ex, "Job {JobId} artifact release failed", job.JobId);
+        }
+    }
+
+    /// <summary>
     /// Reuse ownership (f04-or-7): whole-plan reuse points a later turn's job at an earlier
     /// turn's artifact, so the originating job's expiry must not delete a file a surviving job
     /// still reads. The artifact outlives its writer for exactly as long as some job that is
@@ -699,6 +748,17 @@ public class QueryJobManager : IQueryJobManager
         _store.GetUserJobs(expiring.UserName).Any(other =>
             !expiringJobIds.Contains(other.JobId) &&
             string.Equals(other.ResultArtifactPath, expiring.ResultArtifactPath, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// The same ownership question asked of one released path (slice2-or-2): does any job
+    /// other than <paramref name="releasing"/> still name it? Reads the store, so the caller
+    /// must have already cleared <see cref="QueryJob.ResultArtifactPath"/> on the releasing
+    /// job — the store hands out the same instances.
+    /// </summary>
+    private bool IsArtifactStillOwned(QueryJob releasing, string path) =>
+        _store.GetUserJobs(releasing.UserName).Any(other =>
+            !other.JobId.Equals(releasing.JobId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(other.ResultArtifactPath, path, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Computes the aggregation a completed job settles with (F04 Slice 1, F04-D2).

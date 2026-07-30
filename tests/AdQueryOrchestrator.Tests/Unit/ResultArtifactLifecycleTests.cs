@@ -228,6 +228,65 @@ public sealed class ResultArtifactLifecycleTests : IDisposable
     }
 
     [Fact]
+    public async Task AJobCancelledAfterItsArtifactIsWritten_LeavesNothingOnDisk()
+    {
+        // slice2-or-2. D5 writes the artifact before SetCompleted, so cancellation during
+        // Narrate strands a file that neither reclamation path can reach: retention sweeps
+        // Completed only, and the orphan sweeper treats a path any job still names as live.
+        // Reclaiming on the terminal transition is what closes that gap.
+        var (manager, store, _) = CreateManager();
+
+        var jobId = await manager.CreateJobAsync(
+            User, "everyone under Sanjay", cancellationToken: TestContext.Current.CancellationToken);
+
+        await manager.ExecuteJobWithServicesAsync(
+            jobId,
+            new StubClaude("everyone under Sanjay", "displayName") { CancelOnNarrate = true },
+            new PermissiveValidator(),
+            new CountingExecutor(),
+            TestContext.Current.CancellationToken);
+
+        var job = store.GetJob(jobId)!;
+        Assert.Equal(JobStatus.Cancelled, job.Status);
+        Assert.Null(job.ResultArtifactPath);
+
+        var artifactRoot = Path.Combine(_root, User);
+        Assert.Empty(Directory.Exists(artifactRoot)
+            ? Directory.EnumerateFiles(
+                artifactRoot, "*" + JsonLinesResultArtifactStore.ArtifactExtension)
+            : []);
+    }
+
+    [Fact]
+    public async Task ACancelledTurnReusingAnAncestorsArtifact_LeavesThatArtifactAlone()
+    {
+        // The released path may not be the releasing job's to delete: whole-plan reuse aliases
+        // one file across turns, so release asks the same ownership question retention does.
+        var (manager, store, _) = CreateManager();
+        var executor = new CountingExecutor();
+
+        var ancestor = await RunTurnAsync(manager, store, executor, "everyone under Sanjay", "displayName");
+        var shared = ancestor.ResultArtifactPath!;
+
+        var jobId = await manager.CreateJobAsync(
+            User,
+            "everyone under Sanjay",
+            previousJobId: ancestor.JobId,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        await manager.ExecuteJobWithServicesAsync(
+            jobId,
+            new StubClaude("everyone under Sanjay", "displayName") { CancelOnNarrate = true },
+            new PermissiveValidator(),
+            executor,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(JobStatus.Cancelled, store.GetJob(jobId)!.Status);
+        Assert.True(File.Exists(shared), "the ancestor still reads the artifact it wrote");
+        Assert.Equal(shared, store.GetJob(ancestor.JobId)!.ResultArtifactPath);
+    }
+
+    [Fact]
     public async Task AJobWritesItsAuditTrailUnderTheConfiguredRoot_NotTheDeployedServersVolume()
     {
         // QueryLogHelper.OutputRoot is an absolute path that exists only on the deployed
@@ -397,6 +456,12 @@ public sealed class ResultArtifactLifecycleTests : IDisposable
     {
         public int AnswerCalls { get; private set; }
 
+        /// <summary>
+        /// Cancels the turn from inside Narrate — the one window where the artifact exists and
+        /// the job is not yet Completed (slice2-or-2).
+        /// </summary>
+        public bool CancelOnNarrate { get; init; }
+
         public Task<ClaudeResponse> GenerateExecutionPlanAsync(
             string userQuery,
             string? context = null,
@@ -426,6 +491,12 @@ public sealed class ResultArtifactLifecycleTests : IDisposable
             string reduction, CancellationToken cancellationToken = default, string? modelOverride = null)
         {
             AnswerCalls++;
+
+            if (CancelOnNarrate)
+            {
+                throw new OperationCanceledException();
+            }
+
             return Task.FromResult(new ClaudeAnswerResponse { Success = true, Answer = "ok" });
         }
 
