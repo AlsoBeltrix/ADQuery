@@ -53,15 +53,20 @@ contract the doc comment claims, not just this one line.
 
 ## Files changed
 - `csharp/Services/ClaudeService.cs` — the fallback RULES block gains the completeness rule.
-- `tests/AdQueryOrchestrator.Tests/Unit/NarratePromptPathsAgreeTests.cs` — new. Asserts both
-  paths carry each rule Narrate's contract names, driven by one shared list so a rule added to
-  the list is checked in both.
+- `csharp/Services/ClaudeService.cs` — `BuildAnswerPrompt`'s doc comment now states the two-path
+  rule as a contract and names the test that holds it.
+- `tests/AdQueryOrchestrator.Tests/Unit/NarratePromptPathsAgreeTests.cs` — new (3 tests). Asserts
+  both paths carry each rule Narrate's contract names, driven by one shared list so a rule added
+  to the list is checked in both, plus an over-removal sentinel that the fallback still carries
+  the reduction.
 
 ## Guard proof
 The fallback's completeness rule removed → 1 red of 3 in `NarratePromptPathsAgreeTests`
-(`TheBuiltInFallback_CarriesTheSameRules`). The external template's rule removed →
-`TheCheckedInTemplate_CarriesTheRules` red, confirming the guard binds both directions rather
-than only the path just fixed.
+(`TheBuiltInFallback_CarriesTheSameRules`, "the built-in Narrate fallback must carry the 'a
+floor, not the count' rule"). Restored, then the *template's* rule removed →
+`TheCheckedInTemplate_CarriesTheRules` red ("the external answer template must carry the
+'completeness' rule") while the fallback test passed — the guard binds both directions, not only
+the path just fixed. Template restored byte-identical.
 
 `scripts/verify.ps1` green with everything restored: exit 0, 353 tests, 0 failures, 0 warnings,
 publish smoke and vulnerability audit passed.

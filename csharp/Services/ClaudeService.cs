@@ -616,6 +616,13 @@ internal sealed class ClaudeService : IClaudeService
     /// Builds the Narrate prompt (F04 Slice 2). The external template is authoritative when
     /// present; the built-in fallback carries the same rules so a missing file degrades the
     /// wording, never the bound or the no-invention constraint. Both are provider-agnostic.
+    /// <para>
+    /// That claim is a contract, not a comment: a rule added to one path only is a deployment
+    /// where the missing file changes behaviour, which is what the fallback exists to prevent.
+    /// It has happened once — <c>ci-or-1</c>'s completeness rule reached the template alone
+    /// (slice5r2-or-1). <c>NarratePromptPathsAgreeTests</c> now checks both paths against one
+    /// list; a new rule goes in that list too.
+    /// </para>
     /// </summary>
     private string BuildAnswerPrompt(string reduction)
     {
@@ -636,6 +643,7 @@ internal sealed class ClaudeService : IClaudeService
         builder.AppendLine("- LARGEST VALUES lists at most the ten biggest buckets, never the whole distribution. Do not describe it as the complete list.");
         builder.AppendLine("- Read DISTRIBUTION before answering a 'most common' or 'unique values' question. When most values occur exactly once, say plainly that there is no meaningful most-common value and give the shape.");
         builder.AppendLine("- When the result is empty, say so plainly.");
+        builder.AppendLine("- When a COMPLETENESS line is present, the query stopped at a system limit before reading every matching record. Every figure is then a floor: say \"at least\" and state that the real total is larger and unknown. Never give a capped count as the count.");
         builder.AppendLine("- State the interpretation the query used, drawn from QUERY RUN.");
         builder.AppendLine("- No markdown tables, no bullet lists, no headings, no code fences.");
         builder.AppendLine();
