@@ -485,14 +485,30 @@ public class QueryJobManager : IQueryJobManager
             if (ancestor.Status == JobStatus.Completed &&
                 ancestor.UserName.Equals(job.UserName, StringComparison.OrdinalIgnoreCase))
             {
-                var artifact = _resultArtifacts.Read(ancestor.ResultArtifactPath);
-                if (artifact != null &&
-                    string.Equals(artifact.PlanJson, executedPlanJson, StringComparison.Ordinal))
+                // Reject on the header alone (slice4r2-or-1). A thread holds up to twenty
+                // ancestors and their rows are exactly what this walk does not want: reading
+                // them to decide a question the header answers costs one deserialization per
+                // row of a result about to be discarded. The full read below happens once, for
+                // the candidate whose plan already matched.
+                var candidate = _resultArtifacts.ReadHeader(ancestor.ResultArtifactPath);
+                if (candidate != null &&
+                    string.Equals(candidate.PlanJson, executedPlanJson, StringComparison.Ordinal))
                 {
                     if (!TryClaimAncestorArtifact(job, ancestor.JobId, ancestor.ResultArtifactPath))
                     {
                         // Retention took the ancestor between the read and the claim. Nothing
                         // to reuse and nothing to point at: traverse.
+                        return (null, null);
+                    }
+
+                    var artifact = _resultArtifacts.Read(ancestor.ResultArtifactPath);
+                    if (artifact == null)
+                    {
+                        // The file went between the header read and the full one. The claim
+                        // above already pointed this job at it, so undo that before traversing:
+                        // a job naming a path that no longer exists would keep the sweeper from
+                        // reclaiming anything else at it.
+                        ReleaseClaimedAncestorArtifact(job);
                         return (null, null);
                     }
 
@@ -542,6 +558,18 @@ public class QueryJobManager : IQueryJobManager
 
             job.ResultArtifactPath = artifactPath;
             return true;
+        }
+    }
+
+    /// <summary>
+    /// Undoes a claim whose artifact turned out to be unreadable (slice4r2-or-1). Under the same
+    /// lock as the claim, so the sweeper never sees a job pointing at a file it just gave up on.
+    /// </summary>
+    private void ReleaseClaimedAncestorArtifact(QueryJob job)
+    {
+        lock (_artifactLifecycleLock)
+        {
+            job.ResultArtifactPath = null;
         }
     }
 

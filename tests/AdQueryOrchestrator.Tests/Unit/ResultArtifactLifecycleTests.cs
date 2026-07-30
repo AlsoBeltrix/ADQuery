@@ -310,6 +310,61 @@ public sealed class ResultArtifactLifecycleTests : IDisposable
         Assert.StartsWith(_root, job.ResultArtifactPath!, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task AReuseWalkOverNonMatchingAncestors_DeserializesNoRows()
+    {
+        // slice4r2-or-1. The walk visits every ancestor until a plan matches, and a thread can
+        // hold twenty of them. Reading rows to reject a candidate costs one deserialization per
+        // row of a result about to be discarded — over 40k-row results, on the turn the user is
+        // waiting on. The header carries the plan precisely so this read never happens.
+        var real = new JsonLinesResultArtifactStore(
+            NullLogger<JsonLinesResultArtifactStore>.Instance, Configuration());
+        var artifacts = new RowCountingArtifactStore(real);
+
+        var (manager, store, _) = CreateManager(artifacts);
+        var executor = new CountingExecutor { RowCount = 200 };
+
+        // Three ancestors, three distinct plans, none of which the fourth turn will match.
+        var first = await RunTurnAsync(manager, store, executor, "everyone under Sanjay", "displayName");
+        var second = await RunTurnAsync(
+            manager, store, executor, "everyone under Sanjay", "title", previousJobId: first.JobId);
+        var third = await RunTurnAsync(
+            manager, store, executor, "everyone under Priya", "displayName", previousJobId: second.JobId);
+
+        artifacts.ResetRowCount();
+
+        var fourth = await RunTurnAsync(
+            manager, store, executor, "everyone under Ada", "mail", previousJobId: third.JobId);
+
+        Assert.Equal(4, executor.Traversals);
+        Assert.NotEqual(third.ResultArtifactPath, fourth.ResultArtifactPath);
+        Assert.Equal(0, artifacts.RowsRead);
+    }
+
+    [Fact]
+    public async Task AReuseWalkThatMatches_StillReadsTheRows()
+    {
+        // The over-removal sentinel for the test above: rejecting on the header must not have
+        // turned reuse itself into a header-only read, which would hand the turn an empty
+        // result set that still reported the ancestor's row count.
+        var real = new JsonLinesResultArtifactStore(
+            NullLogger<JsonLinesResultArtifactStore>.Instance, Configuration());
+        var artifacts = new RowCountingArtifactStore(real);
+
+        var (manager, store, _) = CreateManager(artifacts);
+        var executor = new CountingExecutor { RowCount = 200 };
+
+        var first = await RunTurnAsync(manager, store, executor, "everyone under Sanjay", "displayName");
+        artifacts.ResetRowCount();
+
+        var second = await RunTurnAsync(
+            manager, store, executor, "everyone under Sanjay", "displayName", previousJobId: first.JobId);
+
+        Assert.Equal(1, executor.Traversals);
+        Assert.Equal(200, second.TotalRows);
+        Assert.Equal(200, artifacts.RowsRead);
+    }
+
     private async Task<QueryJob> RunTurnAsync(
         QueryJobManager manager,
         IQueryJobStore store,
@@ -427,6 +482,41 @@ public sealed class ResultArtifactLifecycleTests : IDisposable
             return artifact;
         }
 
+        /// <summary>
+        /// Routed through this wrapper's own <see cref="Read"/> rather than the inner store's,
+        /// so the sweep still fires in the reuse window — which since slice4r2-or-1 opens at the
+        /// header read, the first thing the walk does.
+        /// </summary>
+        public ResultArtifact? ReadHeader(string? artifactPath) => Read(artifactPath, maxRows: 0);
+
+        public void Delete(string? artifactPath) => inner.Delete(artifactPath);
+        public int SweepOrphans(IReadOnlySet<string> livePaths) => inner.SweepOrphans(livePaths);
+        public bool HasRoomForAnotherResult() => inner.HasRoomForAnotherResult();
+    }
+
+    /// <summary>
+    /// Counts rows actually deserialized off disk (slice4r2-or-1), so the cost of a reuse walk
+    /// is measured rather than asserted from the shape of the code.
+    /// </summary>
+    private sealed class RowCountingArtifactStore(IResultArtifactStore inner) : IResultArtifactStore
+    {
+        public int RowsRead { get; private set; }
+
+        public void ResetRowCount() => RowsRead = 0;
+
+        public Task<string> WriteAsync(
+            QueryJob job, PlanExecutionResult result, CancellationToken cancellationToken = default) =>
+            inner.WriteAsync(job, result, cancellationToken);
+
+        public ResultArtifact? Read(string? artifactPath, int? maxRows = null)
+        {
+            var artifact = inner.Read(artifactPath, maxRows);
+            RowsRead += artifact?.Rows.Count ?? 0;
+            return artifact;
+        }
+
+        public ResultArtifact? ReadHeader(string? artifactPath) => inner.ReadHeader(artifactPath);
+
         public void Delete(string? artifactPath) => inner.Delete(artifactPath);
         public int SweepOrphans(IReadOnlySet<string> livePaths) => inner.SweepOrphans(livePaths);
         public bool HasRoomForAnotherResult() => inner.HasRoomForAnotherResult();
@@ -443,6 +533,7 @@ public sealed class ResultArtifactLifecycleTests : IDisposable
             throw new IOException("the artifact volume went away mid-write");
 
         public ResultArtifact? Read(string? artifactPath, int? maxRows = null) => null;
+        public ResultArtifact? ReadHeader(string? artifactPath) => null;
         public void Delete(string? artifactPath) { }
         public int SweepOrphans(IReadOnlySet<string> livePaths) => 0;
         public bool HasRoomForAnotherResult() => true;

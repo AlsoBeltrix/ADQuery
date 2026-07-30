@@ -35,6 +35,18 @@ public interface IResultArtifactStore
     ResultArtifact? Read(string? artifactPath, int? maxRows = null);
 
     /// <summary>
+    /// Reads the header line and nothing else (slice4r2-or-1): the row count, warnings,
+    /// completeness, and the serialized plan, with <see cref="ResultArtifact.Rows"/> empty.
+    /// <para>
+    /// This is what whole-plan reuse needs to *reject* a candidate ancestor. Reading rows to
+    /// decide a question the header answers costs one deserialization per row of a result the
+    /// caller then discards, and a thread can hold twenty ancestors. Carrying the plan on the
+    /// header is why the format is line-oriented; this is the method that spends it.
+    /// </para>
+    /// </summary>
+    ResultArtifact? ReadHeader(string? artifactPath);
+
+    /// <summary>
     /// Removes an artifact. Safe to call for a path that is already gone.
     /// </summary>
     void Delete(string? artifactPath);

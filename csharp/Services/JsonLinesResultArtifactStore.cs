@@ -125,6 +125,14 @@ public sealed class JsonLinesResultArtifactStore : IResultArtifactStore
         return artifactPath;
     }
 
+    /// <summary>
+    /// A bound of zero rows: the read stops after the header line, which is what
+    /// <see cref="ArtifactHeader.TotalRows"/> and <see cref="ArtifactHeader.PlanJson"/> are on
+    /// the header for. Named rather than left as a literal at the call site, because
+    /// <c>Read(path, 0)</c> reads like a mistake (slice4r2-or-1).
+    /// </summary>
+    public ResultArtifact? ReadHeader(string? artifactPath) => Read(artifactPath, maxRows: 0);
+
     public ResultArtifact? Read(string? artifactPath, int? maxRows = null)
     {
         if (string.IsNullOrWhiteSpace(artifactPath) || !File.Exists(artifactPath))

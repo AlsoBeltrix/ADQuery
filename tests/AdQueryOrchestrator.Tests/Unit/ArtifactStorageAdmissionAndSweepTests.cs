@@ -168,6 +168,7 @@ public sealed class ArtifactStorageAdmissionAndSweepTests : IDisposable
             throw new IOException("the admission check should have refused this query");
 
         public ResultArtifact? Read(string? artifactPath, int? maxRows = null) => null;
+        public ResultArtifact? ReadHeader(string? artifactPath) => null;
         public void Delete(string? artifactPath) { }
         public int SweepOrphans(IReadOnlySet<string> livePaths) => 0;
         public bool HasRoomForAnotherResult() => false;
@@ -180,6 +181,7 @@ public sealed class ArtifactStorageAdmissionAndSweepTests : IDisposable
             Task.FromResult(string.Empty);
 
         public ResultArtifact? Read(string? artifactPath, int? maxRows = null) => null;
+        public ResultArtifact? ReadHeader(string? artifactPath) => null;
         public void Delete(string? artifactPath) { }
         public int SweepOrphans(IReadOnlySet<string> livePaths) => throw new IOException("volume offline");
         public bool HasRoomForAnotherResult() => true;

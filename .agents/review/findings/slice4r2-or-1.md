@@ -4,9 +4,9 @@
 40k-row artifacts to discover none of them match, on the turn the user is waiting on. It is a
 performance defect, not a correctness one: the answer is right, it just costs the full read of
 every ancestor to reject them.
-**Status**: Open
+**Status**: Fixed
 **Branch**: — (repo policy: commit on `master`, one finding per commit)
-**Commit**: —
+**Commit**: `<this commit>`
 
 ## Evidence
 `QueryJobManager.TryReuseThreadArtifact` walks the thread and, for each eligible ancestor,
@@ -58,10 +58,28 @@ Guard by counting deserialized rows across the walk: a thread of non-matching an
 deserialize none.
 
 ## Files changed
-—
+- `csharp/Services/IResultArtifactStore.cs` — new `ReadHeader(path)`, documented as the
+  reuse walk's rejection read.
+- `csharp/Services/JsonLinesResultArtifactStore.cs` — `ReadHeader` is `Read(path, maxRows: 0)`,
+  named so the call site does not read as a mistake.
+- `csharp/Services/QueryJobManager.cs` — `TryReuseThreadArtifact` rejects on the header and reads
+  rows only after a match. A full read that comes back null between the header read and the
+  claim now releases the claim (`ReleaseClaimedAncestorArtifact`, under the same lock) before
+  traversing, so no job completes naming a path it gave up on.
+- `tests/.../Unit/ResultArtifactLifecycleTests.cs` — new `RowCountingArtifactStore`, plus
+  `AReuseWalkOverNonMatchingAncestors_DeserializesNoRows` and its over-removal sentinel
+  `AReuseWalkThatMatches_StillReadsTheRows`.
+- `tests/.../Unit/NoResultArtifactStore.cs`, `Unit/ArtifactStorageAdmissionAndSweepTests.cs` —
+  the three other stubs implement the new member.
 
 ## Guard proof
-—
+`ReadHeader` reverted to the unbounded `Read` at the rejection site → 2 red of 12 in
+`ResultArtifactLifecycleTests` (`AReuseWalkOverNonMatchingAncestors_DeserializesNoRows`, and
+`AReuseWalkThatMatches_StillReadsTheRows` — the matching walk then reads its rows twice, 400
+instead of 200, which is the same defect seen from the other side).
+
+`scripts/verify.ps1` green with everything restored: exit 0, 350 tests, 0 failures, 0 warnings,
+publish smoke and vulnerability audit passed.
 
 ## Coder dispute (if any)
 None. The reviewer's own recommended correction is what is implemented: header-only plan

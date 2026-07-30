@@ -21,6 +21,8 @@ internal sealed class NoResultArtifactStore : IResultArtifactStore
 
     public ResultArtifact? Read(string? artifactPath, int? maxRows = null) => null;
 
+    public ResultArtifact? ReadHeader(string? artifactPath) => null;
+
     public void Delete(string? artifactPath) { }
 
     public int SweepOrphans(IReadOnlySet<string> livePaths) => 0;
