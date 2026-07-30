@@ -1332,6 +1332,11 @@ public class QueryController : ControllerBase
             UserName = userName,
             Query = originalJob.Query,
             Context = originalJob.Context,
+            // The replacement IS the same logical turn, so it inherits the original's place
+            // in the thread (slice6-or-1). Without this the retried turn becomes a thread
+            // root and the next follow-up is re-planned with the earlier questions gone.
+            // Not originalJob.JobId — that would repeat the retried question in the walk.
+            PreviousJobId = originalJob.PreviousJobId,
             RequestedResultLimit = originalJob.RequestedResultLimit,
             Status = JobStatus.Queued,
             CreatedAt = DateTime.UtcNow

@@ -162,13 +162,71 @@ public sealed class QueryControllerFollowUpProvenanceTests
         Assert.Null(manager.LastCreateContext);
     }
 
-    private static QueryController CreateController(StubJobManager manager)
+    [Fact]
+    public async Task RetryWithAlternateModel_KeepsTheRetriedTurnsPlaceInTheThread()
+    {
+        // slice6-or-1: a retry replaces one logical turn, so the replacement must inherit the
+        // original's ancestor. Otherwise the retried turn becomes a thread root and the next
+        // follow-up is re-planned with every earlier question gone.
+        var store = new InMemoryQueryJobStore();
+        store.StoreJob(new QueryJob
+        {
+            JobId = "turn-1",
+            UserName = OwnerSam,
+            Query = "everyone under Sanjay",
+            Status = JobStatus.Completed,
+        });
+        store.StoreJob(new QueryJob
+        {
+            JobId = "turn-2",
+            UserName = OwnerSam,
+            Query = "only with titles",
+            PreviousJobId = "turn-1",
+            Status = JobStatus.Completed,
+        });
+
+        var manager = new StubJobManager(store);
+        var controller = CreateController(manager, store);
+
+        var result = await controller.RetryWithAlternateModel(
+            new RetryWithAlternateModelRequest { OriginalJobId = "turn-2" });
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        var replacement = Assert.IsType<QueryJob>(manager.LastEnqueuedJob);
+
+        // Not turn-2 itself: that would repeat the retried question in the walk.
+        Assert.Equal("turn-1", replacement.PreviousJobId);
+
+        // The thread the next follow-up would carry still reaches the opening question.
+        replacement.Status = JobStatus.Completed;
+        var context = BuildThreadContext(store, replacement);
+        Assert.Contains("everyone under Sanjay", context);
+        Assert.Contains("only with titles", context);
+    }
+
+    private static string BuildThreadContext(IQueryJobStore store, QueryJob previousJob)
+    {
+        var options = Options.Create(new FollowUpOptions
+        {
+            MaxContextBytes = FollowUpOptions.ContextTransportCodeUnitLimit,
+            MaxPriorQuestions = FollowUpOptions.MaxThreadQuestions - 1,
+        });
+        var builder = new FollowUpContextBuilder(
+            new FollowUpContextEnforcer(options, NullLogger<FollowUpContextEnforcer>.Instance),
+            store,
+            options,
+            new ConfigurationBuilder().Build());
+
+        return builder.BuildFromPreviousTurn(previousJob) ?? string.Empty;
+    }
+
+    private static QueryController CreateController(StubJobManager manager, IQueryJobStore? store = null)
     {
         var configuration = new ConfigurationBuilder().Build();
         var options = Options.Create(new FollowUpOptions { MaxContextBytes = 2000, MaxPriorQuestions = 1 });
         var enforcer = new FollowUpContextEnforcer(options, NullLogger<FollowUpContextEnforcer>.Instance);
         var builder = new FollowUpContextBuilder(
-            enforcer, new InMemoryQueryJobStore(), options, configuration);
+            enforcer, store ?? new InMemoryQueryJobStore(), options, configuration);
 
         return new QueryController(
             NullLogger<QueryController>.Instance,
@@ -194,10 +252,15 @@ public sealed class QueryControllerFollowUpProvenanceTests
 
     private sealed class StubJobManager : IQueryJobManager
     {
+        private readonly IQueryJobStore? _store;
+
+        public StubJobManager(IQueryJobStore? store = null) => _store = store;
+
         public Dictionary<string, QueryJob> JobsById { get; } = new();
         public string? LastCreateContext { get; private set; }
         public string? LastCreatePreviousJobId { get; private set; }
         public bool CreateJobCalled { get; private set; }
+        public QueryJob? LastEnqueuedJob { get; private set; }
 
         public Task<string> CreateJobAsync(
             string userName,
@@ -213,9 +276,15 @@ public sealed class QueryControllerFollowUpProvenanceTests
             return Task.FromResult("new-job");
         }
 
-        public QueryJob? GetJob(string jobId) => JobsById.TryGetValue(jobId, out var job) ? job : null;
+        public QueryJob? GetJob(string jobId) =>
+            JobsById.TryGetValue(jobId, out var job) ? job : _store?.GetJob(jobId);
 
-        public Task EnqueueJobAsync(QueryJob job, string? forceModel = null) => Task.CompletedTask;
+        public Task EnqueueJobAsync(QueryJob job, string? forceModel = null)
+        {
+            LastEnqueuedJob = job;
+            _store?.StoreJob(job);
+            return Task.CompletedTask;
+        }
         public void CancelJob(string jobId) { }
         public List<QueryJob> GetUserJobs(string userName) => new();
         public List<QueryJob> GetQueuedJobs() => new();
