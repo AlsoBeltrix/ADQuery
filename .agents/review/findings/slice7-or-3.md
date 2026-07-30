@@ -3,7 +3,7 @@
 **Severity**: MEDIUM — a failed write leaks a full-size copy of the result on disk with no
 in-process reclamation, and the only sweep is at startup, so a long-running service
 accumulates them against the same volume the admission check is protecting.
-**Status**: Open
+**Status**: Verified
 **Branch**: — (repo policy: commit on `master`, one finding per commit)
 **Commit**: `<filled in after commit>`
 
@@ -44,13 +44,16 @@ caller needs to see. The startup sweep stays: it still covers the case no in-pro
 can — a killed or crashed process — and its doc comment already says so.
 
 ## Files changed
-- `csharp/Services/JsonLinesResultArtifactStore.cs:63-110` — failure cleanup around the
+- `csharp/Services/JsonLinesResultArtifactStore.cs:63-125` — failure cleanup around the
   temp-file write.
 
 ## Guard proof
-- `tests/AdQueryOrchestrator.Tests/Unit/ResultArtifactStoreTests.cs` — a write cancelled
-  mid-rows leaves no `.results.tmp` in the artifact root. Reverting the cleanup makes it
-  FAIL.
+- `ResultArtifactStoreTests.AnInterruptedWrite_LeavesNoTempFileBehindEither` — a cancelled
+  500-row write must throw and leave no `.results.tmp` in the artifact root.
+- Removing `Delete(tempPath)` from the catch: **Failed 1, Passed 8, Total 9**. Restored:
+  9/9 pass.
+- `pwsh -NoLogo -NoProfile -File scripts/verify.ps1` — passed. 321 tests, 0 warnings,
+  published Production and Development smokes passed, vulnerability audit clean.
 
 ## Coder dispute (if any)
 None. Verified against the cited lines.

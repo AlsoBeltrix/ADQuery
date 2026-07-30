@@ -119,6 +119,27 @@ public sealed class ResultArtifactStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task AnInterruptedWrite_LeavesNoTempFileBehindEither()
+    {
+        // The startup sweep only runs when no process is alive to have leaked one, so a write
+        // that fails or is cancelled while the service is up must reclaim its own partial —
+        // otherwise cancelled large queries accumulate full-size files against the very volume
+        // the admission check refuses new queries to protect.
+        var store = CreateStore();
+        using var cancellation = new CancellationTokenSource();
+
+        // Cancel after the header, while the row loop (where a large write spends its time)
+        // is still running.
+        await cancellation.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => store.WriteAsync(Job("job-1", Plan("p")), Result(500), cancellation.Token));
+
+        Assert.Empty(Directory.EnumerateFiles(
+            _root, "*" + JsonLinesResultArtifactStore.TempExtension, SearchOption.AllDirectories));
+    }
+
+    [Fact]
     public async Task SweepOrphans_RemovesTempFilesAndUnreferencedArtifacts_KeepingLiveOnes()
     {
         var store = CreateStore();

@@ -75,32 +75,47 @@ public sealed class JsonLinesResultArtifactStore : IResultArtifactStore
 
         // Atomic: a reader never observes a partially written artifact, because the file at
         // the recorded path either does not exist yet or is complete.
-        await using (var stream = new FileStream(
-            tempPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 64 * 1024, useAsync: true))
-        await using (var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
+        //
+        // The writer owns its temp file on both paths (slice7-or-3): an interrupted write —
+        // a cancelled query is the everyday case, since the row loop is where a large write
+        // spends its time — must not leave a full-size partial behind. The startup sweep
+        // still covers what no in-process handler can, a killed or crashed process.
+        try
         {
-            var header = new ArtifactHeader
+            await using (var stream = new FileStream(
+                tempPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 64 * 1024, useAsync: true))
+            await using (var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
             {
-                TotalRows = result.Data.Count,
-                Warnings = result.Warnings,
-                PlanJson = QueryLogHelper.SerializePlan(job.Plan),
-            };
-            await writer.WriteLineAsync(JsonSerializer.Serialize(header, SerializerOptions));
-
-            for (var i = 0; i < result.Data.Count; i++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var line = new ArtifactRow
+                var header = new ArtifactHeader
                 {
-                    Row = result.Data[i],
-                    GroupValues = i < result.GroupValues.Count ? result.GroupValues[i] : null,
+                    TotalRows = result.Data.Count,
+                    Warnings = result.Warnings,
+                    PlanJson = QueryLogHelper.SerializePlan(job.Plan),
                 };
-                await writer.WriteLineAsync(JsonSerializer.Serialize(line, SerializerOptions));
-            }
-        }
+                await writer.WriteLineAsync(JsonSerializer.Serialize(header, SerializerOptions));
 
-        File.Move(tempPath, artifactPath, overwrite: true);
+                for (var i = 0; i < result.Data.Count; i++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    var line = new ArtifactRow
+                    {
+                        Row = result.Data[i],
+                        GroupValues = i < result.GroupValues.Count ? result.GroupValues[i] : null,
+                    };
+                    await writer.WriteLineAsync(JsonSerializer.Serialize(line, SerializerOptions));
+                }
+            }
+
+            File.Move(tempPath, artifactPath, overwrite: true);
+        }
+        catch
+        {
+            // Best-effort and silent: a cleanup failure must not replace the exception the
+            // caller needs to see. Delete already swallows and logs its own IO failures.
+            Delete(tempPath);
+            throw;
+        }
 
         _logger.LogInformation(
             "Job {JobId} result artifact written: {Rows} rows at {Path}",
