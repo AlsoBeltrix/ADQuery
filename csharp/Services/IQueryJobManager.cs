@@ -13,11 +13,16 @@ namespace AdQuery.Orchestrator.Services;
 /// </summary>
 public interface IQueryJobManager
 {
+    /// <param name="previousJobId">
+    /// The resolved, ownership-checked prior turn (F04 Slice 6a), recorded on the job so the
+    /// thread stays walkable server-side. Null opens a new thread.
+    /// </param>
     Task<string> CreateJobAsync(
         string userName,
         string query,
         string? context = null,
         int? requestedResultLimit = null,
+        string? previousJobId = null,
         CancellationToken cancellationToken = default);
     Task EnqueueJobAsync(QueryJob job, string? forceModel = null);
     QueryJob? GetJob(string jobId);

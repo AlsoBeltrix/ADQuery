@@ -86,6 +86,48 @@ public sealed class QueryControllerFollowUpProvenanceTests
         Assert.Contains("who is in group X", manager.LastCreateContext);
         Assert.DoesNotContain("CLIENT_SUPPLIED_CONTEXT_SENTINEL", manager.LastCreateContext);
         Assert.DoesNotContain("PRIOR_JOB_CONTEXT_SENTINEL", manager.LastCreateContext);
+
+        // F04 Slice 6a: the ownership-checked link is recorded so the thread stays walkable
+        // from the new job back through its predecessors.
+        Assert.Equal("mine", manager.LastCreatePreviousJobId);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ForeignPreviousJobId_RecordsNoThreadLink()
+    {
+        // The link must be recorded only after the ownership check, or a rejected request
+        // could still splice a foreign turn into a thread.
+        var manager = new StubJobManager
+        {
+            JobsById =
+            {
+                ["foreign"] = new QueryJob { JobId = "foreign", UserName = "someone-else", Status = JobStatus.Completed },
+            },
+        };
+        var controller = CreateController(manager);
+
+        await controller.ExecuteQueryAsync(new QueryRequest
+        {
+            Query = "and in Dublin?",
+            PreviousJobId = "foreign",
+        });
+
+        Assert.Null(manager.LastCreatePreviousJobId);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_UnknownPreviousJobId_RecordsNoThreadLink()
+    {
+        var manager = new StubJobManager();
+        var controller = CreateController(manager);
+
+        await controller.ExecuteQueryAsync(new QueryRequest
+        {
+            Query = "and in Dublin?",
+            PreviousJobId = "gone",
+        });
+
+        Assert.Null(manager.LastCreatePreviousJobId);
     }
 
     [Fact]
@@ -123,10 +165,10 @@ public sealed class QueryControllerFollowUpProvenanceTests
     private static QueryController CreateController(StubJobManager manager)
     {
         var configuration = new ConfigurationBuilder().Build();
-        var enforcer = new FollowUpContextEnforcer(
-            Options.Create(new FollowUpOptions { MaxContextBytes = 2000 }),
-            NullLogger<FollowUpContextEnforcer>.Instance);
-        var builder = new FollowUpContextBuilder(enforcer, configuration);
+        var options = Options.Create(new FollowUpOptions { MaxContextBytes = 2000, MaxPriorQuestions = 1 });
+        var enforcer = new FollowUpContextEnforcer(options, NullLogger<FollowUpContextEnforcer>.Instance);
+        var builder = new FollowUpContextBuilder(
+            enforcer, new InMemoryQueryJobStore(), options, configuration);
 
         return new QueryController(
             NullLogger<QueryController>.Instance,
@@ -154,6 +196,7 @@ public sealed class QueryControllerFollowUpProvenanceTests
     {
         public Dictionary<string, QueryJob> JobsById { get; } = new();
         public string? LastCreateContext { get; private set; }
+        public string? LastCreatePreviousJobId { get; private set; }
         public bool CreateJobCalled { get; private set; }
 
         public Task<string> CreateJobAsync(
@@ -161,10 +204,12 @@ public sealed class QueryControllerFollowUpProvenanceTests
             string query,
             string? context = null,
             int? requestedResultLimit = null,
+            string? previousJobId = null,
             CancellationToken cancellationToken = default)
         {
             CreateJobCalled = true;
             LastCreateContext = context;
+            LastCreatePreviousJobId = previousJobId;
             return Task.FromResult("new-job");
         }
 

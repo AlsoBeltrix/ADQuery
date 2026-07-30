@@ -930,6 +930,7 @@ public class QueryController : ControllerBase
         // ownership-checked here. Any client-supplied request.Context is ignored (it would
         // be a client-asserted, unbounded, potentially multi-turn transcript).
         string? context = null;
+        string? previousJobId = null;
         if (!string.IsNullOrWhiteSpace(request.PreviousJobId))
         {
             var previousJob = _jobManager.GetJob(request.PreviousJobId);
@@ -950,6 +951,11 @@ public class QueryController : ControllerBase
             if (previousJob is { Status: JobStatus.Completed })
             {
                 context = _followUpContextBuilder.BuildFromPreviousTurn(previousJob);
+
+                // F04 Slice 6a: record the link only once it has passed the ownership check
+                // above, so the stored thread the builder walks is server-verified end to
+                // end. A not-found or incomplete prior turn starts a fresh thread.
+                previousJobId = previousJob.JobId;
             }
         }
 
@@ -960,6 +966,7 @@ public class QueryController : ControllerBase
                 request.Query,
                 context,
                 requestedLimit,
+                previousJobId,
                 HttpContext.RequestAborted);
 
             _logger.LogInformation("Async query job {JobId} created for user {UserName}", jobId, userName);

@@ -13,7 +13,8 @@ public sealed class FollowUpOptions
     public const string SectionName = "FollowUp";
 
     /// <summary>
-    /// Hard ceiling on how many questions one turn's context may carry (F04 Slice 6, F04-D6).
+    /// Hard ceiling on how many questions one turn accounts for — the prior questions its
+    /// context carries plus the current turn's own (F04 Slice 6, F04-D6).
     /// Questions are the only component that grows with the thread, so this is the only input
     /// the derived ceilings below scale with. It is a deliberate thread-depth bound, not an
     /// extrapolation from observed threads (f04-or-6); Slice 6a's configurable

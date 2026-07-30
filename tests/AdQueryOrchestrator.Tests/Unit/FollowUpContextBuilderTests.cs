@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using AdQuery.Orchestrator.Configuration;
 using AdQuery.Orchestrator.Models;
@@ -19,7 +21,11 @@ namespace AdQuery.Orchestrator.Tests.Unit;
 /// </summary>
 public sealed class FollowUpContextBuilderTests
 {
-    private static FollowUpContextBuilder CreateBuilder(int maxBytes = 2000, int summaryRowCount = 20)
+    private static FollowUpContextBuilder CreateBuilder(
+        int maxBytes = 2000,
+        int summaryRowCount = 20,
+        int maxPriorQuestions = 1,
+        IQueryJobStore? store = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -27,10 +33,34 @@ public sealed class FollowUpContextBuilderTests
                 ["QueryDefaults:SummaryRowCount"] = summaryRowCount.ToString(),
             })
             .Build();
-        var enforcer = new FollowUpContextEnforcer(
-            Options.Create(new FollowUpOptions { MaxContextBytes = maxBytes }),
-            NullLogger<FollowUpContextEnforcer>.Instance);
-        return new FollowUpContextBuilder(enforcer, configuration);
+        var options = Options.Create(new FollowUpOptions
+        {
+            MaxContextBytes = maxBytes,
+            MaxPriorQuestions = maxPriorQuestions,
+        });
+        var enforcer = new FollowUpContextEnforcer(options, NullLogger<FollowUpContextEnforcer>.Instance);
+
+        return new FollowUpContextBuilder(
+            enforcer, store ?? new InMemoryQueryJobStore(), options, configuration);
+    }
+
+    /// <summary>
+    /// Stores a thread oldest-first and returns its newest turn, chained the way the
+    /// controller chains one: each job records the id of the turn it followed.
+    /// </summary>
+    private static QueryJob StoreThread(IQueryJobStore store, params string[] questionsOldestFirst)
+    {
+        QueryJob? previous = null;
+        for (var i = 0; i < questionsOldestFirst.Length; i++)
+        {
+            var job = CompletedJob(questionsOldestFirst[i]);
+            job.JobId = $"turn-{i}";
+            job.PreviousJobId = previous?.JobId;
+            store.StoreJob(job);
+            previous = job;
+        }
+
+        return previous!;
     }
 
     private static QueryJob CompletedJob(
@@ -174,5 +204,173 @@ public sealed class FollowUpContextBuilderTests
 
         Assert.NotNull(context);
         Assert.True(Encoding.UTF8.GetByteCount(context!) <= 200);
+    }
+
+    [Fact]
+    public void BuildFromPreviousTurn_CarriesTheWholeThread_OldestFirst()
+    {
+        // F04 Slice 6a: the third turn must still see the first turn's constraint, or a
+        // refinement chain loses everything but its immediate predecessor.
+        var store = new InMemoryQueryJobStore();
+        var newest = StoreThread(store, "everyone under Sanjay", "only with titles");
+        var builder = CreateBuilder(maxPriorQuestions: 5, store: store);
+
+        var context = builder.BuildFromPreviousTurn(newest);
+
+        Assert.NotNull(context);
+        Assert.Contains("everyone under Sanjay", context);
+        Assert.Contains("only with titles", context);
+        Assert.True(
+            context!.IndexOf("everyone under Sanjay", StringComparison.Ordinal)
+                < context.IndexOf("only with titles", StringComparison.Ordinal),
+            "the thread must read oldest to newest");
+    }
+
+    [Fact]
+    public void BuildFromPreviousTurn_ThreadBeyondTheBound_DropsOldestFirst()
+    {
+        // The bound keeps the questions the current turn is refining, so the oldest fall
+        // off — never the newest.
+        var store = new InMemoryQueryJobStore();
+        var newest = StoreThread(store, "oldest question", "middle question", "newest question");
+        var builder = CreateBuilder(maxPriorQuestions: 2, store: store);
+
+        var context = builder.BuildFromPreviousTurn(newest);
+
+        Assert.NotNull(context);
+        Assert.DoesNotContain("oldest question", context);
+        Assert.Contains("middle question", context);
+        Assert.Contains("newest question", context);
+    }
+
+    [Fact]
+    public void BuildFromPreviousTurn_ThreadNeverCarriesAccumulatedResults()
+    {
+        // F04-D6: questions accumulate, results do not. Only the last turn's value slice
+        // may appear, however long the thread.
+        var store = new InMemoryQueryJobStore();
+
+        var older = CompletedJob(
+            "first question",
+            aggregation: new Dictionary<string, object>
+            {
+                ["grouped_counts"] = new Dictionary<string, int> { ["OLDER_VALUE_SENTINEL"] = 3 },
+            });
+        older.JobId = "older";
+        store.StoreJob(older);
+
+        var newest = CompletedJob(
+            "second question",
+            aggregation: new Dictionary<string, object>
+            {
+                ["grouped_counts"] = new Dictionary<string, int> { ["NEWEST_VALUE"] = 7 },
+            });
+        newest.JobId = "newest";
+        newest.PreviousJobId = "older";
+        store.StoreJob(newest);
+
+        var context = CreateBuilder(maxPriorQuestions: 5, store: store).BuildFromPreviousTurn(newest);
+
+        Assert.NotNull(context);
+        Assert.Contains("first question", context);
+        Assert.Contains("NEWEST_VALUE: 7", context);
+        Assert.DoesNotContain("OLDER_VALUE_SENTINEL", context);
+    }
+
+    [Fact]
+    public void BuildFromPreviousTurn_ThreadStopsAtAForeignTurn()
+    {
+        // Every link was ownership-checked when it was recorded, so a foreign turn in the
+        // chain means corrupted state: stop rather than compose another user's question.
+        var store = new InMemoryQueryJobStore();
+
+        var foreign = CompletedJob("FOREIGN_QUESTION_SENTINEL");
+        foreign.JobId = "foreign";
+        foreign.UserName = "someone-else";
+        store.StoreJob(foreign);
+
+        var mine = CompletedJob("my question");
+        mine.JobId = "mine";
+        mine.PreviousJobId = "foreign";
+        store.StoreJob(mine);
+
+        var context = CreateBuilder(maxPriorQuestions: 5, store: store).BuildFromPreviousTurn(mine);
+
+        Assert.NotNull(context);
+        Assert.Contains("my question", context);
+        Assert.DoesNotContain("FOREIGN_QUESTION_SENTINEL", context);
+    }
+
+    [Fact]
+    public void BuildFromPreviousTurn_CorruptedCycle_Terminates()
+    {
+        var store = new InMemoryQueryJobStore();
+        var a = CompletedJob("question a");
+        a.JobId = "a";
+        a.PreviousJobId = "b";
+        var b = CompletedJob("question b");
+        b.JobId = "b";
+        b.PreviousJobId = "a";
+        store.StoreJob(a);
+        store.StoreJob(b);
+
+        var context = CreateBuilder(maxPriorQuestions: 50, store: store).BuildFromPreviousTurn(a);
+
+        Assert.NotNull(context);
+        Assert.Contains("question a", context);
+        Assert.Contains("question b", context);
+    }
+
+    [Fact]
+    public void BuildFromPreviousTurn_MaximumThread_ComposesWithinTheCap_NoComponentDropped()
+    {
+        // F04-D6's central claim: at the shipped bounds the byte cap never shapes a turn.
+        // Every question at the transport maximum, the value slice at its bucket bound, and
+        // a plan description at its clip must all still compose.
+        var options = new FollowUpOptions();
+        var store = new InMemoryQueryJobStore();
+        var question = new string('q', AnswerOptions.QuestionTransportCodeUnitLimit);
+
+        QueryJob? previous = null;
+        for (var i = 0; i < options.MaxPriorQuestions; i++)
+        {
+            var job = CompletedJob($"{i:D4}{question[4..]}");
+            job.JobId = $"turn-{i}";
+            job.PreviousJobId = previous?.JobId;
+            store.StoreJob(job);
+            previous = job;
+        }
+
+        previous!.Plan = new DirectoryQueryPlan
+        {
+            Description = new string('d', AnswerOptions.MaxDescriptionChars * 2),
+            Projection = new ProjectionDefinition
+            {
+                Aggregation = new AggregationDefinition { Count = true, GroupBy = ["department"] },
+            },
+        };
+        previous.Aggregation = new Dictionary<string, object>
+        {
+            ["grouped_counts"] = Enumerable
+                .Range(0, FollowUpOptions.ValueSliceBuckets)
+                .ToDictionary(i => new string((char)('a' + i), AnswerOptions.MaxValueChars * 2), i => i),
+        };
+        store.StoreJob(previous);
+
+        var builder = CreateBuilder(
+            maxBytes: options.MaxContextBytes,
+            maxPriorQuestions: options.MaxPriorQuestions,
+            store: store);
+
+        var context = builder.BuildFromPreviousTurn(previous);
+
+        // Nothing dropped: every question, the plan summary, and the value slice survive.
+        Assert.NotNull(context);
+        Assert.Contains("Previous query:", context);
+        Assert.Contains("Previous results:", context);
+        for (var i = 0; i < options.MaxPriorQuestions; i++)
+        {
+            Assert.Contains($"{i:D4}", context);
+        }
     }
 }

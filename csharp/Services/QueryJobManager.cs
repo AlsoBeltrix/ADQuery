@@ -55,6 +55,7 @@ public class QueryJobManager : IQueryJobManager
         string query,
         string? context = null,
         int? requestedResultLimit = null,
+        string? previousJobId = null,
         CancellationToken cancellationToken = default)
     {
         if (_maxJobsPerUser > 0)
@@ -81,6 +82,7 @@ public class QueryJobManager : IQueryJobManager
             UserName = userName,
             Query = query,
             Context = boundedContext,
+            PreviousJobId = previousJobId,
             RequestedResultLimit = requestedResultLimit,
             Status = JobStatus.Queued,
             CreatedAt = DateTime.UtcNow

@@ -13,6 +13,14 @@ public class QueryJob
     public string UserName { get; set; } = string.Empty;
     public string Query { get; set; } = string.Empty;
     public string? Context { get; set; }
+
+    /// <summary>
+    /// The job this one follows up on, or null when it opens a thread (F04 Slice 6a).
+    /// Recorded server-side after the controller's ownership check, so the thread is walkable
+    /// from any turn back to its first question without trusting a client-asserted chain.
+    /// </summary>
+    public string? PreviousJobId { get; set; }
+
     public int? RequestedResultLimit { get; set; }
     public DirectoryQueryPlan? Plan { get; set; }
 

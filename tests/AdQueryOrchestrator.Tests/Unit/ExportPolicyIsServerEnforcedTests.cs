@@ -177,6 +177,7 @@ public sealed class ExportPolicyIsServerEnforcedTests
             string query,
             string? context = null,
             int? requestedResultLimit = null,
+            string? previousJobId = null,
             CancellationToken cancellationToken = default) => Task.FromResult("new-job");
 
         public Task EnqueueJobAsync(QueryJob job, string? forceModel = null) => Task.CompletedTask;
