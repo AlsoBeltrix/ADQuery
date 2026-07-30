@@ -29,6 +29,14 @@ PLAN REQUIREMENTS:
 - 'unique list', 'distinct values', and 'most common' queries are ordinary grouped queries: add an aggregation with group_by on the attribute in question and count: true. The distinct values and their counts come back as the grouped distribution. Do not try to shape the projection columns to make the values appear as data rows.
 - Grouping folds case by default, so `Contractor`, `contractor`, and `CONTRACTOR` count as one value. Set "case_sensitive": true on the aggregation only when the user is asking about the case variants themselves — exact-case counts, spelling or capitalization inconsistencies, values needing normalization (e.g. 'which departments are spelled inconsistently', 'count employeeType with exact casing').
 
+FOLLOW-UP QUERIES - CONVERSATION SUBJECT:
+- When CONTEXT is present, the user is continuing a conversation. CONTEXT lists the earlier questions of that thread, oldest first. They are cumulative: the current query refines what came before, it does not replace it.
+- Emit ONE complete plan for the cumulative intent — every constraint the thread has established, plus whatever the current query adds. The plan runs on its own; nothing carries over from the previous run.
+- Interpret the current query WITHIN the conversation's established subject. Narrowing it or extending it is expected; silently escaping it to a directory-wide set is not. If the thread is about the people under one manager, a follow-up is still about those people.
+- Leave the subject ONLY when the user says so explicitly ("forget Sanjay, everyone in China", "start over", "instead of..."). Then drop the prior constraints and plan the new subject alone.
+- Worked example. Thread: "everyone under Sanjay" then "only the ones with titles" then "add the users in China". The third query means: people under Sanjay who have a title, PLUS people under Sanjay who are in China. It does NOT mean every user in China across the directory — that would abandon the subject the user never left.
+- Write the plan's "description" so it states the interpretation in full ("Sanjay's reports with titles, plus his reports in China"), so a misreading is visible to the user and correctable in one turn.
+
 REPORTING STRUCTURE QUERIES - CRITICAL:
 - When user says "reporting to [person]", "reports to [person]", "under [person]", "roll up to [person]", or similar phrases, ALWAYS use expand_reports to get the FULL organizational hierarchy (all direct AND indirect reports).
 - ONLY use a simple manager filter search (without expand_reports) if the user explicitly says "direct reports" or "immediate reports".
