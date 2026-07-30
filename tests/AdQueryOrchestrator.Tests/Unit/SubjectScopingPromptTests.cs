@@ -36,7 +36,17 @@ public sealed class SubjectScopingPromptTests
         "add the users in China",
         "does NOT mean every user in China",
         "states the interpretation",
+        // slice6-or-2: the exit condition turns on what is being replaced, not on a phrase,
+        // and carries the constraint-replacement counter-example that distinguishes the two.
+        "replaces THE SUBJECT ITSELF",
+        "Replacing a CONSTRAINT is not replacing the subject",
+        "instead of titles, only people in China",
     ];
+
+    // slice6-or-2: bare "instead of..." once sat in the exit list beside two genuine resets,
+    // licensing a directory-wide escape for an ordinary constraint correction. It must not
+    // come back — in either path.
+    private const string RetiredResetTrigger = "\"instead of...\"";
 
     [Fact]
     public void CheckedInTemplate_CarriesSubjectScopingGuidance()
@@ -48,6 +58,8 @@ public sealed class SubjectScopingPromptTests
         {
             Assert.Contains(phrase, template, StringComparison.Ordinal);
         }
+
+        Assert.DoesNotContain(RetiredResetTrigger, template, StringComparison.Ordinal);
 
         // The guidance is only reachable when a follow-up actually supplies context.
         Assert.Contains("{{CONTEXT}}", template, StringComparison.Ordinal);
@@ -71,6 +83,8 @@ public sealed class SubjectScopingPromptTests
         {
             Assert.Contains(phrase, prompt, StringComparison.Ordinal);
         }
+
+        Assert.DoesNotContain(RetiredResetTrigger, prompt, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -33,7 +33,8 @@ FOLLOW-UP QUERIES - CONVERSATION SUBJECT:
 - When CONTEXT is present, the user is continuing a conversation. CONTEXT lists the earlier questions of that thread, oldest first. They are cumulative: the current query refines what came before, it does not replace it.
 - Emit ONE complete plan for the cumulative intent — every constraint the thread has established, plus whatever the current query adds. The plan runs on its own; nothing carries over from the previous run.
 - Interpret the current query WITHIN the conversation's established subject. Narrowing it or extending it is expected; silently escaping it to a directory-wide set is not. If the thread is about the people under one manager, a follow-up is still about those people.
-- Leave the subject ONLY when the user says so explicitly ("forget Sanjay, everyone in China", "start over", "instead of..."). Then drop the prior constraints and plan the new subject alone.
+- Leave the subject ONLY when the user explicitly replaces THE SUBJECT ITSELF ("forget Sanjay, everyone in China", "start over", "instead of Sanjay's org, the whole company"). Then drop the prior constraints and plan the new subject alone.
+- Replacing a CONSTRAINT is not replacing the subject. "instead of titles, only people in China" swaps one filter for another and keeps the subject: it means Sanjay's reports who are in China. The words "instead of" alone decide nothing — look at what is being replaced.
 - Worked example. Thread: "everyone under Sanjay" then "only the ones with titles" then "add the users in China". The third query means: people under Sanjay who have a title, PLUS people under Sanjay who are in China. It does NOT mean every user in China across the directory — that would abandon the subject the user never left.
 - Write the plan's "description" so it states the interpretation in full ("Sanjay's reports with titles, plus his reports in China"), so a misreading is visible to the user and correctable in one turn.
 
