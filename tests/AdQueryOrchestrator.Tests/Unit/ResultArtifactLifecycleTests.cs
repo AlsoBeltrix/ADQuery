@@ -227,6 +227,30 @@ public sealed class ResultArtifactLifecycleTests : IDisposable
         Assert.Equal(0, claude.AnswerCalls);
     }
 
+    [Fact]
+    public async Task AJobWritesItsAuditTrailUnderTheConfiguredRoot_NotTheDeployedServersVolume()
+    {
+        // QueryLogHelper.OutputRoot is an absolute path that exists only on the deployed
+        // server, and the job's audit-trail directory is created *before* the method's try, so
+        // a manager that ignores Results:ArtifactRoot throws DirectoryNotFoundException before
+        // the job starts — on a build agent, every job-driving test at once. Slice 7 made the
+        // artifact root configurable and left this write on the hard-coded one; CI caught it
+        // on b4ed25f only because this machine happens to have the volume.
+        var (manager, store, _) = CreateManager();
+
+        var job = await RunTurnAsync(
+            manager, store, new CountingExecutor(), "everyone under Sanjay", "displayName");
+
+        var auditDirectory = Path.Combine(_root, User);
+        Assert.True(
+            Directory.Exists(auditDirectory),
+            "the job's .log/.csv audit trail belongs beside its artifact under the configured root");
+        Assert.NotEmpty(Directory.EnumerateFiles(auditDirectory, "*.log"));
+
+        // And specifically not on the deployed server's volume.
+        Assert.StartsWith(_root, job.ResultArtifactPath!, StringComparison.OrdinalIgnoreCase);
+    }
+
     private async Task<QueryJob> RunTurnAsync(
         QueryJobManager manager,
         IQueryJobStore store,

@@ -28,6 +28,19 @@ public class QueryJobManager : IQueryJobManager
     private readonly int _maxJobsPerUser;
 
     /// <summary>
+    /// Root of the per-user audit trail (the <c>.log</c> and <c>.csv</c> copies a job writes
+    /// alongside its artifact), from the same <c>Results:ArtifactRoot</c> knob the artifact
+    /// store reads so both land in one per-user directory as they always have.
+    /// <para>
+    /// Configurable for the reason F04 Slice 7 made the artifact root configurable: the
+    /// default <see cref="QueryLogHelper.OutputRoot"/> is an absolute path that exists only on
+    /// the deployed server, and creating it happens before this method's <c>try</c>, so on any
+    /// machine without that volume every job throws before it starts.
+    /// </para>
+    /// </summary>
+    private readonly string _outputRoot;
+
+    /// <summary>
     /// Orders a reusing turn's artifact claim against the retention sweep that may delete the
     /// same file (slice7-or-2). Jobs execute on fire-and-forget tasks while
     /// <see cref="CleanupCompletedJobs"/> runs from the executor loop every second, and the
@@ -67,6 +80,9 @@ public class QueryJobManager : IQueryJobManager
         _answerReductionBuilder = answerReductionBuilder;
         _resultArtifacts = resultArtifacts;
         _maxJobsPerUser = Math.Max(0, configuration.GetValue<int>("Jobs:MaxJobsPerUser", 0));
+
+        var configuredRoot = configuration["Results:ArtifactRoot"];
+        _outputRoot = string.IsNullOrWhiteSpace(configuredRoot) ? QueryLogHelper.OutputRoot : configuredRoot;
     }
 
     public async Task<string> CreateJobAsync(
@@ -209,7 +225,7 @@ public class QueryJobManager : IQueryJobManager
         }
 
         var jobCreatedAt = job.CreatedAt == default ? DateTime.UtcNow : job.CreatedAt;
-        var userDirectory = QueryLogHelper.GetUserDirectory(job.UserName);
+        var userDirectory = QueryLogHelper.GetUserDirectory(_outputRoot, job.UserName);
         var baseFileName = QueryLogHelper.BuildFileBaseName(job.UserName, jobCreatedAt);
         var logPath = Path.Combine(userDirectory, $"{baseFileName}.log");
         var outputPath = Path.Combine(userDirectory, $"{baseFileName}.csv");
