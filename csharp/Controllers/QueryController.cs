@@ -1468,10 +1468,17 @@ public class QueryRequest
     /// <remarks>
     /// F01 Slice C2 (FOLLOWUP-D2): follow-up context is assembled server-side from the
     /// prior turn (see <see cref="PreviousJobId"/>); a client-supplied value is ignored by
-    /// <c>ExecuteQueryAsync</c>. The <c>[StringLength(2000)]</c> transport guard is retained
-    /// so the C1 byte cap can never be pre-empted by binding-time rejection.
+    /// <c>ExecuteQueryAsync</c>. The transport guard is retained so the C1 byte cap can
+    /// never be pre-empted by binding-time rejection.
+    /// <para>
+    /// F04 Slice 6b widened the maximum from 2000 to accommodate an accumulated question
+    /// thread. It is written as a literal because attribute arguments are the thing
+    /// <c>FollowUpOptions.ContextTransportCodeUnitLimit</c> is reconciled *against* — binding
+    /// the two in code would make that reconciliation unfalsifiable. The two move together,
+    /// and <c>FollowUpOptionsTests</c> fails if either moves alone.
+    /// </para>
     /// </remarks>
-    [StringLength(2000)]
+    [StringLength(71196)]
     public string? Context { get; set; }
 
     /// <summary>
