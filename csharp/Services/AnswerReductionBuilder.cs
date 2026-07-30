@@ -234,6 +234,37 @@ public sealed class AnswerReductionBuilder : IAnswerReductionBuilder
         return builder.ToString();
     }
 
+    /// <summary>
+    /// Bounds a value's length and flattens it onto one line (slice2-or-3).
+    /// <para>
+    /// The reduction's only structure is <c>\n</c>-delimited prefixed sections, and directory
+    /// values are interpolated into them verbatim — a record field, a group key. A value
+    /// carrying its own newline (<c>description</c> and <c>info</c> both accept them) would
+    /// forge a line in that format, including one that reads like a second RULES block, which
+    /// Narrate cannot distinguish from the template's own. Every control character folds to a
+    /// space so each value stays on the line its section allocated for it.
+    /// </para>
+    /// <para>
+    /// This closes the delimiter forgery, not prompt injection in general: a single-line value
+    /// can still read like an instruction. Defending that needs an explicit untrusted-content
+    /// delimiter in the format and a rule in the template — recorded as a known gap.
+    /// </para>
+    /// </summary>
     private static string Clip(string value, int maxChars)
-        => value.Length <= maxChars ? value : value[..maxChars];
+    {
+        var clipped = value.Length <= maxChars ? value : value[..maxChars];
+
+        return clipped.Any(char.IsControl)
+            ? string.Create(
+                clipped.Length,
+                clipped,
+                static (destination, source) =>
+                {
+                    for (var i = 0; i < source.Length; i++)
+                    {
+                        destination[i] = char.IsControl(source[i]) ? ' ' : source[i];
+                    }
+                })
+            : clipped;
+    }
 }
