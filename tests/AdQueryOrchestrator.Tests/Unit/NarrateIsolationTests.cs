@@ -24,9 +24,33 @@ namespace AdQuery.Orchestrator.Tests.Unit;
 /// Also asserts what reaches the model: the stubbed service records its reduction, which
 /// must contain the distribution scalars and must not contain any result row value.
 /// </summary>
-public sealed class NarrateIsolationTests
+public sealed class NarrateIsolationTests : IDisposable
 {
     private const string RowOnlySentinel = "ROW_ONLY_SENTINEL";
+
+    /// <summary>
+    /// These tests are about Narrate, not storage, but running a whole job writes the per-user
+    /// audit trail — so the root has to be a real directory this machine has. Left unset it
+    /// falls back to <c>QueryLogHelper.OutputRoot</c>, which exists only on the deployed server
+    /// and throws before the job starts anywhere else.
+    /// </summary>
+    private readonly string _root = Path.Combine(
+        Path.GetTempPath(), "adquery-narrate-" + Guid.NewGuid().ToString("N"));
+
+    public void Dispose()
+    {
+        try
+        {
+            if (Directory.Exists(_root))
+            {
+                Directory.Delete(_root, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+            // A leaked temp directory is not a test failure.
+        }
+    }
 
     [Fact]
     public async Task NarrateSucceeds_JobCompletesWithTheModelAnswer()
@@ -98,9 +122,11 @@ public sealed class NarrateIsolationTests
         Assert.DoesNotContain(RowOnlySentinel, claude.LastReduction);
     }
 
-    private static async Task<QueryJob> RunJobAsync(StubClaude claude)
+    private async Task<QueryJob> RunJobAsync(StubClaude claude)
     {
-        var configuration = new ConfigurationBuilder().Build();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Results:ArtifactRoot"] = _root })
+            .Build();
         var store = new InMemoryQueryJobStore();
         var manager = new QueryJobManager(
             store,
