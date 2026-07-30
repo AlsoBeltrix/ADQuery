@@ -162,6 +162,43 @@ public sealed class ResultArtifactLifecycleTests : IDisposable
     }
 
     [Fact]
+    public async Task AReusingTurn_NeverCompletesPointingAtAnArtifactRetentionDeleted()
+    {
+        // Reuse reads an ancestor artifact and claims it a moment later; retention runs on the
+        // executor loop every second and may delete exactly that file in between. The
+        // interleaving is forced deterministically here — the sweep fires from inside the
+        // reuse read — because a real preemption in a few instructions of synchronous code is
+        // not reproducible. Either outcome is correct: reuse a live artifact, or traverse.
+        // Completing with a path to a deleted file is not.
+        var real = new JsonLinesResultArtifactStore(
+            NullLogger<JsonLinesResultArtifactStore>.Instance, Configuration());
+
+        QueryJobManager? manager = null;
+        QueryJob? ancestor = null;
+
+        var artifacts = new SweepOnReadArtifactStore(real, () =>
+        {
+            // Everything the retention sweep needs: the ancestor is past its retention.
+            ancestor!.CompletedAt = DateTime.UtcNow.AddHours(-48);
+            manager!.CleanupCompletedJobs(TimeSpan.FromHours(24));
+        });
+
+        var (createdManager, store, _) = CreateManager(artifacts);
+        manager = createdManager;
+        var executor = new CountingExecutor();
+
+        ancestor = await RunTurnAsync(manager, store, executor, "everyone under Sanjay", "displayName");
+
+        var second = await RunTurnAsync(
+            manager, store, executor, "everyone under Sanjay", "displayName", previousJobId: ancestor.JobId);
+
+        Assert.NotNull(second.ResultArtifactPath);
+        Assert.True(
+            File.Exists(second.ResultArtifactPath),
+            "a completed job must never point at an artifact retention already deleted");
+    }
+
+    [Fact]
     public async Task AJobWhoseArtifactWriteFails_Fails_AndIsNeverNarrated()
     {
         // The artifact is the only place a completed result lives, so completing without one
@@ -217,12 +254,15 @@ public sealed class ResultArtifactLifecycleTests : IDisposable
         return job;
     }
 
+    private IConfiguration Configuration() =>
+        new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Results:ArtifactRoot"] = _root })
+            .Build();
+
     private (QueryJobManager Manager, IQueryJobStore Store, IResultArtifactStore Artifacts) CreateManager(
         IResultArtifactStore? artifactStore = null)
     {
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["Results:ArtifactRoot"] = _root })
-            .Build();
+        var configuration = Configuration();
 
         var store = new InMemoryQueryJobStore();
         var artifacts = artifactStore ?? new JsonLinesResultArtifactStore(
@@ -276,6 +316,37 @@ public sealed class ResultArtifactLifecycleTests : IDisposable
         public Task<PlanValidationResult> ValidatePlanAsync(
             DirectoryQueryPlan plan, CancellationToken cancellationToken = default)
             => Task.FromResult(new PlanValidationResult { IsValid = true });
+    }
+
+    /// <summary>
+    /// A real store that runs a callback the first time a read finds an artifact, so the
+    /// retention sweep can be made to land in the one window the reuse claim has to survive.
+    /// </summary>
+    private sealed class SweepOnReadArtifactStore(IResultArtifactStore inner, Action onFirstRead)
+        : IResultArtifactStore
+    {
+        private bool _fired;
+
+        public Task<string> WriteAsync(
+            QueryJob job, PlanExecutionResult result, CancellationToken cancellationToken = default) =>
+            inner.WriteAsync(job, result, cancellationToken);
+
+        public ResultArtifact? Read(string? artifactPath, int? maxRows = null)
+        {
+            var artifact = inner.Read(artifactPath, maxRows);
+
+            if (artifact != null && !_fired)
+            {
+                _fired = true;
+                onFirstRead();
+            }
+
+            return artifact;
+        }
+
+        public void Delete(string? artifactPath) => inner.Delete(artifactPath);
+        public int SweepOrphans(IReadOnlySet<string> livePaths) => inner.SweepOrphans(livePaths);
+        public bool HasRoomForAnotherResult() => inner.HasRoomForAnotherResult();
     }
 
     /// <summary>

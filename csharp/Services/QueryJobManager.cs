@@ -27,6 +27,22 @@ public class QueryJobManager : IQueryJobManager
     private readonly IResultArtifactStore _resultArtifacts;
     private readonly int _maxJobsPerUser;
 
+    /// <summary>
+    /// Orders a reusing turn's artifact claim against the retention sweep that may delete the
+    /// same file (slice7-or-2). Jobs execute on fire-and-forget tasks while
+    /// <see cref="CleanupCompletedJobs"/> runs from the executor loop every second, and the
+    /// job store is a bare <c>ConcurrentDictionary</c> — per-entry atomic, with nothing
+    /// spanning a read-then-write across the two paths.
+    /// <para>
+    /// Retention deletes the artifact and removes the job metadata naming it as one critical
+    /// section, which makes the store entry the artifact's liveness token: a reuse path
+    /// holding this lock and still finding its ancestor in the store knows the file has not
+    /// been deleted. The artifact <em>read</em> stays outside — it can be a 40k-row file, and
+    /// blocking the executor loop on it would trade a rare race for a routine stall.
+    /// </para>
+    /// </summary>
+    private readonly object _artifactLifecycleLock = new();
+
     // Server-generated internal control directive appended to a job's context to force a
     // model on the retry-with-alternate-model path; stripped before model transmission
     // and re-stripped before re-append so repeated retries do not chain directives.
@@ -418,6 +434,12 @@ public class QueryJobManager : IQueryJobManager
     /// plan recorded *in the artifact*, not in-memory job state, so a rewritten or replaced
     /// file cannot be reused under a stale plan.
     /// </para>
+    /// <para>
+    /// A match is <em>claimed</em> before it is returned (slice7-or-2): the claim is written
+    /// under <see cref="_artifactLifecycleLock"/> after re-confirming the ancestor is still in
+    /// the store, so retention cannot delete the file between the read and the claim. If the
+    /// ancestor has expired in that window the reuse is abandoned and the turn traverses.
+    /// </para>
     /// </summary>
     private (PlanExecutionResult? Result, string? ArtifactPath) TryReuseThreadArtifact(
         QueryJob job,
@@ -448,6 +470,13 @@ public class QueryJobManager : IQueryJobManager
                 if (artifact != null &&
                     string.Equals(artifact.PlanJson, executedPlanJson, StringComparison.Ordinal))
                 {
+                    if (!TryClaimAncestorArtifact(job, ancestor.JobId, ancestor.ResultArtifactPath))
+                    {
+                        // Retention took the ancestor between the read and the claim. Nothing
+                        // to reuse and nothing to point at: traverse.
+                        return (null, null);
+                    }
+
                     _logger.LogInformation(
                         "Job {JobId} reuses the artifact of turn {AncestorId}: identical plan, no traversal",
                         job.JobId, ancestor.JobId);
@@ -468,6 +497,31 @@ public class QueryJobManager : IQueryJobManager
         }
 
         return (null, null);
+    }
+
+    /// <summary>
+    /// Claims an ancestor's artifact for <paramref name="job"/> (slice7-or-2), returning false
+    /// when retention removed the ancestor first.
+    /// <para>
+    /// The claim and the retention delete share <see cref="_artifactLifecycleLock"/>, and
+    /// retention removes the job metadata inside the same critical section as the delete —
+    /// so finding the ancestor still in the store here proves the file was not deleted, and
+    /// writing <see cref="QueryJob.ResultArtifactPath"/> before releasing the lock makes the
+    /// claim visible to the next sweep's <see cref="IsArtifactStillOwned"/> check.
+    /// </para>
+    /// </summary>
+    private bool TryClaimAncestorArtifact(QueryJob job, string ancestorId, string? artifactPath)
+    {
+        lock (_artifactLifecycleLock)
+        {
+            if (_store.GetJob(ancestorId) == null)
+            {
+                return false;
+            }
+
+            job.ResultArtifactPath = artifactPath;
+            return true;
+        }
     }
 
     /// <summary>
@@ -598,15 +652,23 @@ public class QueryJobManager : IQueryJobManager
         // F04 Slice 7 (f04-or-7): D5 moved results from a store with automatic expiry to one
         // with none, so retention has to delete the file too — and *before* RemoveJob drops
         // the metadata that names it, or the artifact is orphaned permanently.
+        //
+        // Delete and RemoveJob are one critical section against a concurrent reuse claim
+        // (slice7-or-2), which is what lets that claim treat the ancestor's presence in the
+        // store as proof its artifact still exists.
         foreach (var job in expired)
         {
-            if (!string.IsNullOrWhiteSpace(job.ResultArtifactPath) &&
-                !IsArtifactStillOwned(job, expiring))
+            lock (_artifactLifecycleLock)
             {
-                _resultArtifacts.Delete(job.ResultArtifactPath);
+                if (!string.IsNullOrWhiteSpace(job.ResultArtifactPath) &&
+                    !IsArtifactStillOwned(job, expiring))
+                {
+                    _resultArtifacts.Delete(job.ResultArtifactPath);
+                }
+
+                _store.RemoveJob(job.JobId);
             }
 
-            _store.RemoveJob(job.JobId);
             _logger.LogDebug("Cleaned up completed job {JobId}", job.JobId);
         }
     }

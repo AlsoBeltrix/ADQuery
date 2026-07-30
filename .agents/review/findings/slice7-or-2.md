@@ -3,7 +3,7 @@
 **Severity**: MEDIUM — retention runs on a background loop with no lock against a running
 job, so an ancestor artifact can be deleted between the reusing turn's read and its claim,
 leaving a Completed job pointing at a file that is gone.
-**Status**: Open
+**Status**: Verified
 **Branch**: — (repo policy: commit on `master`, one finding per commit)
 **Commit**: `<filled in after commit>`
 
@@ -51,13 +51,22 @@ the executor loop on it would trade a rare race for a routine stall. Only the li
 re-check and the claim are inside.
 
 ## Files changed
-- `csharp/Services/QueryJobManager.cs` — `_artifactLifecycleLock`; `TryReuseThreadArtifact`
-  claims under it; `CleanupCompletedJobs` deletes and removes under it.
+- `csharp/Services/QueryJobManager.cs:29-44` — `_artifactLifecycleLock`, with the liveness-
+  token reasoning at the declaration.
+- `csharp/Services/QueryJobManager.cs:459-465,502-524` — `TryReuseThreadArtifact` claims via
+  the new `TryClaimAncestorArtifact` and abandons reuse when the ancestor is gone.
+- `csharp/Services/QueryJobManager.cs:611-628` — retention's delete and `RemoveJob` are one
+  critical section.
 
 ## Guard proof
-- `tests/AdQueryOrchestrator.Tests/Unit/ResultArtifactLifecycleTests.cs` — a reusing turn
-  whose ancestor expires concurrently either reuses a live artifact or traverses, never
-  completes pointing at a deleted one. Reverting the claim makes it FAIL.
+- `ResultArtifactLifecycleTests.AReusingTurn_NeverCompletesPointingAtAnArtifactRetentionDeleted`
+  — the interleaving is forced deterministically: a decorating store fires the retention
+  sweep from inside the reuse read, which is the exact window the claim has to survive (a
+  real preemption across a few instructions of synchronous code is not reproducible). The
+  turn must then either reuse a live artifact or traverse; completing with a path to a
+  deleted file fails. Removing the claim call makes it **FAIL** (1 red); restored → 7/7 pass.
+- Canonical verification: `pwsh -NoLogo -NoProfile -File scripts/verify.ps1` — passed,
+  320 tests, 0 warnings, published smoke passed, audit clean.
 
 ## Coder dispute (if any)
 None on the mechanism. Scope note: the race window is narrow — there is no `await` between
