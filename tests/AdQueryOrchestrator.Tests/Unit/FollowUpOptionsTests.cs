@@ -28,7 +28,10 @@ public sealed class FollowUpOptionsTests
     private static readonly IReadOnlyDictionary<string, string?> ValidSettings =
         new Dictionary<string, string?>
         {
-            ["FollowUp:MaxContextBytes"] = "2000",
+            // The tightest legitimate pair: no prior questions, and a cap sized exactly to
+            // the current turn's question plus the fixed components.
+            ["FollowUp:MaxPriorQuestions"] = "0",
+            ["FollowUp:MaxContextBytes"] = "14196",
         };
 
     [Fact]
@@ -101,7 +104,8 @@ public sealed class FollowUpOptionsTests
     public void ValidSettings_Bind()
     {
         var options = Bind(ValidSettings);
-        Assert.Equal(2000, options.MaxContextBytes);
+        Assert.Equal(14196, options.MaxContextBytes);
+        Assert.Equal(0, options.MaxPriorQuestions);
     }
 
     [Theory]
@@ -136,6 +140,112 @@ public sealed class FollowUpOptionsTests
         });
 
         Assert.Equal(FollowUpOptions.ContextTransportCodeUnitLimit, options.MaxContextBytes);
+    }
+
+    [Fact]
+    public void CheckedInAppSettings_BindAndValidate()
+    {
+        // The shipped pair must itself pass startup validation — including the F04-D6
+        // derived floor, which relates the two shipped values to each other.
+        var path = Path.Combine(AppContext.BaseDirectory, "Fixtures", "appsettings.json");
+        var configuration = new ConfigurationBuilder().AddJsonFile(path).Build();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddFollowUpConfiguration(configuration);
+        using var provider = services.BuildServiceProvider();
+
+        var options = provider.GetRequiredService<IOptions<FollowUpOptions>>().Value;
+
+        Assert.True(
+            options.MaxContextBytes >= FollowUpOptions.WorstCaseContextBytes(options.MaxPriorQuestions),
+            $"the shipped cap {options.MaxContextBytes} is below the worst case "
+            + $"{options.MaxPriorQuestions} prior questions compose");
+    }
+
+    [Fact]
+    public void PriorQuestionDefault_LeavesRoomForTheCurrentTurn()
+    {
+        // The current turn's own question occupies the remaining slot of the thread
+        // ceiling, so the prior-question default is one below it.
+        Assert.Equal(FollowUpOptions.MaxThreadQuestions - 1, new FollowUpOptions().MaxPriorQuestions);
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    public void NegativePriorQuestions_FailsValidation(string value)
+    {
+        var settings = new Dictionary<string, string?> { ["FollowUp:MaxPriorQuestions"] = value };
+        AssertValidationFails(settings, "MaxPriorQuestions");
+    }
+
+    [Fact]
+    public void PriorQuestionsAtTheThreadCeiling_FailsValidation()
+    {
+        // At the ceiling the thread would be MaxThreadQuestions prior questions *plus* the
+        // current turn's, composing past what the transport guard was derived from.
+        var settings = new Dictionary<string, string?>
+        {
+            ["FollowUp:MaxPriorQuestions"] = FollowUpOptions.MaxThreadQuestions.ToString(),
+        };
+
+        AssertValidationFails(settings, "thread ceiling");
+    }
+
+    [Fact]
+    public void CapBelowTheWorstCaseThread_FailsValidation()
+    {
+        // F04-D6's derived floor. This is the plan's rejected pair in miniature: a cap that
+        // looks generous but that a legitimate maximum-length thread overflows, which would
+        // make the backstop the shaper.
+        var settings = new Dictionary<string, string?>
+        {
+            ["FollowUp:MaxPriorQuestions"] = "10",
+            ["FollowUp:MaxContextBytes"] = (FollowUpOptions.WorstCaseContextBytes(10) - 1).ToString(),
+        };
+
+        AssertValidationFails(settings, "is a backstop, not a shaper");
+    }
+
+    [Fact]
+    public void CapExactlyAtTheWorstCaseThread_Validates()
+    {
+        // The floor is inclusive: a pair sized exactly to its own worst case is the
+        // tightest legitimate configuration and must boot.
+        var options = Bind(new Dictionary<string, string?>
+        {
+            ["FollowUp:MaxPriorQuestions"] = "10",
+            ["FollowUp:MaxContextBytes"] = FollowUpOptions.WorstCaseContextBytes(10).ToString(),
+        });
+
+        Assert.Equal(FollowUpOptions.WorstCaseContextBytes(10), options.MaxContextBytes);
+    }
+
+    [Fact]
+    public void WorstCase_CountsTheCurrentTurnsQuestionToo()
+    {
+        // The knob counts *prior* questions; the composed context also carries the current
+        // turn's. A worst case that forgot it would under-size the floor by one question.
+        var oneQuestion = AnswerOptions.QuestionTransportCodeUnitLimit * 3;
+
+        Assert.Equal(
+            oneQuestion,
+            FollowUpOptions.WorstCaseContextBytes(1) - FollowUpOptions.WorstCaseContextBytes(0));
+        Assert.Equal(
+            (FollowUpOptions.FixedComponentCodeUnits * 3) + oneQuestion,
+            FollowUpOptions.WorstCaseContextBytes(0));
+    }
+
+    [Fact]
+    public void WorstCaseAtTheThreadCeiling_FitsTheTransportGuard()
+    {
+        // The two derivations must not disagree: the loosest configurable pair
+        // (MaxThreadQuestions - 1 prior questions) has to remain transport-legal, or the
+        // knob's upper bound and the byte cap's upper bound would contradict each other.
+        Assert.True(
+            FollowUpOptions.WorstCaseContextBytes(FollowUpOptions.MaxThreadQuestions - 1)
+                <= FollowUpOptions.ContextTransportCodeUnitLimit,
+            "the loosest configurable thread composes past the transport guard");
     }
 
     [Fact]

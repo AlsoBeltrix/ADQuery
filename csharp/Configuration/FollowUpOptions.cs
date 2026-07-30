@@ -21,8 +21,12 @@ public sealed class FollowUpOptions
     /// </summary>
     public const int MaxThreadQuestions = 20;
 
-    /// <summary>Value-slice buckets, at the ceiling <c>QueryDefaults:SummaryRowCount</c> may take.</summary>
-    private const int ValueSliceBuckets = 20;
+    /// <summary>
+    /// Value-slice buckets, at the ceiling <c>QueryDefaults:SummaryRowCount</c> may take.
+    /// The builder clamps the configured row count to this, so a larger
+    /// <c>SummaryRowCount</c> widens the on-screen table without widening follow-up context.
+    /// </summary>
+    public const int ValueSliceBuckets = 20;
 
     /// <summary>A clipped bucket key, its separator, and its count.</summary>
     private const int ValueSliceBucketCodeUnits = AnswerOptions.MaxValueChars + 16;
@@ -84,6 +88,39 @@ public sealed class FollowUpOptions
     /// to the model. Defaults to the transport-permitted maximum
     /// (<see cref="ContextTransportCodeUnitLimit"/>), the loosest in-bounds value — the
     /// hard mechanism and knob, not a sized-for-typical-usage figure.
+    /// <para>
+    /// Under F04-D6 this is a <em>backstop</em>, never the shaper: the component bounds
+    /// decide how much context is sent, and <see cref="FollowUpOptionsValidator"/> rejects at
+    /// startup any pair whose worst-case composition
+    /// (<see cref="MaxPriorQuestions"/> × the question maximum + the fixed components)
+    /// exceeds it. A cap that trips at runtime therefore means a component bound is broken,
+    /// which is a logged error rather than a silent truncation.
+    /// </para>
     /// </summary>
     public int MaxContextBytes { get; set; } = ContextTransportCodeUnitLimit;
+
+    /// <summary>
+    /// How many <em>prior</em> questions of the thread one turn's context may carry
+    /// (F04 Slice 6a, F04-D6). Questions are the only component that grows with the thread,
+    /// so this one knob bounds the whole composition. When a thread is longer, the
+    /// <em>oldest</em> questions are dropped first; the current turn's question is never a
+    /// candidate for dropping because it is not part of this count.
+    /// <para>
+    /// Validated at startup against both <see cref="MaxThreadQuestions"/> (the hard ceiling
+    /// the transport guard is derived from) and <see cref="MaxContextBytes"/> (the derived
+    /// floor above), so a misconfigured pair fails at boot rather than mid-conversation.
+    /// </para>
+    /// </summary>
+    public int MaxPriorQuestions { get; set; } = MaxThreadQuestions - 1;
+
+    /// <summary>
+    /// Worst-case UTF-8 bytes a turn can compose under <paramref name="maxPriorQuestions"/>:
+    /// that many prior questions plus the current turn's own question, each at the
+    /// <c>QueryRequest.Query</c> maximum, plus the fixed last-turn components. This is the
+    /// derived floor <see cref="MaxContextBytes"/> must clear — computed from enforced
+    /// maxima, never extrapolated from observed threads (f04-or-6).
+    /// </summary>
+    public static int WorstCaseContextBytes(int maxPriorQuestions) =>
+        (((maxPriorQuestions + 1) * AnswerOptions.QuestionTransportCodeUnitLimit) + FixedComponentCodeUnits)
+        * Utf8BytesPerCodeUnit;
 }
