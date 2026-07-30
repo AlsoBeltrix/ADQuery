@@ -1302,9 +1302,14 @@
     // the user reads instead of the result panel where the warnings render. Narrate is told
     // the same fact, but a model instruction must not be the only thing between a truncated
     // count and a confident sentence, so the caveat is appended here in code either way.
+    // slice3r2-or-2: what the flag knows is that the figure is a floor, not that the true
+    // total is strictly larger. It trips at >= precisely because a set landing exactly on the
+    // ceiling is indistinguishable from one cut short, so claiming "the real total is higher"
+    // asserts more than the server can tell. The answer template already hedges this way.
     const INCOMPLETE_CAVEAT =
-        'This stopped at a system limit before reading every match, so the real total is '
-        + 'higher. See the warnings in the result panel.';
+        'This stopped at a system limit before reading every match, so that figure is a '
+        + 'floor — the real total is unknown and may be higher. See the warnings in the '
+        + 'result panel.';
 
     function withIncompleteCaveat(result, text) {
         return result && result.incomplete === true ? `${text} ${INCOMPLETE_CAVEAT}` : text;

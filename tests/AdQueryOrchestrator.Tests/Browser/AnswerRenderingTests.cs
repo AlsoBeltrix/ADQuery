@@ -124,7 +124,31 @@ public sealed class AnswerRenderingTests
         {
             var bot = page.Locator("#chatLog .exchange .turn.bot");
             await Assertions.Expect(bot).ToContainTextAsync("42 matches.");
-            await Assertions.Expect(bot).ToContainTextAsync("the real total is higher");
+            await Assertions.Expect(bot).ToContainTextAsync("the real total is unknown and may be higher");
+        }
+        finally
+        {
+            await page.CloseAsync();
+        }
+    }
+
+    [Fact]
+    public async Task TheCaveat_ClaimsAFloorRatherThanAKnownUndercount()
+    {
+        // slice3r2-or-2. The flag trips at >= because a set landing exactly on the ceiling is
+        // indistinguishable from one cut short, so "the real total is higher" asserts more than
+        // the server knows and tells a user with a whole result to go looking for rows that do
+        // not exist. Both surfaces must claim only that the figure is a floor.
+        var page = await RunQueryAsync(answerJson: $"\"{Answer}\"", incomplete: true);
+        try
+        {
+            foreach (var surface in new[] { "#answer .prose", "#chatLog .exchange .turn.bot" })
+            {
+                await Assertions.Expect(page.Locator(surface))
+                    .ToContainTextAsync("the real total is unknown and may be higher");
+                await Assertions.Expect(page.Locator(surface))
+                    .Not.ToContainTextAsync("the real total is higher");
+            }
         }
         finally
         {

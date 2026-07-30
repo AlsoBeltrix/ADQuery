@@ -3,9 +3,9 @@
 **Severity**: LOW — the caveat's direction is right and it fires in the right cases; the
 overstatement is one clause, and it errs toward telling the user the answer is smaller than
 reality rather than larger.
-**Status**: Open
+**Status**: Fixed
 **Branch**: — (repo policy: commit on `master`, one finding per commit)
-**Commit**: —
+**Commit**: `<this commit>`
 
 ## Evidence
 `ci-or-1` deliberately triggers the incompleteness flag at `>=` rather than `>`
@@ -45,10 +45,21 @@ unknown and may be higher. One shared constant already feeds both surfaces, so o
 both.
 
 ## Files changed
-—
+- `csharp/wwwroot/js/app.js` — `INCOMPLETE_CAVEAT` now reads "…so that figure is a floor — the
+  real total is unknown and may be higher." One constant, both surfaces.
+- `tests/.../Browser/AnswerRenderingTests.cs` — new
+  `TheCaveat_ClaimsAFloorRatherThanAKnownUndercount` (7 → 8 tests); the existing fallback test's
+  assertion follows the wording.
 
 ## Guard proof
-—
+The overstating sentence restored → 2 red of 8 in `AnswerRenderingTests`
+(`TheCaveat_ClaimsAFloorRatherThanAKnownUndercount`,
+`AnIncompleteResultWithNoAnswer_StillCaveatsTheFallbackSummary`). The new test's negative
+assertion is what makes it non-vacuous in the other direction: it fails on the old wording
+rather than merely passing on the new one.
+
+`scripts/verify.ps1` green with everything restored: exit 0, 348 tests, 0 failures, 0 warnings,
+publish smoke and vulnerability audit passed.
 
 ## Coder dispute (if any)
 The reviewer's third suggestion — fetch one sentinel row beyond a system cap to distinguish
