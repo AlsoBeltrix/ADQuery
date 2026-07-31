@@ -23,7 +23,7 @@ Feature plans (the `F` namespace) capture net-new product direction, not finding
 | F02 | Main window matches the approved mockup | Done |
 | F03 | Deploy can never wipe the live API key | Done |
 | F04 | Genuine conversational answers (translator/narrator model; whole-conversation re-planning; delete guess-transform) | Draft |
-| F05 | A bare "how many" question answers with a number (Translate prompt emits a pure count, not a group-by on a filtered attribute) | Draft |
+| F05 | A bare "how many" question answers with a number (Translate prompt emits a pure count, not a group-by on a filtered attribute) | Approved |
 
 ## Plans
 

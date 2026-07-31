@@ -1,5 +1,16 @@
 # Settled Decisions
 
+## F05-D1 — Export is withheld for a single RESULT, not for a single-line answer
+
+- Status: Approved
+- Date: 2026-07-31
+- Authority: Repository owner, correcting the agent mid-implementation: *"a ONE LINE ANSWER HAS NO EXPORT IS WRONG. a one RESULT answer doesn't need an export. 'Who's the CEO' no export. 'How many managers in thailand' needs an export."*
+- Corrects: **F04-D2**'s second half, whose wording — *"a result whose answer is a single scalar or one record has no meaningful export"* — bundled two different things under "single". A single **record** ("who's the CEO") genuinely has nothing a file adds: the answer on screen *is* the whole result. A single **number** over many records ("how many managers in Thailand": 43) is a one-line answer over a 43-row result, and those 43 rows are exactly what a user asks for next. The count is a *summary of* an exportable set, not a substitute for one.
+- Decision: The export affordance turns on **how many records the result holds**, never on how many lines the answer occupies. A pure-count answer over more than one record **exports those records**. Withhold export only where the result itself is one record or zero records.
+- Evidence: `csharp/Services/ExportAffordance.cs:46` currently reads `HeadlineKind.Count => plan?.Projection?.Aggregation == null && totalRows > 1`, so the presence of *any* aggregation object suppresses the download regardless of `totalRows`. A pure-count plan (aggregation with empty `group_by`) therefore offers no export even at 27,000 rows — the shape asserted by `ExportAffordanceTests.PureCountAnswer_DoesNotExport`. The rows are not missing: `ComputeSettledAggregation` (`csharp/Services/QueryJobManager.cs:808-820`) computes the aggregation *from* the rows and leaves the row set intact, and F04 Slice 7 writes every completed job's full result to its artifact regardless of plan shape. The export was withheld by policy, not by absence of data.
+- Constraints (**pending implementation** — F05 has not landed; this states what it must satisfy): The `Count` arm of `ExportAffordance.HasExportableArtifact` drops its aggregation test and keys on `totalRows > 1` alone. `PureCountAnswer_DoesNotExport` is replaced by a guard asserting the opposite for a multi-record pure count, plus a retained guard that a **single**-record result — with and without an aggregation — still withholds export, so the correction cannot overshoot into the case F04-D2 got right. Both must be proven red before the fix and green after. The `Record`, `Grouped`, and zero-row arms are unchanged. Must pass `scripts/verify.ps1`.
+- Consequence: "How many managers in Thailand" answers `43` **and** offers the 43 rows. "Who's the CEO" answers with the person and offers nothing, as today. The affordance and `DownloadAsync` continue to consult the one shared policy method (`QueryController.cs:1093`, slice4-or-1), so the button and the endpoint cannot disagree. Implemented by F05 Slice 2; `.agents/plans/F05-bare-count-answers-with-a-number.md` carries the slice.
+
 ## F04-D6 — FOLLOWUP-D2 amended: a turn carries the thread's accumulated questions, compacted against a context budget
 
 - Status: Approved

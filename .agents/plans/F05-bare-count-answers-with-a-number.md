@@ -1,8 +1,10 @@
 # F05 — A bare "how many" question answers with a number
 
-**Status: Draft — implementation-blocked pending owner approval.** No owner decisions are
-open: the export consequence this plan turns on was already ruled by the F04 export rule
-(`.agents/decisions.md`, F04-D2 second half, 2026-07-28) and is applied here, not re-asked.
+**Status: Approved (2026-07-31)** — owner: *"assume I want a working app, and make the app
+work. keep doing codereview codex with the default model and effort for every slice. go."*
+No owner decisions are open: the export consequence this plan turns on was already ruled by
+the F04 export rule (`.agents/decisions.md`, F04-D2 second half, 2026-07-28) and is applied
+here, not re-asked.
 
 Found by the F04 post-deploy live smoke against production AD (2026-07-31), recorded in
 `.agents/state.md`. This plan is self-contained; a cold agent can implement it without the
@@ -53,38 +55,61 @@ commonest count question of all. Nothing tells the model that a bare "how many X
 count whose `group_by` must be empty, and nothing warns that grouping on an attribute a filter
 has already pinned to one value buys nothing.
 
-### The export consequence, already ruled
+### The second defect: a pure count wrongly withholds its export
 
-The fix must choose what the plan emits, and the two candidates differ in whether the user
-still gets a download:
+Making the model emit a pure count exposes a second, independent defect in shipped code.
+`ExportAffordance.HasExportableArtifact` (`csharp/Services/ExportAffordance.cs:46`) reads:
 
-| Plan shape for "how many enabled users" | Headline | Export offered? |
+```csharp
+HeadlineKind.Count => plan?.Projection?.Aggregation == null && totalRows > 1,
+```
+
+The presence of *any* aggregation object suppresses the download, whatever `totalRows` says.
+So a pure-count plan offers no export even at 27,000 rows — the shape
+`ExportAffordanceTests.PureCountAnswer_DoesNotExport` (`:76`) currently asserts as correct.
+
+That is wrong, and **F05-D1 (2026-07-31) corrects it**: export turns on how many *records the
+result holds*, never on how many lines the answer occupies. "How many managers in Thailand"
+answers `43` and those 43 rows are exactly what the user wants next — the count is a summary
+*of* an exportable set, not a substitute for one. "Who's the CEO" is the genuinely
+non-exportable case: the answer on screen is the whole result.
+
+The rows exist. `ComputeSettledAggregation` (`csharp/Services/QueryJobManager.cs:808-820`)
+computes the aggregation *from* the rows and leaves the row set intact, and Slice 7 writes
+every completed job's full result to its artifact regardless of plan shape. The export was
+withheld by policy, not by absence of data.
+
+| Plan shape for "how many enabled users" | Headline | Export, after F05 |
 | --- | --- | --- |
-| aggregation with **empty** `group_by` (pure count) | `count` | **No** — `ExportAffordance.cs:46` returns false whenever `Projection.Aggregation != null` |
-| **no aggregation**, rows returned | `count` | Yes — rows are the artifact, when `totalRows > 1` |
-| aggregation with `group_by: ["Enabled"]` (today, accidental) | `grouped` | Yes — the distribution table is the artifact |
+| aggregation with **empty** `group_by` (pure count), many rows | `count` | Yes — the records are the artifact |
+| single record, no aggregation | `record` | No — unchanged |
+| single record, with an aggregation | `count`, `totalRows == 1` | No — unchanged |
+| aggregation with `group_by: ["Enabled"]` (today, accidental) | `grouped` | Yes — unchanged |
 
-**This plan takes the pure count, and accepts that a bare count question offers no download.**
-That is not a new decision: F04-D2's second half already ruled that *"a result whose answer is
-a single scalar or one record has no meaningful export"*, and `ExportAffordance` and
-`ExportAffordanceTests.PureCountAnswer_DoesNotExport` (`:76`) already implement and guard it.
-Emitting no aggregation to preserve the download would contradict that ruling and would also
-pull the whole matched set into the row path for a question that wants one integer. A user who
-does want the list asks for it — "show me them" is one follow-up, and F04's whole-conversation
-re-planning already handles it.
+Without this correction the prompt fix would make the product strictly worse: it would turn a
+question that currently yields a table *and* a download into one number and no way to get the
+list. The two changes ship together, as two slices.
 
 ## Scope
 
-**In scope.** Two Translate prompt paths and one guard. Nothing else.
+**In scope.** Two slices:
 
-**Out of scope, deliberately.** `HeadlineClassifier`, `ExportAffordance`, `QueryJobManager`,
-the Narrate prompt, and the answer template are all correct here and must not be touched. No
-code may be added that inspects a plan and rewrites its aggregation: that is the
-guess-transform F04-D2 deleted, and reintroducing it in a new costume is forbidden. If the
-model emits a bad plan shape, the fix is prompt guidance, never a code-side correction —
-F04's architecture holds no conversation semantics in code.
+- **Slice 1** — the two Translate prompt paths and their guard.
+- **Slice 2** — the `Count` arm of `ExportAffordance` and its guards (F05-D1).
 
-## Approach
+They are independent and land in that order, one commit each. Slice 1 first, because it is
+the observed defect; Slice 2 must not be skipped, since Slice 1 alone removes a download the
+user has today.
+
+**Out of scope, deliberately.** `HeadlineClassifier`, `QueryJobManager`, the Narrate prompt,
+and the answer template are all correct here and must not be touched. No code may be added
+that inspects a plan and rewrites its aggregation: that is the guess-transform F04-D2 deleted,
+and reintroducing it in a new costume is forbidden. If the model emits a bad plan shape, the
+fix is prompt guidance, never a code-side correction — F04's architecture holds no
+conversation semantics in code. Within `ExportAffordance`, only the `Count` arm moves: the
+`Grouped`, `Record`, and zero-row arms are correct and stay as they are.
+
+## Approach — Slice 1: the prompt
 
 ### The two-path contract
 
@@ -150,9 +175,51 @@ separately and confirm exactly one test fails each time; restore both and confir
 `git diff --stat` reports them byte-identical. A guard that fails only when both paths are
 reverted does not bind them independently, which is precisely the hole `slice5r2-or-1` found.
 
+## Approach — Slice 2: export follows the record count (F05-D1)
+
+One line of production code. In `csharp/Services/ExportAffordance.cs`, the `Count` arm becomes:
+
+```csharp
+HeadlineKind.Count => totalRows > 1,
+```
+
+The aggregation test is deleted; `totalRows <= 0` is already handled by the guard clause above
+the switch, and `totalRows == 1` remains non-exportable through the same expression, so the
+single-record case F04-D2 got right is preserved by construction rather than by a second check.
+Update the XML doc on `HasExportableArtifact`, whose `count` bullet currently explains the
+aggregation test and would otherwise document behaviour that no longer exists.
+
+**Guards.** In `ExportAffordanceTests`:
+
+- Replace `PureCountAnswer_DoesNotExport` (`:76`) with `PureCountOverManyRecords_Exports` —
+  `Decide(AggregationPlan(), 27000)` must now be true, with a comment naming F05-D1 and the
+  "how many managers in Thailand" case that earned it.
+- Add `PureCountOverASingleRecord_DoesNotExport` — `Decide(AggregationPlan(), 1)` stays false.
+  This is the overshoot guard: without it, the correction could drift into offering a download
+  for a one-record answer, which is the case F04-D2 got right.
+- `SingleRecordAnswer_DoesNotExport`, `SingleRowWithoutTheRecordItself_DoesNotExport`,
+  `EmptyAnswer_DoesNotExport`, `SingleBucketGroupedAnswer_StillExports`, and
+  `MultiRowListAnswer_Exports_TheRowsAreTheArtifact` are unchanged and must stay green — they
+  are the evidence that only the intended arm moved.
+
+**Guard proof.** Both new assertions must be proven red before the fix: run them against the
+current one-line expression and confirm `PureCountOverManyRecords_Exports` fails. Then apply
+the fix and confirm both pass with the rest of the file still green.
+
+Also re-check the browser-level `ExportAffordanceRenderingTests` and any status-DTO test that
+pins `downloadUrl` for an aggregation plan; a fixture asserting today's suppression must be
+updated with the same reasoning, not left to fail silently as an unrelated red.
+
 ### Verification
 
-`pwsh -NoLogo -NoProfile -File scripts/verify.ps1` must pass — currently 357 tests, 0 warnings.
+`pwsh -NoLogo -NoProfile -File scripts/verify.ps1` must pass for each slice — currently 357
+tests, 0 warnings.
+
+### Review
+
+Per the owner's standing directive (2026-07-31), each slice gets a `codereview codex` round at
+the harness's default model and effort. Findings are handled one per commit under the
+`codereview` playbook.
 
 ### Live acceptance (manual; the suite structurally cannot cover it)
 
@@ -160,9 +227,9 @@ The suite proves both prompt paths carry the rule. It cannot prove the model *ob
 needs a live provider and real AD. After the fix deploys, re-run the smoke question
 *"how many enabled users are there?"* against the deployed app and confirm the executed plan in
 the per-job log under `E:\WWWOutput\<user>\` carries `"group_by": []`, the status payload's
-`headline.kind` is `count`, and `downloadUrl` is absent. Record the job id and the outcome in
-`.agents/state.md`. Until that is done the plan is `Evidence pending`, not `Complete` — the
-same bar F04 was held to.
+`headline.kind` is `count`, and — after Slice 2 — `downloadUrl` **is present**, since the
+result holds many records. Record the job id and the outcome in `.agents/state.md`. Until that
+is done the plan is `Evidence pending`, not `Complete` — the same bar F04 was held to.
 
 ## Risks
 
@@ -180,3 +247,8 @@ same bar F04 was held to.
   wrong: `ExportAffordanceTests.SingleBucketGroupedAnswer_StillExports` (`:58`) shows a
   genuinely single-bucket distribution is a valid grouped answer, and demoting it would break
   a correct case to paper over a bad plan.
+- **Landing Slice 1 without Slice 2.** This is the one sequencing hazard. Slice 1 alone
+  converts a question that today returns a table *and* a download into one number with no way
+  to reach the records — a regression in user-visible capability, arrived at by fixing a
+  defect. If Slice 2 cannot land for any reason, Slice 1 must be reverted rather than left in
+  place.
