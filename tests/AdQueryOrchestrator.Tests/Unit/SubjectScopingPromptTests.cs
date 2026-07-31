@@ -48,6 +48,26 @@ public sealed class SubjectScopingPromptTests
     // come back — in either path.
     private const string RetiredResetTrigger = "\"instead of...\"";
 
+    // slice7r2-or-1: what the worked example must TEACH, not merely mention. The phrases above
+    // are satisfied by an example that reaches the wrong conclusion, which is exactly what
+    // shipped: both paths read "a title, PLUS people under Sanjay who are in China" — a union
+    // of two subject-scoped sets — while F04's ruled reading is conjunctive (the plan's own
+    // table, "under-Sanjay AND title AND country = China"). Presence checks cannot see that.
+    private static readonly string[] RequiredConjunctiveReading =
+    [
+        "have a title AND are in China",
+        "all three constraints at once",
+        "it does not add a union arm",
+    ];
+
+    // The union wording itself, in both the example and the description it tells the model to
+    // write. Either one alone re-teaches the union reading.
+    private static readonly string[] RetiredUnionReading =
+    [
+        "PLUS people under Sanjay who are in China",
+        "Sanjay's reports with titles, plus his reports in China",
+    ];
+
     [Fact]
     public void CheckedInTemplate_CarriesSubjectScopingGuidance()
     {
@@ -60,6 +80,16 @@ public sealed class SubjectScopingPromptTests
         }
 
         Assert.DoesNotContain(RetiredResetTrigger, template, StringComparison.Ordinal);
+
+        foreach (var phrase in RequiredConjunctiveReading)
+        {
+            Assert.Contains(phrase, template, StringComparison.Ordinal);
+        }
+
+        foreach (var phrase in RetiredUnionReading)
+        {
+            Assert.DoesNotContain(phrase, template, StringComparison.Ordinal);
+        }
 
         // The guidance is only reachable when a follow-up actually supplies context.
         Assert.Contains("{{CONTEXT}}", template, StringComparison.Ordinal);
@@ -85,6 +115,16 @@ public sealed class SubjectScopingPromptTests
         }
 
         Assert.DoesNotContain(RetiredResetTrigger, prompt, StringComparison.Ordinal);
+
+        foreach (var phrase in RequiredConjunctiveReading)
+        {
+            Assert.Contains(phrase, prompt, StringComparison.Ordinal);
+        }
+
+        foreach (var phrase in RetiredUnionReading)
+        {
+            Assert.DoesNotContain(phrase, prompt, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
