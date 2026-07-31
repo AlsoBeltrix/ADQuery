@@ -74,11 +74,21 @@ public sealed class ExportAffordanceTests
     }
 
     [Fact]
-    public void PureCountAnswer_DoesNotExport()
+    public void PureCountOverManyRecords_Exports()
     {
-        // The plan asked for an aggregation and got no grouped payload: the answer is one
-        // number. A file adds nothing to it.
-        Assert.False(Decide(AggregationPlan(), 27000));
+        // F05-D1: export turns on how many RECORDS the result holds, never on how many lines
+        // the answer occupies. "How many managers in Thailand" answers 43, and those 43 rows
+        // are exactly what the user asks for next — the count summarises an exportable set
+        // rather than replacing one. This previously asserted the opposite.
+        Assert.True(Decide(AggregationPlan(), 27000));
+    }
+
+    [Fact]
+    public void PureCountOverASingleRecord_DoesNotExport()
+    {
+        // The overshoot guard for F05-D1. One record is one record whether or not the plan
+        // asked for a count of it, and F04-D2 was right about that case.
+        Assert.False(Decide(AggregationPlan(), 1));
     }
 
     [Fact]

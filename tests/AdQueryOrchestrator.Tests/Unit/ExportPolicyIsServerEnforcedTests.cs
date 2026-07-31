@@ -18,9 +18,12 @@ namespace AdQuery.Orchestrator.Tests.Unit;
 /// <summary>
 /// Guards finding slice4-or-1: the F04 Slice 4 export rule is server policy, not a UI
 /// decoration. Withholding the download pills tells the user an answer has no exportable
-/// artifact; this asserts the server means it — a direct request for a one-line or
-/// single-record answer is refused, and the status DTO does not advertise a URL the server
-/// would reject.
+/// artifact; this asserts the server means it — a direct request for a single-record answer is
+/// refused, and the status DTO does not advertise a URL the server would reject.
+///
+/// The rule the two sides share is F05-D1's: export turns on how many <em>records the result
+/// holds</em>, never on how many lines the answer occupies. A pure count over many records is
+/// therefore exportable here, exactly as it is in <c>ExportAffordanceTests</c>.
 ///
 /// Drives the real <see cref="QueryController"/> action. A non-exportable job is refused
 /// before any filesystem work, so no <c>E:\WWWOutput</c> path is touched and the test is
@@ -48,11 +51,25 @@ public sealed class ExportPolicyIsServerEnforcedTests
     };
 
     [Fact]
-    public void DownloadAsync_PureCountAnswer_IsRefused()
+    public void DownloadAsync_PureCountOverManyRecords_PassesThePolicyGate()
     {
-        // "How many people are in Sales?" — the answer is one number. Exporting it would hand
-        // back the underlying rows the answer deliberately never showed.
+        // F05-D1: "How many managers in Thailand?" answers with one number over a many-record
+        // result, and those records are what the user reaches for next. The gate must let it
+        // through. Execution stops at the artifact lookup (this job's results are absent),
+        // which is the next check after the gate and well before any file is written.
         var (controller, _) = CreateController(PureCountPlan(), totalRows: 27000);
+
+        var result = controller.DownloadAsync("job-1");
+
+        var notFound = Assert.IsType<NotFoundObjectResult>(result);
+        Assert.Contains("expired", notFound.Value?.ToString(), System.StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void DownloadAsync_PureCountOverASingleRecord_IsRefused()
+    {
+        // The overshoot guard: one record is one record whether or not the plan counted it.
+        var (controller, _) = CreateController(PureCountPlan(), totalRows: 1);
 
         var result = controller.DownloadAsync("job-1");
 
@@ -88,7 +105,10 @@ public sealed class ExportPolicyIsServerEnforcedTests
     public void GetJobStatus_NonExportableAnswer_AdvertisesNoDownloadUrl()
     {
         // The DTO must not offer a URL the server would refuse; the two read one policy.
-        var (controller, _) = CreateController(PureCountPlan(), totalRows: 27000);
+        // A single-record result is the non-exportable case (F05-D1): the answer on screen is
+        // the whole result. Before F05 this used a 27,000-row pure count, which the same
+        // policy now correctly treats as exportable.
+        var (controller, _) = CreateController(PureCountPlan(), totalRows: 1);
 
         var payload = CompletedResultOf(controller.GetJobStatus("job-1"));
 
