@@ -1,10 +1,22 @@
 # F05 — A bare "how many" question answers with a number
 
-**Status: Approved (2026-07-31)** — owner: *"assume I want a working app, and make the app
-work. keep doing codereview codex with the default model and effort for every slice. go."*
-No owner decisions are open: the export consequence this plan turns on was already ruled by
-the F04 export rule (`.agents/decisions.md`, F04-D2 second half, 2026-07-28) and is applied
-here, not re-asked.
+**Status: Complete (2026-08-01)** — both slices landed (`0eedde9`, `4f5c3a2`), both
+codereviewed (one MEDIUM already closed, one clean), deployed by the owner, and the live
+acceptance check passed against production AD. Approved 2026-07-31, owner: *"assume I want a
+working app, and make the app work. keep doing codereview codex with the default model and
+effort for every slice. go."*
+
+**Live acceptance evidence (job `96086288-aae0-431d-84d5-6a8d707d8ea5`, 2026-08-01).** The
+question that failed on 2026-07-31 — *"how many enabled users are there?"* — now returns
+**"There are 42,222 enabled users in the directory."** and nothing else. The executed plan
+carries `"aggregation": { "group_by": [], "count": true }`
+(`E:\WWWOutput\mcoelho\adquery_MCOELHO_20260801_025225782.log`), the headline kind is `count`,
+`exportable` is `true`, and the advertised download served **HTTP 200, 824,464 bytes, 42,222
+records**. All three acceptance criteria met, including the one F05-D1 added: a one-line answer
+over many records offers its records.
+
+No owner decisions are open. The export question this plan turns on is settled by **F05-D1**
+(2026-07-31), which corrected F04-D2's wording rather than reinterpreting it.
 
 Found by the F04 post-deploy live smoke against production AD (2026-07-31), recorded in
 `.agents/state.md`. This plan is self-contained; a cold agent can implement it without the
