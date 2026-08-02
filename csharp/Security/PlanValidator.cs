@@ -126,7 +126,7 @@ public class PlanValidator : IPlanValidator
         // Validate aggregation if present
         if (plan.Projection?.Aggregation != null)
         {
-            var aggregationResult = ValidateAggregation(plan.Projection);
+            var aggregationResult = ValidateAggregation(plan.Projection, ResolveRowStepType(plan, stepLookup));
             result.SecurityErrors.AddRange(aggregationResult.SecurityErrors);
             if (!aggregationResult.OperationsValid)
             {
@@ -371,7 +371,31 @@ public class PlanValidator : IPlanValidator
         };
     }
 
-    private PlanSecurityResult ValidateAggregation(ProjectionDefinition projection)
+    /// <summary>
+    /// The object type an aggregation's fields must be allow-listed for (f06s2-cr-1): the type
+    /// of the step the rows actually come from.
+    ///
+    /// This validator previously assumed <see cref="DirectoryObjectType.User"/> outright, so a
+    /// Computer plan grouping on a User-only attribute was admitted. F06 Slice 2's synonym map
+    /// widened that hole — <c>l</c> now reaches <c>City</c> — which is what surfaced it.
+    /// Falling back to <see cref="DirectoryObjectType.User"/> when the row step cannot be
+    /// resolved preserves prior behaviour for malformed plans, which other validation already
+    /// rejects on their own terms.
+    /// </summary>
+    private static DirectoryObjectType ResolveRowStepType(
+        DirectoryQueryPlan plan,
+        Dictionary<string, DirectoryPlanStep> stepLookup)
+    {
+        var rowStep = plan.Projection?.RowStep;
+
+        return !string.IsNullOrWhiteSpace(rowStep) && stepLookup.TryGetValue(rowStep, out var step)
+            ? step.TargetType
+            : DirectoryObjectType.User;
+    }
+
+    private PlanSecurityResult ValidateAggregation(
+        ProjectionDefinition projection,
+        DirectoryObjectType rowStepType)
     {
         if (projection?.Aggregation == null)
         {
@@ -393,14 +417,15 @@ public class PlanValidator : IPlanValidator
             errors.Add("Aggregation group_by contains empty field names");
         }
 
-        // Validate fields in allow-list (assume User type for aggregation fields)
-        if (_securityPolicy.HasAllowedAttributes(DirectoryObjectType.User))
+        // Validate fields against the row step's own object type (f06s2-cr-1). Assuming User
+        // here let a Computer plan group on a User-only attribute.
+        if (_securityPolicy.HasAllowedAttributes(rowStepType))
         {
             foreach (var field in agg.GroupBy.Where(f => !string.IsNullOrWhiteSpace(f)))
             {
-                if (!_securityPolicy.IsAttributeAllowed(DirectoryObjectType.User, field))
+                if (!_securityPolicy.IsAttributeAllowed(rowStepType, field))
                 {
-                    errors.Add($"Aggregation field '{field}' is not in attribute allow-list");
+                    errors.Add($"Aggregation field '{field}' is not in the {rowStepType} attribute allow-list");
                 }
             }
         }

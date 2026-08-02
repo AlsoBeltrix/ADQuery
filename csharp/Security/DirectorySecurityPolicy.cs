@@ -58,6 +58,9 @@ public sealed class DirectorySecurityPolicy : IDirectorySecurityPolicy
             ["facsimileTelephoneNumber"] = "Fax",
             ["telephoneNumber"] = "OfficePhone",
             ["givenName"] = "GivenName",
+            // Three spellings: the LDAP `sn` the hardcoded fallback list carries, the lowercase
+            // form, and the display name the prompt advertises (f06s2-cr-2).
+            ["sn"] = "Surname",
             ["surname"] = "Surname",
             ["displayName"] = "DisplayName",
             ["userPrincipalName"] = "UserPrincipalName",
@@ -76,16 +79,45 @@ public sealed class DirectorySecurityPolicy : IDirectorySecurityPolicy
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// The reverse direction: a plan naming the display name where the list holds the LDAP
-    /// name. Derived from <see cref="LdapToDisplayName"/> so the two cannot disagree.
+    /// Every name to the full set of names meaning the same attribute (f06s2-cr-1's sibling
+    /// finding, `f06s2-cr-2`).
+    ///
+    /// A single forward map plus a single reverse map is not enough once an attribute has more
+    /// than two spellings. <c>Country</c> has three (<c>c</c>, <c>co</c>, <c>Country</c>) and
+    /// <c>Surname</c> has three (<c>sn</c>, <c>surname</c>, <c>Surname</c>), so a reverse
+    /// lookup collapsing to one arbitrary partner silently drops the rest: the prompt
+    /// advertised <c>sn</c>/<c>Surname</c> while the reverse map paired <c>Surname</c> with
+    /// <c>surname</c>, so a fallback allow-list holding only <c>sn</c> refused <c>Surname</c>.
+    ///
+    /// Equivalence classes remove the direction question entirely: a request is allowed when
+    /// <em>any</em> member of its class is on the object type's list. This still cannot widen
+    /// the set — every member names the same directory attribute, so admitting the request
+    /// grants exactly the access the list already granted under a different spelling.
     /// </summary>
-    private static readonly FrozenDictionary<string, string> DisplayNameToLdap =
-        LdapToDisplayName
+    private static readonly FrozenDictionary<string, FrozenSet<string>> SynonymClasses = BuildSynonymClasses();
+
+    private static FrozenDictionary<string, FrozenSet<string>> BuildSynonymClasses()
+    {
+        // Group every (ldap, display) pair by its canonical display name, then map each member
+        // of the resulting class back to the whole class.
+        var classes = LdapToDisplayName
             .GroupBy(pair => pair.Value, StringComparer.OrdinalIgnoreCase)
-            .ToFrozenDictionary(
-                group => group.Key,
-                group => group.First().Key,
-                StringComparer.OrdinalIgnoreCase);
+            .Select(group => group
+                .Select(pair => pair.Key)
+                .Append(group.Key)
+                .ToFrozenSet(StringComparer.OrdinalIgnoreCase));
+
+        var result = new Dictionary<string, FrozenSet<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var equivalents in classes)
+        {
+            foreach (var name in equivalents)
+            {
+                result[name] = equivalents;
+            }
+        }
+
+        return result.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+    }
 
     private readonly FrozenDictionary<DirectoryObjectType, FrozenSet<string>> _allowedAttributes;
 
@@ -114,11 +146,11 @@ public sealed class DirectorySecurityPolicy : IDirectorySecurityPolicy
             return true;
         }
 
-        // F06 Slice 2: the same attribute under its other naming convention. The synonym is
+        // F06 Slice 2: the same attribute under any of its other spellings. Every candidate is
         // still checked against THIS object type's list, so nothing absent from the file is
         // admitted and per-type scoping is preserved.
-        return (LdapToDisplayName.TryGetValue(attribute, out var displayName) && attributes.Contains(displayName))
-            || (DisplayNameToLdap.TryGetValue(attribute, out var ldapName) && attributes.Contains(ldapName));
+        return SynonymClasses.TryGetValue(attribute, out var equivalents)
+            && equivalents.Any(attributes.Contains);
     }
 
     public bool IsFilterOperatorAllowed(string? operatorValue)

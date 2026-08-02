@@ -148,6 +148,46 @@ public sealed class AttributeSynonymsTests
         Assert.Contains("EITHER the LDAP name or the PowerShell name", template, StringComparison.Ordinal);
     }
 
+    [Theory]
+    // f06s2-cr-2 (MEDIUM). On the hardcoded fallback list — used when the allow-list FILE is
+    // missing — the User entry carries `sn` but neither `surname` nor `Surname`. A model
+    // following the prompt, which advertises the pair, would emit `Surname` and be refused.
+    // Three spellings meant a single reverse lookup collapsed to one arbitrary partner and
+    // dropped the advertised one, which is why resolution is an equivalence class now.
+    [InlineData("Surname")]
+    [InlineData("surname")]
+    [InlineData("sn")]
+    public void TheFallbackAllowList_AcceptsEveryAdvertisedSpelling(string spelling)
+    {
+        var policy = PolicyOnHardcodedFallback();
+
+        Assert.True(
+            policy.IsAttributeAllowed(DirectoryObjectType.User, spelling),
+            $"the fallback list carries 'sn'; '{spelling}' names the same attribute and the prompt advertises it.");
+    }
+
+    [Fact]
+    public void TheFallbackAllowList_StillRefusesWhatItAlwaysRefused()
+    {
+        // The equivalence class must not widen the fallback list either.
+        var policy = PolicyOnHardcodedFallback();
+
+        Assert.False(policy.IsAttributeAllowed(DirectoryObjectType.User, "unicodePwd"));
+        Assert.False(policy.IsAttributeAllowed(DirectoryObjectType.User, "ntSecurityDescriptor"));
+    }
+
+    /// <summary>
+    /// A policy with no configured allow-list files, so every object type falls back to the
+    /// hardcoded defaults in <see cref="DirectorySecurityPolicy"/>. That path ships in any
+    /// deployment whose <c>Configuration/*.txt</c> is missing, and it holds a different set of
+    /// spellings from the files — which is what made the reverse-lookup gap reachable.
+    /// </summary>
+    private static DirectorySecurityPolicy PolicyOnHardcodedFallback()
+        => new(
+            new ConfigurationBuilder().Build(),
+            new StubEnvironment(),
+            NullLogger<PlanValidator>.Instance);
+
     [Fact]
     public async Task TheBuiltInFallback_AdvertisesTheSamePairs()
     {
