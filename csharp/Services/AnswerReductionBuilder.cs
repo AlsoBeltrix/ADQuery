@@ -241,15 +241,41 @@ public sealed class AnswerReductionBuilder : IAnswerReductionBuilder
         }
 
         var clauses = new List<string>();
+        var budget = MaxConstraintClauses;
+
         foreach (var step in plan.Steps)
         {
-            CollectClauses(step.Filters, clauses);
+            // f06s1-cr-2: only a search step's filters reach the directory. `expand_members`
+            // and `lookup` (DirectoryPlanExecutor.cs:360-395) never read `step.Filters`, so
+            // reporting one as a requirement would name a reason for the zero that the engine
+            // never applied — the opposite of what this line exists to do.
+            if (!AppliesItsFilters(step))
+            {
+                continue;
+            }
+
+            var rendered = RenderFilters(step.Filters, ref budget);
+            if (rendered is not null)
+            {
+                clauses.Add(rendered);
+            }
         }
 
-        CollectClauses(plan.Projection?.Filters, clauses);
+        var projectionFilters = new List<DirectoryFilter>();
+        if (plan.Projection?.Filters is { Count: > 0 })
+        {
+            projectionFilters.AddRange(plan.Projection.Filters);
+        }
+
         if (plan.Projection?.Filter is not null)
         {
-            CollectClauses([plan.Projection.Filter], clauses);
+            projectionFilters.Add(plan.Projection.Filter);
+        }
+
+        var projectionRendered = RenderFilters(projectionFilters, ref budget);
+        if (projectionRendered is not null)
+        {
+            clauses.Add(projectionRendered);
         }
 
         if (clauses.Count == 0)
@@ -259,58 +285,118 @@ public sealed class AnswerReductionBuilder : IAnswerReductionBuilder
             return "CONSTRAINTS APPLIED: none — the search was unfiltered.";
         }
 
-        var shown = clauses.Take(MaxConstraintClauses).ToList();
-        var line = "CONSTRAINTS APPLIED: " + string.Join("; ", shown);
+        var line = "CONSTRAINTS APPLIED: " + string.Join("; ", clauses);
 
-        if (clauses.Count > shown.Count)
+        if (budget <= 0)
         {
-            line += string.Create(
-                CultureInfo.InvariantCulture,
-                $"; and {clauses.Count - shown.Count} further conditions");
+            line += "; (further conditions omitted)";
         }
 
         return line + ".";
     }
 
     /// <summary>
-    /// Flattens a filter tree to its leaf clauses. Group nodes (<c>and</c>/<c>or</c>) carry no
-    /// attribute of their own, so reporting only the top level would name nothing at all — the
-    /// Chelmsford plan is a single <c>and</c> wrapping every real condition.
+    /// True when the executor actually applies this step's <c>filters</c> (f06s1-cr-2).
+    /// <c>ExecuteStepAsync</c> (`DirectoryPlanExecutor.cs:267-277`) routes by operation, and
+    /// only the search path consumes them; `expand_members`, `lookup`, and `expand_reports`
+    /// traverse from a prior step's records and ignore the field entirely.
     /// </summary>
-    private static void CollectClauses(IEnumerable<DirectoryFilter>? filters, List<string> clauses)
+    private static bool AppliesItsFilters(DirectoryPlanStep step)
+        => !string.IsNullOrWhiteSpace(step.Operation)
+           && step.Operation.Trim().Equals("search", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Renders a filter list preserving its and/or structure (f06s1-cr-1).
+    ///
+    /// A flat semicolon list reads as simultaneous requirements. The executor branches on the
+    /// group operator (`DirectoryPlanExecutor.cs:1457-1463`,
+    /// `ActiveDirectoryService.cs:480-486`), so a plan that searched *alternatives* — one
+    /// spelling of a name OR another — would be reported as demanding both at once, and the
+    /// reader would correct the wrong constraint. That is a wrong explanation for the zero,
+    /// which is worse than none.
+    ///
+    /// <paramref name="budget"/> is the remaining leaf allowance, shared across every step so
+    /// the whole line stays inside the byte accounting rather than each step getting its own
+    /// cap. It is decremented as leaves are emitted; when it runs out, rendering stops and the
+    /// caller appends an omission note.
+    /// </summary>
+    private static string? RenderFilters(IReadOnlyList<DirectoryFilter>? filters, ref int budget)
     {
-        if (filters is null)
+        if (filters is null || filters.Count == 0)
         {
-            return;
+            return null;
         }
 
+        // Multiple sibling filters at the top level are conjunctive: every one must hold.
+        var parts = new List<string>();
         foreach (var filter in filters)
         {
-            if (filter is null)
+            var rendered = RenderFilter(filter, ref budget);
+            if (rendered is not null)
             {
-                continue;
+                parts.Add(rendered);
             }
-
-            if (filter.Conditions is { Count: > 0 })
-            {
-                CollectClauses(filter.Conditions, clauses);
-                continue;
-            }
-
-            if (string.IsNullOrWhiteSpace(filter.Attribute))
-            {
-                continue;
-            }
-
-            var attribute = Clip(filter.Attribute.Trim(), AnswerOptions.MaxValueChars);
-            var operatorName = string.IsNullOrWhiteSpace(filter.Operator)
-                ? "equals"
-                : Clip(filter.Operator.Trim(), AnswerOptions.MaxValueChars);
-
-            clauses.Add(string.IsNullOrWhiteSpace(filter.Value)
-                ? $"{attribute} {operatorName} (empty)"
-                : $"{attribute} {operatorName} \"{Clip(filter.Value.Trim(), AnswerOptions.MaxValueChars)}\"");
         }
+
+        return parts.Count switch
+        {
+            0 => null,
+            1 => parts[0],
+            _ => "all of (" + string.Join(", ", parts) + ")",
+        };
+    }
+
+    private static string? RenderFilter(DirectoryFilter? filter, ref int budget)
+    {
+        if (filter is null || budget <= 0)
+        {
+            return null;
+        }
+
+        if (filter.Conditions is { Count: > 0 })
+        {
+            var parts = new List<string>();
+            foreach (var condition in filter.Conditions)
+            {
+                var rendered = RenderFilter(condition, ref budget);
+                if (rendered is not null)
+                {
+                    parts.Add(rendered);
+                }
+            }
+
+            if (parts.Count == 0)
+            {
+                return null;
+            }
+
+            // "or" is the only operator that changes the reading; anything else — "and", or a
+            // group node with no operator at all — is conjunctive.
+            var label = !string.IsNullOrWhiteSpace(filter.Operator)
+                && filter.Operator.Trim().Equals("or", StringComparison.OrdinalIgnoreCase)
+                ? "any of"
+                : "all of";
+
+            return parts.Count == 1 && label == "all of"
+                ? parts[0]
+                : label + " (" + string.Join(", ", parts) + ")";
+        }
+
+        if (string.IsNullOrWhiteSpace(filter.Attribute))
+        {
+            return null;
+        }
+
+        budget--;
+
+        var attribute = Clip(filter.Attribute.Trim(), AnswerOptions.MaxValueChars);
+        var operatorName = string.IsNullOrWhiteSpace(filter.Operator)
+            ? "equals"
+            : Clip(filter.Operator.Trim(), AnswerOptions.MaxValueChars);
+
+        return string.IsNullOrWhiteSpace(filter.Value)
+            ? $"{attribute} {operatorName} (empty)"
+            : $"{attribute} {operatorName} \"{Clip(filter.Value.Trim(), AnswerOptions.MaxValueChars)}\"";
     }
 
     private static string? BuildDistribution(DistributionSummary? distribution)

@@ -140,6 +140,97 @@ public sealed class EmptyResultNamesItsConstraintsTests
     }
 
     [Fact]
+    public void AnOrGroup_IsReportedAsAlternatives_NotAsSimultaneousRequirements()
+    {
+        // f06s1-cr-1 (MEDIUM). A flat list reads as "all of these had to hold". The executor
+        // branches on the group operator, so a plan that searched ALTERNATIVES — one spelling
+        // of a name or another — would be explained to the user as demanding both at once.
+        // They would then correct the wrong constraint. A wrong explanation for a zero is
+        // worse than no explanation.
+        var plan = new DirectoryQueryPlan
+        {
+            Description = "Find a person by either spelling",
+            Steps =
+            {
+                new DirectoryPlanStep
+                {
+                    Name = "s1",
+                    Operation = "search",
+                    TargetType = DirectoryObjectType.User,
+                    Filters =
+                    {
+                        new DirectoryFilter
+                        {
+                            Operator = "or",
+                            Conditions =
+                            [
+                                new DirectoryFilter { Attribute = "displayName", Operator = "equals", Value = "Smith, Jo" },
+                                new DirectoryFilter { Attribute = "userPrincipalName", Operator = "equals", Value = "jo@example.com" },
+                            ],
+                        },
+                    },
+                },
+            },
+            Projection = new ProjectionDefinition { RowStep = "s1" },
+        };
+
+        var reduction = BuildFor(plan);
+
+        Assert.Contains("any of (", reduction, System.StringComparison.Ordinal);
+        Assert.Contains("displayName", reduction, System.StringComparison.Ordinal);
+        Assert.Contains("userPrincipalName", reduction, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnAndGroup_IsStillReportedAsSimultaneousRequirements()
+    {
+        // The other half of the same rule: preserving structure must not turn every group
+        // into "any of", which would understate the Chelmsford plan's real requirements.
+        var reduction = BuildFor(ChelmsfordPlan());
+
+        Assert.Contains("all of (", reduction, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("any of (", reduction, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FiltersOnAStepTheExecutorNeverFilters_AreNotReported()
+    {
+        // f06s1-cr-2 (LOW). ExecuteExpandMembersStep and ExecuteLookupStep ignore
+        // step.Filters entirely, so naming one as a requirement invents a reason for the zero
+        // that the engine never applied.
+        var plan = new DirectoryQueryPlan
+        {
+            Description = "Members of a group",
+            Steps =
+            {
+                new DirectoryPlanStep
+                {
+                    Name = "seed",
+                    Operation = "search",
+                    TargetType = DirectoryObjectType.Group,
+                    Filters = { new DirectoryFilter { Attribute = "displayName", Operator = "equals", Value = "Team" } },
+                },
+                new DirectoryPlanStep
+                {
+                    Name = "members",
+                    Operation = "expand_members",
+                    Source = "seed",
+                    TargetType = DirectoryObjectType.User,
+                    // Never applied by the executor — it traverses from the seed's records.
+                    Filters = { new DirectoryFilter { Attribute = "Department", Operator = "equals", Value = "Sales" } },
+                },
+            },
+            Projection = new ProjectionDefinition { RowStep = "members" },
+        };
+
+        var reduction = BuildFor(plan);
+
+        Assert.Contains("displayName", reduction, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("Department", reduction, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("Sales", reduction, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TheConstraintList_IsBounded()
     {
         // An unbounded list would break the byte accounting AnswerOptions.ReductionCeilingBytes
