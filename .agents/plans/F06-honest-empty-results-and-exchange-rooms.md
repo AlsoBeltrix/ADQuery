@@ -1,6 +1,7 @@
 # F06 — An empty result tells the truth, and rooms come from Exchange
 
-**Status: Draft — Slice 1 authorized, Slices 2-4 pending owner approval.** Owner goal
+**Status: In progress — Slices 1 and 2 landed (`05133a6`, `f8765dd`), Slices 3-4 blocked on
+F06-Q1.** Owner goal
 (2026-08-02): *"fix this bug and determine if we need to add exchange online read-only queries
 to expand capability. build that if warranted. review code slices with codex default model."*
 The determination is made and recorded below: **Exchange Online is warranted, on measured
