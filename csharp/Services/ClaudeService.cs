@@ -680,7 +680,7 @@ internal sealed class ClaudeService : IClaudeService
         builder.AppendLine("- Use only the numbers and values given below. Never invent, estimate, or extrapolate a value that is not present.");
         builder.AppendLine("- LARGEST VALUES lists at most the ten biggest buckets, never the whole distribution. Do not describe it as the complete list.");
         builder.AppendLine("- Read DISTRIBUTION before answering a 'most common' or 'unique values' question. When most values occur exactly once, say plainly that there is no meaningful most-common value and give the shape.");
-        builder.AppendLine("- When the result is empty, say so plainly.");
+        builder.AppendLine("- When the result is empty, say so plainly, and then state the CONSTRAINTS APPLIED line in your own words so the user can see exactly what a record had to match. An empty result is ambiguous — it means either that nothing matches, or that the query asked for the wrong thing — and you cannot tell which. Do not guess, and do not present zero as a settled fact about the organization. Say what was required and invite a correction, e.g. \"No records matched: the search required X and Y. If that is not how this data is stored, say so and I will look differently.\"");
         builder.AppendLine("- When a COMPLETENESS line is present, the query stopped at a system limit before reading every matching record. Every figure is then a floor: say \"at least\" and state that the real total is larger and unknown. Never give a capped count as the count.");
         builder.AppendLine("- State the interpretation the query used, drawn from QUERY RUN.");
         builder.AppendLine("- No markdown tables, no bullet lists, no headings, no code fences.");

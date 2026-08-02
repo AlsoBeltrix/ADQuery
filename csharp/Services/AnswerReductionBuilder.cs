@@ -35,12 +35,20 @@ namespace AdQuery.Orchestrator.Services;
 /// keeps the headline and drops this would state a floor as a total — the precise failure the
 /// finding names. It is a server-written constant, so it costs a fixed handful of bytes.
 /// </param>
+/// <param name="Constraints">
+/// The predicate the search actually applied, present <em>only</em> on an empty result
+/// (F06 Slice 1). Never dropped, for the same reason <paramref name="Completeness"/> is not:
+/// it is the fact that qualifies the zero it accompanies, and a composition keeping
+/// "no matching records" while dropping this states a zero the reader cannot judge. Bounded
+/// by a fixed clause count and per-clause clip, so it costs a bounded handful of bytes.
+/// </param>
 public sealed record AnswerReductionComponents(
     string? Headline,
     string? Distribution,
     string? PlanDescription,
     string? Question,
-    string? Completeness);
+    string? Completeness,
+    string? Constraints);
 
 /// <summary>
 /// Builds the bounded reduction the Narrate call sees (F04 Slice 2, F04-D1).
@@ -109,7 +117,10 @@ public sealed class AnswerReductionBuilder : IAnswerReductionBuilder
             Distribution: BuildDistribution(distribution),
             PlanDescription: BuildPlanDescription(plan),
             Question: BuildQuestion(question),
-            Completeness: resultIsIncomplete ? IncompleteLine : null);
+            Completeness: resultIsIncomplete ? IncompleteLine : null,
+            // Only on a zero (F06 Slice 1). On a result that found something the predicate is
+            // noise, and it would spend budget the headline and distribution need.
+            Constraints: headline.Kind == HeadlineKind.None ? BuildConstraints(plan) : null);
 
         // Assembly order is fixed and independent of which components survive: question,
         // plan description, completeness, distribution, headline. Drop order is the reverse,
@@ -119,7 +130,8 @@ public sealed class AnswerReductionBuilder : IAnswerReductionBuilder
             Distribution: Normalize(components.Distribution),
             PlanDescription: Normalize(components.PlanDescription),
             Question: Normalize(components.Question),
-            Completeness: Normalize(components.Completeness));
+            Completeness: Normalize(components.Completeness),
+            Constraints: Normalize(components.Constraints));
 
         AnswerReductionComponents[] ladder =
         {
@@ -176,6 +188,9 @@ public sealed class AnswerReductionBuilder : IAnswerReductionBuilder
             // Before the figures it qualifies (ci-or-1), so the model reads that they are
             // floors before it reads them.
             components.Completeness,
+            // Likewise before the headline it qualifies (F06 Slice 1): the model reads what
+            // was required of a record before it reads that no record met it.
+            components.Constraints,
             components.Distribution,
             components.Headline,
         };
@@ -193,6 +208,109 @@ public sealed class AnswerReductionBuilder : IAnswerReductionBuilder
         return string.IsNullOrWhiteSpace(description)
             ? null
             : "QUERY RUN: " + Clip(description.Trim(), AnswerOptions.MaxDescriptionChars);
+    }
+
+    /// <summary>
+    /// Most filter clauses one empty result reports. A plan's filter tree is model-authored
+    /// and unbounded, so this is clipped for the same reason the executor's free-text warnings
+    /// stay out of the reduction (ci-or-1): the byte accounting behind
+    /// <see cref="AnswerOptions.ReductionCeilingBytes"/> requires fixed component maxima.
+    /// </summary>
+    internal const int MaxConstraintClauses = 12;
+
+    /// <summary>
+    /// Renders the predicate the search applied, for an empty result only (F06 Slice 1).
+    ///
+    /// Live job `5c1a4abb` asked "How many conference rooms in Chelmsford" and was answered
+    /// "zero". Its plan filtered <c>physicalDeliveryOfficeName contains "Chelmsford"</c>, an
+    /// attribute populated on none of this directory's room mailboxes, so the filter could not
+    /// have matched at any true answer. The plan <em>description</em> restates intent in
+    /// model-authored prose and cannot expose that; the applied predicate can. Stating it lets
+    /// a reader see the search was wrong and correct it in one turn — F04's premise, applied to
+    /// the one result shape that carries no other evidence.
+    ///
+    /// This states facts and draws no conclusion. Whether a zero means "none exist" or "wrong
+    /// question" is not decidable here, and guessing it in code is the class of thing F04-D2
+    /// deleted.
+    /// </summary>
+    private static string? BuildConstraints(DirectoryQueryPlan? plan)
+    {
+        if (plan is null)
+        {
+            return null;
+        }
+
+        var clauses = new List<string>();
+        foreach (var step in plan.Steps)
+        {
+            CollectClauses(step.Filters, clauses);
+        }
+
+        CollectClauses(plan.Projection?.Filters, clauses);
+        if (plan.Projection?.Filter is not null)
+        {
+            CollectClauses([plan.Projection.Filter], clauses);
+        }
+
+        if (clauses.Count == 0)
+        {
+            // A different fact, and worth stating: the object type itself returned nothing,
+            // rather than a predicate excluding everything.
+            return "CONSTRAINTS APPLIED: none — the search was unfiltered.";
+        }
+
+        var shown = clauses.Take(MaxConstraintClauses).ToList();
+        var line = "CONSTRAINTS APPLIED: " + string.Join("; ", shown);
+
+        if (clauses.Count > shown.Count)
+        {
+            line += string.Create(
+                CultureInfo.InvariantCulture,
+                $"; and {clauses.Count - shown.Count} further conditions");
+        }
+
+        return line + ".";
+    }
+
+    /// <summary>
+    /// Flattens a filter tree to its leaf clauses. Group nodes (<c>and</c>/<c>or</c>) carry no
+    /// attribute of their own, so reporting only the top level would name nothing at all — the
+    /// Chelmsford plan is a single <c>and</c> wrapping every real condition.
+    /// </summary>
+    private static void CollectClauses(IEnumerable<DirectoryFilter>? filters, List<string> clauses)
+    {
+        if (filters is null)
+        {
+            return;
+        }
+
+        foreach (var filter in filters)
+        {
+            if (filter is null)
+            {
+                continue;
+            }
+
+            if (filter.Conditions is { Count: > 0 })
+            {
+                CollectClauses(filter.Conditions, clauses);
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(filter.Attribute))
+            {
+                continue;
+            }
+
+            var attribute = Clip(filter.Attribute.Trim(), AnswerOptions.MaxValueChars);
+            var operatorName = string.IsNullOrWhiteSpace(filter.Operator)
+                ? "equals"
+                : Clip(filter.Operator.Trim(), AnswerOptions.MaxValueChars);
+
+            clauses.Add(string.IsNullOrWhiteSpace(filter.Value)
+                ? $"{attribute} {operatorName} (empty)"
+                : $"{attribute} {operatorName} \"{Clip(filter.Value.Trim(), AnswerOptions.MaxValueChars)}\"");
+        }
     }
 
     private static string? BuildDistribution(DistributionSummary? distribution)

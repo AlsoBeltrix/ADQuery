@@ -53,6 +53,13 @@ public sealed class NarratePromptPathsAgreeTests
         // slice1r2-or-1: a distribution of singletons has no meaningful most-common value.
         ("read the distribution", "DISTRIBUTION", "DISTRIBUTION"),
         ("empty result", "empty", "empty"),
+        // F06 Slice 1: an empty result is ambiguous between "nothing matches" and "the query
+        // asked the wrong thing", and the model cannot tell which. Both paths must make it
+        // state the applied predicate and invite a correction rather than report a settled
+        // zero. Live job `5c1a4abb` reported zero conference rooms in Chelmsford from a filter
+        // on an attribute populated on none of them.
+        ("name the constraints", "CONSTRAINTS APPLIED", "CONSTRAINTS APPLIED"),
+        ("a zero is not a settled fact", "not present zero as a settled fact", "not present zero as a settled fact"),
         // F04 Slice 3: the answer states the interpretation so a misreading is correctable.
         ("state the interpretation", "QUERY RUN", "QUERY RUN"),
         // The table is rendered separately; the model writes the sentence above it.
