@@ -22,8 +22,10 @@
   | --- | ---: | ---: |
   | Room mailboxes | 147 | **1,931** |
   | Rooms with a populated city | 13 | **1,054** |
-  | Rooms in Chelmsford | **0** | **2** |
+  | Rooms in Chelmsford | **0** | **16** |
   | Per-room capacity | not held | held |
+
+  **Correction, 2026-08-02 (owner: "2 is wrong, so that didn't work").** The first measurement reported **2** Chelmsford rooms, from `Get-Place | Where City -match 'Chelmsford'`. The true count is **16** conference rooms (18 places including a cafeteria and a wellness room). Only 2 of the 16 carry `City`; the location lives in the **display name** (`Conf, Chelms2E-Alpha (12)`) and in the curated room list `Chelmsford Conference Rooms` (15 members). **The failed measurement made this plan's own mistake** — query one sparsely-populated attribute, get a small answer, report it as truth — which is precisely what job `5c1a4abb` did with `physicalDeliveryOfficeName` and what F06 Slice 1 now makes visible. Coverage across all 2,043 EXO rooms: `Localities` 1,160, `City` 1,054, `Building` 986, `Floor` 941 — **no single field is reliable**, so Slice 4 must resolve location by room-list membership first, then display name, then `City`, and say which signal matched. An implementation that answers 2 has repeated the error.
 
   `physicalDeliveryOfficeName` is populated on **0** of the 147 AD rooms, so the original query could not have matched at any true answer. AD is missing ~92% of the room estate and effectively all of its location data: every room question is unanswerable there today. F06 Slices 3-4 carry the work and are **blocked on F06-Q1**, the auth question — reusing the owner's personal `EXO-Automation` certificate would attribute every room read to them, so the options are a dedicated app registration, that reuse, or a periodic read-only snapshot (recommended first cut). Three constraints hold whichever way it lands: `Get-` verbs only, no model-authored cmdlet text, room fields allow-listed like AD ones.
 

@@ -71,16 +71,40 @@ Online (read-only):
 | Room mailboxes | 147 | **1,931** |
 | `Get-Place` room objects | n/a | 2,043 |
 | Rooms with a populated city | 13 | **1,054** |
-| Rooms in Chelmsford | **0** | **2** |
+| Rooms in Chelmsford | **0** | **16** (see correction below) |
 | Per-room capacity | not held | held (`Capacity`) |
 | Room list membership | not held | held (`Localities`) |
 
-The two Chelmsford rooms EXO knows about:
+### Correction (2026-08-02): the answer is 16, and the first measurement made the plan's own mistake
 
-```
-Conf, Chelms2E-Room 6 (40)   City="Chelmsford, MA 2E"   Capacity=40   Type=Room
-conf, CHELMS Room 11(12)     City="Chelmsford"          Floor="2E"    Type=Room
-```
+An earlier version of this plan reported **2** Chelmsford rooms, from
+`Get-Place | Where-Object City -match 'Chelmsford'`. The owner rejected it as wrong. It was:
+the true count is **16** conference rooms (18 bookable places including a cafeteria and a
+wellness room).
+
+Only 2 of those 16 have `City` populated. The location lives in the **display name** —
+`Conf, Chelms2E-Alpha (12)`, `Conf, Chelms20A-Mars (12R)` — and in a **room list**,
+`Chelmsford Conference Rooms` (`ChelmsfordConferenceRooms@analog.com`), which has 15 members.
+
+This is worth recording as more than a corrected number, because **the failed measurement is
+the same defect this plan exists to fix.** A single structured attribute was queried, it was
+sparsely populated, a small answer came back, and it was reported as the truth. That is exactly
+what job `5c1a4abb` did with `physicalDeliveryOfficeName`, and exactly what Slice 1 now makes
+visible. The lesson generalizes to the design: **any room source must not assume `City` is the
+location.**
+
+Coverage across all 2,043 EXO rooms, which is what Slice 4's routing has to be built against:
+
+| Field | Populated |
+| --- | ---: |
+| `Localities` (room-list membership) | 1,160 |
+| `City` | 1,054 |
+| `Building` | 986 |
+| `Floor` | 941 |
+
+No single field is reliable. Room-list membership has the best coverage and is the *curated*
+grouping — a human decided "these rooms are Chelmsford" — so it should be the primary signal,
+with display name and `City` as fallbacks. There are 97 room lists.
 
 **Determination: Exchange Online read-only access is warranted.** This is not a
 nice-to-have — AD is missing 92% of the room estate and effectively all of its location data,
@@ -189,8 +213,22 @@ learns that conference rooms live in that source with `City`/`Capacity`/`Floor`/
 available, and `"How many conference rooms in Chelmsford"` plans against it. With Slice 1
 already landed, a mis-routed question fails visibly instead of returning a confident zero.
 
-**Acceptance.** The originating question answers **2** against live data, and the answer names
-the rooms' city values so a reader can tell the match was real.
+**Location resolution is the substance of this slice, not a detail.** Per the correction above,
+a room's location is not any one field. Resolution order:
+
+1. **Room-list membership** (`Localities`, 1,160 of 2,043 rooms) — the curated grouping, where
+   a human decided which rooms belong to a site. `Chelmsford Conference Rooms` has 15 members.
+2. **Display name** — the convention here embeds the site (`Conf, Chelms2E-Alpha (12)`), and it
+   is the only signal present on all 16 Chelmsford rooms.
+3. **`City` / `Building` / `Floor`** — accurate where populated, absent on roughly half.
+
+A query matching only one of these is the defect this plan was written about. Where the signals
+disagree, report the union and say which signal matched, so a wrong grouping is visible rather
+than silently narrowing the answer.
+
+**Acceptance.** The originating question answers **16** against live data, and the answer says
+how the rooms were identified so a reader can judge the match. A result of 2 means the
+implementation repeated the `City`-only mistake and is a failure of this slice.
 
 ## Verification and review
 
