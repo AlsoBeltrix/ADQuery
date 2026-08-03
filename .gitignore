@@ -37,3 +37,5 @@ Thumbs.db
 
 # codereview machine-local harness cache and dispatch transcripts
 .agents/review/*.local.*
+.claude/.headroom_wrap_marker.json
+.tokensave/
