@@ -160,20 +160,77 @@ protected-principal checks — none of which a read-only question-answering surf
 everything else adquery does is AD. Porting the whole application to gain a connection for one
 feature inverts the ratio: a 13k-line move to avoid one app registration.
 
-**Recommendation, for the owner to rule.** Do **not** port adquery. Instead take the third
-option under F06-Q1 — the periodic read-only snapshot — and have **ExchangeAdminWeb produce
-it**, as a small scheduled export using the connection and credential it already holds. adquery
-reads the snapshot file. This gets the credential answer EAW would have given (no new
-registration, no personal certificate, no standing cloud credential in adquery's web tier),
-keeps the LLM out of the privileged-write application, and keeps room data fresh enough for
-metadata that changes rarely. If room questions later prove central rather than incidental, a
-thin EAW module exposing rooms over an internal endpoint is the natural next step, and the
-snapshot's shape is the same contract.
+**Superseded recommendation (kept for the reasoning, not the conclusion).** The first
+assessment recommended *not* porting, and proposed instead that EAW emit a periodic read-only
+room snapshot for adquery to read. **The owner corrected two facts that invalidate it**, and
+the corrected picture points the other way.
 
-**Alternative worth naming honestly:** if the owner's intent is that *directory questions
-belong in the admin console* rather than in a separate app, that is a product decision the
-above does not settle, and it would justify the port despite the cost. That is the owner's call
-to make, not a technical trade-off to be computed.
+#### Correction 1 — EAW has no scheduler
+
+Owner: *"EAW doesn't run scheduled jobs. it had a job processing queue, but not a scheduler."*
+Confirmed: `Services/Jobs/BulkJobService.cs:69` is explicit — *"Startup - explicit, one-shot.
+NOT a timer"* — and no `AddHostedService`/`BackgroundService` is registered in `Program.cs`.
+The snapshot proposal assumed a capability that does not exist; building it would mean adding
+a scheduler to EAW, which is a larger change than the one it was meant to avoid.
+
+#### Correction 2 — EAW already has a mature conference-room module
+
+Owner: *"it has a whole conf room module."* Confirmed, and it is substantial:
+
+| | |
+| --- | ---: |
+| `Services/ConferenceRoomService.cs` | 82 KB |
+| `Components/Pages/ConferenceRooms.razor` | 64 KB |
+| Test files | 7 |
+| Plan documents | 7 |
+| Supporting services/models/processors | 5 |
+
+It calls `Get-Place` and `Get-Mailbox` directly, and — decisively — it **owns the room-list
+naming convention this plan discovered independently**:
+`ConferenceRoomService.cs:127`, `BuildRoomListName(building) => $"{building} Conference Rooms"`.
+That is exactly the grouping that yields the correct answer of 16 for Chelmsford. adquery would
+otherwise reimplement, from scratch and worse, a convention EAW already maintains as the system
+of record.
+
+#### The reshaped recommendation: port, with a hard read-only boundary
+
+The owner's own framing — *"we can make llm integration a service that other modules can
+consume, restricted to help, building queries, answering questions in a chat window about the
+current module"* — is a better architecture than either original option, because it makes the
+LLM a **capability of the host** rather than a property of one app. adquery's translator/
+narrator becomes `ILlmAssistService`; the conference-room module gains a chat surface backed by
+the room data it already owns; future modules get the same affordance for free.
+
+**The condition the owner set is the whole design problem, and it is not satisfied by policy
+prose.** *"We'd have to ensure that there's no LLM to AD/Exchange write-operation pipeline."*
+Note what the measurement above shows: `ConferenceRoomService` invokes **14 write cmdlets and
+14 read cmdlets from the same class**. A boundary expressed as "the LLM only calls read
+methods" is unenforceable when reads and writes are neighbours behind one service.
+
+The boundary must therefore be **structural and testable**, not documentary. Sketch, to be
+specified properly before any code:
+
+1. **The LLM emits a plan, never a call.** adquery's existing architecture already guarantees
+   this — the model produces a `DirectoryQueryPlan` and deterministic code executes it. Carry
+   that invariant over unchanged; it is the single most valuable thing adquery brings.
+2. **A read-only execution surface, separate by type.** LLM-originated plans execute through an
+   interface that exposes only query operations. The write-capable services are not reachable
+   from it — not "not called", *not reachable*. This is the same shape as the existing
+   allow-list: enforced by construction, guarded by a test that fails if a write-capable
+   dependency is ever injected into the assist path.
+3. **A guard that inspects the boundary, not the intent.** An assembly-level test asserting
+   that no type reachable from the assist service references a mutating cmdlet or a
+   write-capable host service. This is the analogue of `slice4-or-2`'s invariant lock, and it
+   is what makes the owner's condition checkable rather than aspirational.
+4. **Ticketing and audit stay with writes.** The assist path performs no action requiring a
+   ticket number, because it performs no action.
+
+**Open question for the owner (F06-Q3), which the above does not settle:** is this a port of
+adquery *into* EAW (adquery retired, its UI rebuilt as Razor), or an extraction of the LLM
+service *out* of adquery into a shared library both consume? The first gives one console and
+one deployment; the second keeps adquery's chat UI and 57 tests intact but leaves two apps.
+The write-boundary work is identical either way, so it is not urgent to answer before Slice 3
+is specified — but it decides how much of adquery's 11.3k lines moves.
 
 ## Slice 1 — an empty result says so
 
