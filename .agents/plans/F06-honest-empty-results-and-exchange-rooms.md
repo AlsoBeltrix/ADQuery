@@ -1,13 +1,19 @@
 # F06 — An empty result tells the truth, and rooms come from Exchange
 
 **Status: Slices 1-2 landed (`05133a6`, `f8765dd`, review fixes `9b573d1`/`95221c2`).
-Slices 3-4 DEFERRED (2026-08-03, F06-D1)** — owner: *"no. defer integration. this app needs to
-stand on its own properly first."* The Exchange determination below stands on its measured
-evidence and is not withdrawn; it is simply not being acted on. Room questions remain
-unanswerable in adquery, an accepted limitation rather than an open gap. F06-Q1 through F06-Q4
-are **closed as deferred, not answered** — reopening the integration reopens them together.
-Slices 1-2 are unaffected: they fixed live defects in adquery's own behaviour and were never
-Exchange work. Owner goal
+Slices 3-4 are LIVE work, blocked only on F06-Q1.**
+
+Per **F06-D1** (2026-08-03): what the owner deferred is **merging adquery into
+ExchangeAdminWeb**, not Exchange Online support. Exchange rooms remain in scope for adquery to
+build **for itself**, as a standalone application. The EAW-specific analysis further down
+(F06-Q2, and the F07 boundary plan it spawned) is retained as recorded reasoning but is
+**not the path** — `F06-Q2` is answered *no*, `F06-Q3` is moot.
+
+**F06-Q1 is therefore reopened and is the only blocker for Slice 3**, in its corrected form:
+adquery needs its own read-only Exchange credential rather than a borrowed one. The owner's
+instruction — *"we can simplify it by creating a read-only secret in delinea for this app"* —
+stands as the intended shape; see the credential section below for what that requires in
+adquery specifically, which is **not** the same as what it required inside EAW. Owner goal
 (2026-08-02): *"fix this bug and determine if we need to add exchange online read-only queries
 to expand capability. build that if warranted. review code slices with codex default model."*
 The determination is made and recorded below: **Exchange Online is warranted, on measured
@@ -238,7 +244,41 @@ one deployment; the second keeps adquery's chat UI and 57 tests intact but leave
 The write-boundary work is identical either way, so it is not urgent to answer before Slice 3
 is specified — but it decides how much of adquery's 11.3k lines moves.
 
-#### The read-only credential (owner, 2026-08-03): right instinct, and it covers half the surface
+#### F06-Q1, corrected for standalone adquery (2026-08-03)
+
+The credential analysis immediately below was written assuming the work would live **inside
+EAW**, and so it leans on EAW plumbing — `ModuleCredentialService`, per-module
+`DelineaSecretId`, `ExoConnectionPool`. Under `F06-D1` that path is closed. The reasoning about
+*why* a read-only credential is the right boundary carries over unchanged and is worth keeping;
+the mechanics do not. What differs for standalone adquery:
+
+- **adquery has no Delinea integration at all.** A search of `csharp/` and `tests/` for
+  `delinea`/`secretserver` returns only an unrelated CSS class and a browser-test string. There
+  is no `DelineaService`, no `ModuleCredentialService`, no module-config system to hang a
+  `DelineaSecretId` field on. The owner's "read-only secret in Delinea" therefore means either
+  (a) building a small Delinea client in adquery, or (b) using the mechanism adquery
+  **already** has.
+- **adquery already solves this problem once, for the Claude API key.** F03 put that secret in a
+  DPAPI machine-scope blob outside the web root (`ProtectedApiKeyProvider`,
+  `C:\ProgramData\ADQuery\claude-apikey.dat`, knob `Claude:ApiKeyFile`) precisely so a deploy
+  could not wipe it. An Exchange certificate thumbprint or client secret fits the same shape,
+  and reusing it costs nothing new to build, review, or operate.
+- **The Exchange side is unchanged by any of this.** App-only EXO auth carries permission in the
+  **app registration's role assignment**, not in the secret. So whichever store holds the
+  credential, adquery still needs its own registration with a read-only Exchange role. That is
+  **F06-Q4**, and it is now adquery's to obtain rather than something EAW could have supplied.
+- **No connection-pool work.** The second-pool problem was entirely an artefact of sharing
+  EAW's singleton pool across two identities. Standalone adquery has one identity and no pool
+  to share.
+
+**Recommendation for F06-Q1, for the owner to rule:** obtain a dedicated app registration with
+a read-only Exchange role (F06-Q4), and store its credential in the existing DPAPI store
+alongside the Claude key rather than introducing Delinea into adquery for a single secret. If
+the owner prefers Delinea for policy reasons — central rotation, audit, one place for
+credentials — that is a legitimate reason to build the client, and it should be stated as the
+reason so the extra component is justified by something other than convenience.
+
+#### The read-only credential inside EAW (superseded by F06-D1; retained for its reasoning)
 
 Owner: *"we can simplify it by creating a read-only secret in delinea for this app. just need
 to figure out the plumbing."*

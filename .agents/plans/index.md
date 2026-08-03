@@ -24,8 +24,8 @@ Feature plans (the `F` namespace) capture net-new product direction, not finding
 | F03 | Deploy can never wipe the live API key | Done |
 | F04 | Genuine conversational answers (translator/narrator model; whole-conversation re-planning; delete guess-transform) | Draft |
 | F05 | A bare "how many" question answers with a number (Translate prompt emits a pure count, not a group-by on a filtered attribute) | Complete |
-| F06 | An empty result tells the truth, and rooms come from Exchange (honest-empty answers; allow-list synonyms; EXO read-only room source) | Slices 1-2 Complete; 3-4 Deferred (F06-D1) |
-| F07 | The assist path cannot write, and a guard proves it (read-only credential + call-graph reachability boundary for LLM-in-EAW) | Deferred (F06-D1) |
+| F06 | An empty result tells the truth, and rooms come from Exchange (honest-empty answers; allow-list synonyms; EXO read-only room source) | Slices 1-2 Complete; 3-4 blocked on F06-Q1 |
+| F07 | The assist path cannot write, and a guard proves it (read-only credential + call-graph reachability boundary for LLM-in-EAW) | Deferred -- premise removed by F06-D1 |
 
 ## Plans
 

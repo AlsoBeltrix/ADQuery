@@ -1,9 +1,19 @@
 # F07 — The assist path cannot write, and a guard proves it
 
-**Status: DEFERRED (2026-08-03, F06-D1).** Owner: *"no. defer integration. this app needs to
-stand on its own properly first."* Do not start any slice here without a fresh owner go.
-Deferring closes F06-Q2/Q3/Q4 as a set rather than answering them; reopening the integration
-reopens all three. The document is kept whole so the analysis is not redone from scratch.
+**Status: DEFERRED — and its premise no longer holds (2026-08-03, `F06-D1`).** Owner: *"no.
+defer integration… what's deferred is integrating this with exchangeadminweb."*
+
+This plan exists to answer one question: how to stop an LLM reaching write operations **when it
+sits inside a host that performs privileged writes**. With the EAW merge deferred, that
+situation does not arise — adquery performs no writes against AD or Exchange at all, so there
+is no write surface for the assist path to be fenced from.
+
+Retained rather than deleted, for two reasons. The **read-only-credential reasoning** in
+Layer 3 still applies directly to F06-Q1, which is live. And the **call-graph reachability
+guard** in Layer 2 is a technique this repo would need immediately if adquery ever gained a
+write capability of its own — it is the same mechanism `slice4-or-2` already uses.
+
+Do not implement any slice here. If the EAW merge reopens, this document reopens with it.
 
 **Original status line: Draft — specification only, no owner approval to implement.** This is the design
 F06-Q2 concluded was needed: if the LLM becomes a service other ExchangeAdminWeb modules
