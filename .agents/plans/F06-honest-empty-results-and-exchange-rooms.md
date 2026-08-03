@@ -232,6 +232,60 @@ one deployment; the second keeps adquery's chat UI and 57 tests intact but leave
 The write-boundary work is identical either way, so it is not urgent to answer before Slice 3
 is specified — but it decides how much of adquery's 11.3k lines moves.
 
+#### The read-only credential (owner, 2026-08-03): right instinct, and it covers half the surface
+
+Owner: *"we can simplify it by creating a read-only secret in delinea for this app. just need
+to figure out the plumbing."*
+
+This is a **better boundary than the type fence sketched above**, and for a reason worth stating
+plainly: a credential that cannot write is enforced by Active Directory and Exchange themselves,
+not by our code. A type fence fails if someone wires a write service into the assist path and
+the guard test is missing or wrong; a read-only principal fails closed at the far end, where
+neither an agent, a prompt injection, nor a coding mistake can reach it. **Both should ship** —
+the credential is the real boundary, the type fence and its guard are defence in depth and keep
+the mistake visible at build time rather than at 4am.
+
+The plumbing, read out of the code rather than assumed:
+
+**The two backends authenticate differently, and this is the crux.**
+
+| Backend | How EAW authenticates today | Read-only secret applies? |
+| --- | --- | --- |
+| AD / on-prem | Delinea secret → `(username, password, domain)` → `PSCredential` per module, via `ModuleCredentialService.GetCredentialsAsync(moduleId, purpose)` reading that module's `DelineaSecretId` config field (`Services/ModuleCredentialService.cs:19-35`) | **Yes, directly** |
+| Exchange Online | Certificate + `AppId` + `Organization`, resolved from the **`ExchangeOnline` module's own config** and shared by one global pool (`Services/ExoConnectionPool.cs:87-105`, cert looked up by subject in `LocalMachine`/`CurrentUser`) | **No** — no username/password is involved |
+
+So a read-only Delinea secret solves the AD half cleanly: the assist module gets its own
+`DelineaSecretId` pointing at an account with read rights only, exactly the pattern the nine
+existing modules already use. No new mechanism, no new code path — it is a config field and an
+account.
+
+**Exchange needs the equivalent, by a different route.** EXO app-only auth carries permission in
+the **app registration's role assignment**, not in a secret. The equivalent of a read-only
+credential is a **second app registration** holding a read-only Exchange role — the built-in
+`View-Only Recipients` / `Global Reader` shape rather than the write-capable role the current
+`EXO-Automation` registration holds. That means:
+
+- A second `AppId` + certificate, configured under a distinct key (the existing config
+  already reads `AppId`/`Organization`/`CertificateSubject` from module config, so the
+  extension point exists — `ExoConnectionPool.GetExoConfig()`).
+- **A second connection pool, or a pool keyed by identity.** Today `ExoConnectionPool` is a
+  singleton over one identity; a read-only identity cannot share those runspaces, because a
+  borrowed runspace is already connected as whoever opened it. This is the one genuine piece of
+  new plumbing, and it is contained.
+- The assist path borrows only from the read-only pool. That is the structural fence, now
+  backed by a principal that cannot write even if the fence is breached.
+
+**Open item this raises (F06-Q4):** the read-only Exchange app registration needs tenant rights
+to create, same as F06-Q1's option (a). The difference is that it is now a *smaller* ask with a
+*clearer* justification — "an app registration that can only read" is an easier conversation
+with whoever approves it than a general-purpose one, and the resulting credential is the thing
+that makes the owner's no-write-pipeline condition true by construction rather than by
+inspection.
+
+**Sequencing note.** The AD half needs nothing but a Delinea secret and a config value, so an
+assist module scoped to *directory* questions can be built and shipped before the Exchange
+registration exists. Room questions wait for F06-Q4; everything adquery does today does not.
+
 ## Slice 1 — an empty result says so
 
 **Rule.** When a completed job has zero rows, the answer states that nothing matched **and
