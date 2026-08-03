@@ -125,6 +125,56 @@ visible one.
 Slices 1 and 2 are independent of each other and of 3-4. Slices 3-4 must not start before
 F06-Q1 is answered.
 
+### F06-Q2 (raised by the owner 2026-08-03, and it reshapes F06-Q1): build Slices 3-4 as an ExchangeAdminWeb module instead?
+
+The owner asked whether this work should be rolled into `D:\source\ExchangeAdminWeb` as a
+module, so it rides that app's existing auth and EXO connection. Assessed against both
+codebases; findings, then a recommendation.
+
+**What EAW already has that F06-Q1 was invented to solve.** EAW is a compiled modular host with
+a first-class module system (`Modules/ModuleCatalog.cs`, `AdminModuleDescriptor`, per-module
+permissions and config) documented in a 38 KB developer guide,
+`docs/AdminModuleDeveloperGuide.md`. It holds a working EXO connection pool
+(`Services/ExoConnectionPool.cs`) using **its own** app registration and certificate, config-driven
+via `AppId`/`Organization`, with `ExchangeServiceBase.RunPooledQueryAsync` as the documented
+helper for Exchange Online **reads** — exactly the operation Slices 3-4 need. It also uses
+Negotiate/Windows auth, the same as adquery, and carries `AuditService`,
+`OperationTraceService`, and `ModuleCredentialService` (Delinea-backed).
+
+That is a direct answer to F06-Q1: option (a), a dedicated app registration, **already exists**
+and is already in production use. The credential problem is not solved by choosing between the
+owner's personal certificate and new tenant paperwork; it is solved by using the registration
+EAW already owns.
+
+**What does not transfer.** EAW has **no LLM integration anywhere** — a search for
+claude/anthropic/openai across its source returns only `AGENTS.md`. adquery is 11.3k lines of
+C# across 59 files plus a 1.7k-line front end and 57 test files, and its entire architecture is
+the F04 translator/narrator model: two model calls per turn, a bounded reduction, subject-scoped
+follow-ups, prompt-path duality. Moving it means introducing an outbound LLM dependency,
+per-turn provider cost, and prompt-injection surface into an app whose other modules perform
+privileged **writes** against AD and Exchange. EAW's module contract is also built around a
+different shape of feature — ticket numbers, confirmation dialogs, pre-write snapshots,
+protected-principal checks — none of which a read-only question-answering surface uses.
+
+**The asymmetry that decides it.** Only Slices 3-4 need EXO. Slices 1-2 are landed, and
+everything else adquery does is AD. Porting the whole application to gain a connection for one
+feature inverts the ratio: a 13k-line move to avoid one app registration.
+
+**Recommendation, for the owner to rule.** Do **not** port adquery. Instead take the third
+option under F06-Q1 — the periodic read-only snapshot — and have **ExchangeAdminWeb produce
+it**, as a small scheduled export using the connection and credential it already holds. adquery
+reads the snapshot file. This gets the credential answer EAW would have given (no new
+registration, no personal certificate, no standing cloud credential in adquery's web tier),
+keeps the LLM out of the privileged-write application, and keeps room data fresh enough for
+metadata that changes rarely. If room questions later prove central rather than incidental, a
+thin EAW module exposing rooms over an internal endpoint is the natural next step, and the
+snapshot's shape is the same contract.
+
+**Alternative worth naming honestly:** if the owner's intent is that *directory questions
+belong in the admin console* rather than in a separate app, that is a product decision the
+above does not settle, and it would justify the port despite the cost. That is the owner's call
+to make, not a technical trade-off to be computed.
+
 ## Slice 1 — an empty result says so
 
 **Rule.** When a completed job has zero rows, the answer states that nothing matched **and
