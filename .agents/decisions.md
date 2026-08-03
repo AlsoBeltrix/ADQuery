@@ -1,5 +1,15 @@
 # Settled Decisions
 
+## F06-D1 — Exchange/EAW integration is deferred; adquery stands on its own first
+
+- Status: Approved
+- Date: 2026-08-03
+- Authority: Repository owner, closing the F06-Q2/Q3/Q4 line: *"no. defer integration. this app needs to stand on its own properly first."*
+- Decision: **No Exchange Online source, no ExchangeAdminWeb module, no shared LLM service, until adquery is sound as a standalone application.** F06 Slices 3-4 and the whole of F07 are deferred — specified, not queued. The open owner questions they carried (**F06-Q2** roll into EAW, **F06-Q3** port-in vs extract-out, **F06-Q4** tenant rights for a read-only EXO app registration) are **closed as deferred**, not answered: reopening the integration reopens all three together.
+- What is *not* reversed: the F06 determination itself stands on measured evidence — AD holds 147 room mailboxes to Exchange's 1,931, and 0 Chelmsford rooms to Exchange's 16 (`.agents/plans/F06-honest-empty-results-and-exchange-rooms.md`). Room questions remain unanswerable in adquery, and that is now an accepted limitation rather than a gap being worked. F06 Slices 1-2 (honest empty results, allow-list synonyms) are landed and unaffected — they fixed live defects in adquery's own behaviour and were never Exchange work.
+- Rationale: capability breadth was being added to an application whose own quality bar is not yet met — undeployed fixes, and a defect class (a confidently wrong answer) discovered only by the owner using it. Integration would also have exported that bar into a host that performs privileged writes. The sequencing is the point: an app that answers directory questions correctly is a prerequisite for an app that answers Exchange questions too.
+- Consequence: adquery's queue is now its own correctness, deployment, and durability — not new sources. `.agents/plans/F07-read-only-assist-boundary.md` and F06 Slices 3-4 are marked **Deferred** and must not be started without a fresh owner go. The read-only-credential design in both documents is kept intact so the analysis is not redone from scratch if this reopens.
+
 ## F05-D1 — Export is withheld for a single RESULT, not for a single-line answer
 
 - Status: Approved

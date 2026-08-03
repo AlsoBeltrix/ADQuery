@@ -16,7 +16,9 @@
     - `verify.ps1` green at every step (367 → 380 → 383 → 392 tests, 0 warnings, both smokes, audit clean).
     - **NOT DEPLOYED.** `deploy.ps1` needs elevation and the UAC prompt has no one at the desktop to accept it. F06 adds no config keys, so this deploy does **not** need `-OverwriteConfig`. Until it lands, production still returns a bare zero for a search that could not match, and still refuses `l`.
 
-- **EXCHANGE ONLINE DETERMINATION (2026-08-02): warranted, on measured evidence.** The owner asked whether EXO read-only queries are needed. Measured read-only against live AD and live EXO rather than reasoned about:
+- **INTEGRATION IS DEFERRED — `F06-D1` (2026-08-03).** Owner: *"no. defer integration. this app needs to stand on its own properly first."* No Exchange source, no ExchangeAdminWeb module, no shared LLM service until adquery is sound standalone. **F06 Slices 3-4 and all of F07 are Deferred, not queued**, and F06-Q1 through F06-Q4 are closed as deferred rather than answered — reopening the integration reopens them together. The determination below is **not withdrawn**; it stands on its evidence and is simply not being acted on. Room questions are an accepted limitation, not an open gap. **The next work is adquery's own correctness, deployment, and durability — not new sources.** The read-only-credential analysis is kept intact in both plans so it is not redone from scratch if this reopens.
+
+- **EXCHANGE ONLINE DETERMINATION (2026-08-02): warranted, on measured evidence — recorded, deferred by `F06-D1`.** The owner asked whether EXO read-only queries are needed. Measured read-only against live AD and live EXO rather than reasoned about:
 
   | | Active Directory | Exchange Online |
   | --- | ---: | ---: |
@@ -95,6 +97,13 @@
 - Entries older than this session were rotated to `docs/history/state-archive.md` on 2026-07-30 (drift pass). Their canonical homes are the plan status lines and `.agents/decisions.md`.
 
 ## Next
+
+- **STANDING DIRECTION (`F06-D1`, 2026-08-03): make adquery sound on its own. No new sources, no integration.** In priority order, and this list is the queue:
+  1. **Deploy the four undeployed fixes.** `05133a6`, `f8765dd`, `9b573d1`, `95221c2` are on `master` and not in production, so the live app still answers a bare zero for a search that could not match, and still refuses `l`. No `-OverwriteConfig` needed — F06 adds no config keys. **Owner-gated:** `deploy.ps1` needs elevation and the UAC prompt needs someone at the desktop. This is the single highest-value action available.
+  2. **Verify against live AD after deploying.** Re-run the conference-room question and confirm it now names the constraints instead of reporting zero. Per the 2026-08-01 audit note, flag directory-wide queries to the owner first and prefer the narrowest question that proves the behaviour.
+  3. **Push.** 13 commits ahead of both remotes; `.agents/push-policy.md` is `ask`.
+  4. **Then: what "standing on its own" still needs.** Not yet scoped, and worth scoping deliberately rather than picking from the backlog. Candidate evidence for that scoping: two of the last three defect classes were found by the *owner using the app*, not by the suite — a confidently wrong zero, and a validation refusal on a synonym. That pattern, not the P-plan backlog, is the argument for where the next work goes.
+- **P06-P21 remain reviewed but implementation-unauthorized.** They are not the queue above; do not start one on the strength of `F06-D1` alone.
 
 - **F04 implementation is complete (all seven slices landed); plan status flipped to Implemented.**
 - **The openreview sweep is finished (2026-07-30).** All seven dispatched rounds are closed: Slice 2 r1 `0ef62aa..2cb2511`, the CI-fix range `b4ed25f..5a86080`, and r2 for Slices 3-7. Every round's outcome is recorded per-round in the `## Now` F04 entry; the finding records are `.agents/review/findings/`. Slice 1's two-round cap is spent — no third round for it. Slice 7's round 2 was re-dispatched 2026-07-31 against its correct range and is now genuinely spent. **No review round remains queued or running, and none is blocking.** Two things the sweep leaves behind: the envelope contract failed in all seven rounds (see the `## Now` harness entry), and the narrator trust boundary was declined three times and wants a plan (see the standing-item entry).

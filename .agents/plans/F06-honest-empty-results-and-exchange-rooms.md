@@ -1,7 +1,13 @@
 # F06 — An empty result tells the truth, and rooms come from Exchange
 
-**Status: In progress — Slices 1 and 2 landed (`05133a6`, `f8765dd`), Slices 3-4 blocked on
-F06-Q1.** Owner goal
+**Status: Slices 1-2 landed (`05133a6`, `f8765dd`, review fixes `9b573d1`/`95221c2`).
+Slices 3-4 DEFERRED (2026-08-03, F06-D1)** — owner: *"no. defer integration. this app needs to
+stand on its own properly first."* The Exchange determination below stands on its measured
+evidence and is not withdrawn; it is simply not being acted on. Room questions remain
+unanswerable in adquery, an accepted limitation rather than an open gap. F06-Q1 through F06-Q4
+are **closed as deferred, not answered** — reopening the integration reopens them together.
+Slices 1-2 are unaffected: they fixed live defects in adquery's own behaviour and were never
+Exchange work. Owner goal
 (2026-08-02): *"fix this bug and determine if we need to add exchange online read-only queries
 to expand capability. build that if warranted. review code slices with codex default model."*
 The determination is made and recorded below: **Exchange Online is warranted, on measured

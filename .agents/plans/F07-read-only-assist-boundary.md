@@ -1,6 +1,11 @@
 # F07 — The assist path cannot write, and a guard proves it
 
-**Status: Draft — specification only, no owner approval to implement.** This is the design
+**Status: DEFERRED (2026-08-03, F06-D1).** Owner: *"no. defer integration. this app needs to
+stand on its own properly first."* Do not start any slice here without a fresh owner go.
+Deferring closes F06-Q2/Q3/Q4 as a set rather than answering them; reopening the integration
+reopens all three. The document is kept whole so the analysis is not redone from scratch.
+
+**Original status line: Draft — specification only, no owner approval to implement.** This is the design
 F06-Q2 concluded was needed: if the LLM becomes a service other ExchangeAdminWeb modules
 consume, the owner's condition — *"we'd have to ensure that there's no LLM to AD/Exchange
 write-operation pipeline"* — has to be enforced structurally rather than asserted in prose.
